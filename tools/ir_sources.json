@@ -1,0 +1,51 @@
+{
+  "_comment": "Reference IRs are read from ./ir (git-ignored) and never committed. Settings are the SPX90 factory defaults (manual p.24); the Millertone captures match them.",
+  "kernel_source": "ir/Millertone SPX90 (GrungeVerb)/GrungeVerb (Early Ref 01).wav",
+  "programs": {
+    "er1_hall": {
+      "path": "ir/Millertone SPX90 (GrungeVerb)/GrungeVerb (Early Ref 01).wav",
+      "settings": {
+        "program": 5,
+        "type": "HALL",
+        "room_size": 2.0,
+        "liveness": 5,
+        "delay_ms": 10.0,
+        "lpf": "THRU"
+      }
+    },
+    "er2_hall": {
+      "path": "ir/Millertone SPX90 (GrungeVerb)/GrungeVerb (Early Ref 02).wav",
+      "settings": {
+        "program": 6,
+        "type": "HALL",
+        "room_size": 2.0,
+        "liveness": 5,
+        "delay_ms": 10.0,
+        "lpf": "THRU"
+      }
+    },
+    "gate_random": {
+      "path": "ir/Millertone SPX90 (GrungeVerb)/GrungeVerb (Gated Reverb).wav",
+      "settings": {
+        "program": 16,
+        "type": "RANDOM",
+        "room_size": 2.0,
+        "liveness": 5,
+        "delay_ms": 20.0,
+        "lpf_hz": 6300
+      },
+      "deconvolve_onepole_hz": 6300
+    },
+    "rev_gate": {
+      "path": "ir/Millertone SPX90 (GrungeVerb)/GrungeVerb (Rev Gate).wav",
+      "settings": {
+        "program": 17,
+        "type": "REVERSE",
+        "room_size": 3.3,
+        "liveness": 5,
+        "delay_ms": 25.0,
+        "lpf": "THRU"
+      }
+    }
+  }
+}

@@ -1,0 +1,5 @@
+# Reference impulse responses: third-party, not redistributable
+/ir/
+/build/
+/tools/.venv/
+__pycache__/
