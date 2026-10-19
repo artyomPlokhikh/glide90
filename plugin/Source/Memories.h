@@ -20,8 +20,8 @@ struct Memory
     float outLevel = 1.0f;
 };
 
-// Memories 1-30 are the factory programs (read only), 31-90 the user memories. Three user memories
-// come pre-filled with the Reverse Gate settings reported for My Bloody Valentine.
+// Memories 1-30 are the factory programs (read only), 31-90 the user memories. The first few user
+// memories come pre-filled with reverse gate variations.
 class MemoryBank
 {
 public:

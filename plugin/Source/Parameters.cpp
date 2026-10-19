@@ -92,6 +92,8 @@ Layout createParameterLayout()
     layout.add(std::make_unique<AudioParameterChoice>(ParameterID { ids::outputSwitch, kVersion }, "Output Level Switch",
                                                       juce::StringArray { "+4 dBm", "-20 dBm" }, 0));
     layout.add(std::make_unique<AudioParameterBool>(ParameterID { ids::bypass, kVersion }, "SPX Bypass", false));
+    layout.add(std::make_unique<AudioParameterChoice>(ParameterID { ids::outputMode, kVersion }, "Output Mode",
+                                                      juce::StringArray { "STEREO", "L ONLY", "MONO" }, 0));
 
     layout.add(std::make_unique<AudioParameterBool>(ParameterID { ids::glideOn, kVersion }, "Glide On", true));
     layout.add(std::make_unique<AudioParameterChoice>(ParameterID { ids::glideMode, kVersion }, "Glide Mode",
@@ -122,6 +124,8 @@ Layout createParameterLayout()
                                                       "Glide Trigger", juce::StringArray { "PICK ATTACK", "MIDI NOTE" }, 0));
     layout.add(std::make_unique<AudioParameterFloat>(ParameterID { ids::glideSensitivity, kVersion }, "Glide Sensitivity",
                                                      NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.5f, percent()));
+    layout.add(std::make_unique<AudioParameterFloat>(ParameterID { ids::glideDynamics, kVersion }, "Glide Dynamics",
+                                                     NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.0f, percent()));
     layout.add(std::make_unique<AudioParameterChoice>(ParameterID { ids::glideManualSource, kVersion }, "Glide Manual Source",
                                                       juce::StringArray { "BAR KNOB", "PITCH BEND", "MOD WHEEL", "EXPRESSION (CC11)" }, 0));
     layout.add(std::make_unique<AudioParameterFloat>(ParameterID { ids::glideBar, kVersion }, "Glide Bar",

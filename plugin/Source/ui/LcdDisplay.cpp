@@ -30,7 +30,7 @@ void LcdDisplay::paint(juce::Graphics& g)
     const float dot = pitch * 0.82f;
     const float x0 = glass.getCentreX() - pitch * dotsW * 0.5f;
     const float y0 = glass.getCentreY() - pitch * dotsH * 0.5f;
-    const auto lit = colours::vfd, unlit = colours::vfd.withAlpha(0.045f);
+    const auto lit = colours::display, unlit = colours::display.withAlpha(0.045f);
 
     for (int row = 0; row < 2; ++row)
     {
@@ -118,59 +118,18 @@ void SevenSegment::paint(juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat();
     if (framed)
-        drawGlass(g, r);
-
-    // Segment bits: a b c d e f g.
-    static constexpr uint8_t digits[10] { 0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x6f };
-    const auto lit = juce::Colour(0xffff3a22), unlit = juce::Colour(0xff2a0e0a);
-    const float h = r.getHeight() * 0.68f, w = h * 0.5f, t = h * 0.11f, skew = h * 0.08f;
-    const float gap = w * 0.45f;
-    float x = r.getCentreX() - (2.0f * w + gap) * 0.5f;
-    const float y = r.getCentreY() - h * 0.5f;
-
-    auto segment = [&](float x1, float y1, float x2, float y2) {
-        // A bar with pointed ends from (x1,y1) to (x2,y2), slanted like a real display.
-        auto sk = [&](float px, float py) { return juce::Point<float>(px + skew * (1.0f - (py - y) / h), py); };
-        juce::Path p;
-        if (std::abs(y1 - y2) < 0.01f) // horizontal
-        {
-            p.startNewSubPath(sk(x1 + t * 0.5f, y1));
-            p.lineTo(sk(x1 + t, y1 - t * 0.5f));
-            p.lineTo(sk(x2 - t, y1 - t * 0.5f));
-            p.lineTo(sk(x2 - t * 0.5f, y1));
-            p.lineTo(sk(x2 - t, y1 + t * 0.5f));
-            p.lineTo(sk(x1 + t, y1 + t * 0.5f));
-        }
-        else
-        {
-            p.startNewSubPath(sk(x1, y1 + t * 0.5f));
-            p.lineTo(sk(x1 + t * 0.5f, y1 + t));
-            p.lineTo(sk(x1 + t * 0.5f, y2 - t));
-            p.lineTo(sk(x1, y2 - t * 0.5f));
-            p.lineTo(sk(x1 - t * 0.5f, y2 - t));
-            p.lineTo(sk(x1 - t * 0.5f, y1 + t));
-        }
-        p.closeSubPath();
-        return p;
-    };
-
-    const bool show = !blinking || blinkOn;
-    for (int d = 0; d < 2; ++d)
     {
-        const int digit = d == 0 ? (value / 10) % 10 : value % 10;
-        const uint8_t bits = (d == 0 && value < 10) ? 0 : digits[digit]; // no leading zero
-        const float m = y + h * 0.5f;
-        const juce::Path segs[7] { segment(x, y, x + w, y),         segment(x + w, y, x + w, m),
-                                   segment(x + w, m, x + w, y + h), segment(x, y + h, x + w, y + h),
-                                   segment(x, m, x, y + h),         segment(x, y, x, m),
-                                   segment(x, m, x + w, m) };
-        for (int s = 0; s < 7; ++s)
-        {
-            const bool on = show && ((bits >> s) & 1);
-            g.setColour(on ? lit : unlit);
-            g.fillPath(segs[s]);
-        }
-        x += w + gap;
+        drawGlass(g, r);
+        r = r.reduced(4.0f);
+    }
+    // Unlit segments behind the number, as on a real LED display.
+    g.setFont(segmentFont(r.getHeight() * 0.86f));
+    g.setColour(colours::memoryRed.withAlpha(0.09f));
+    g.drawText("88", r, juce::Justification::centredRight);
+    if (!blinking || blinkOn)
+    {
+        g.setColour(colours::memoryRed);
+        g.drawText(value < 10 ? "!" + juce::String(value) : juce::String(value), r, juce::Justification::centredRight);
     }
 }
 
@@ -188,14 +147,14 @@ void LevelMeter::paint(juce::Graphics& g)
     // A column of seven bars, loudest at the top, with their thresholds on the right.
     const auto r = getLocalBounds().toFloat();
     const float cell = r.getHeight() / 7.0f;
-    g.setFont(panelFont(8.0f));
+    g.setFont(legendFont(10.0f));
     static const char* labels[7] { "-36", "-24", "-15", "-9", "-5", "-2", "0" };
     for (int i = 0; i < 7; ++i)
     {
         const auto colour = i == 6 ? colours::ledRed : (i == 5 ? colours::ledYellow : colours::ledGreen);
         const float cy = r.getBottom() - cell * ((float) i + 0.5f);
         drawLed(g, juce::Rectangle<float>(r.getX(), cy - cell * 0.32f, 12.0f, cell * 0.64f), colour, levelDb >= kPointsDb[i]);
-        g.setColour(colours::legendDim);
+        g.setColour(colours::silkscreenDim);
         g.drawText(labels[i], juce::Rectangle<float>(r.getX() + 15.0f, cy - 5.0f, r.getWidth() - 15.0f, 10.0f),
                    juce::Justification::centredLeft);
     }

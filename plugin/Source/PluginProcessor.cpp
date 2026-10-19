@@ -11,7 +11,7 @@ namespace
 {
 
 const juce::Identifier kAlgorithmProp { "algorithm" }, kLoadedProp { "loadedMemory" }, kPresetProp { "preset" },
-    kPresetNameProp { "presetName" }, kVersionProp { "version" };
+    kPresetNameProp { "presetName" }, kVersionProp { "version" }, kScaleProp { "uiScale" };
 // 2: the Glide parameters. Older states had a different bar (Sway) and no glide_* values worth keeping.
 constexpr int kStateVersion = 2;
 const juce::Identifier kShapeTree { "SHAPE" }, kPointTree { "POINT" }, kXProp { "x" }, kYProp { "y" };
@@ -25,12 +25,13 @@ const juce::StringArray& rigParameters()
     return ids;
 }
 
-// Factory presets: a memory plus Glide settings on top of the defaults. The Glide values are
-// starting points by ear, not documented settings.
+// Factory presets: a factory program plus reverb and Glide settings on top of the defaults. They
+// carry their own values rather than point at user memories, which can be overwritten. The Glide
+// values are starting points by ear, not documented settings.
 struct FactoryPreset
 {
     const char* name;
-    int memory;
+    int program;
     std::vector<std::pair<const char*, float>> values;
 };
 
@@ -39,29 +40,45 @@ const std::vector<FactoryPreset>& factoryPresets()
     using sway::ShapePreset;
     auto shape = [](ShapePreset p) { return (float) p; };
     static const std::vector<FactoryPreset> presets {
-        { "Init: Reverse Gate + Glide", 17, {} },
-        { "Loveless RG (roadie)", 31,
-          { { ids::glidePeriod, 420.0f }, { ids::glideDepth, 35.0f }, { ids::glideShape, shape(ShapePreset::Shimmy) },
-            { ids::glideRandom, 0.45f }, { ids::glideSmooth, 0.3f } } },
-        { "Loveless RG A (synced dive)", 32,
-          { { ids::glideMode, 1.0f }, { ids::glideDivision, (float) kDefaultDivision }, { ids::glideDepth, 40.0f },
-            { ids::glideShape, shape(ShapePreset::Dive) }, { ids::glideRandom, 0.25f }, { ids::glideTwinDetune, 9.0f },
-            { ids::glideTwinLevel, 0.45f } } },
-        { "Loveless RG B (dive on each pick)", 33,
-          { { ids::glideMode, 2.0f }, { ids::glidePeriod, 650.0f }, { ids::glideDepth, 55.0f },
-            { ids::glideShape, shape(ShapePreset::Dive) }, { ids::glideRandom, 0.2f }, { ids::glideSmooth, 0.25f },
-            { ids::glideSensitivity, 0.55f } } },
+        { "Init Reverse Gate+Glide", 17, {} },
+        // Pushing the bar down while strumming, into the roadie's reverse gate.
+        { "MBV Loveless roadie", 17,
+          { { ids::erRoomSize, 20.0f }, { ids::erLiveness, 4.0f }, { ids::erDelay, 25.0f }, { ids::glideMode, 2.0f }, { ids::glidePeriod, 600.0f }, { ids::glideDepth, 40.0f },
+            { ids::glideShape, shape(ShapePreset::Dive) }, { ids::glideRandom, 0.25f }, { ids::glideSmooth, 0.25f },
+            { ids::glideSensitivity, 0.55f }, { ids::glideDynamics, 0.6f } } },
+        { "MBV To Here Knows When", 17,
+          { { ids::erRoomSize, 20.0f }, { ids::erLiveness, 7.0f }, { ids::erDelay, 75.0f }, { ids::glidePeriod, 900.0f }, { ids::glideDepth, 45.0f }, { ids::glideShape, shape(ShapePreset::Shimmy) },
+            { ids::glideRandom, 0.5f }, { ids::glideSmooth, 0.35f }, { ids::glideTwinDetune, 10.0f },
+            { ids::glideTwinLevel, 0.4f } } },
+        { "MBV Loveless LIV10", 17,
+          { { ids::erRoomSize, 20.0f }, { ids::erLiveness, 10.0f }, { ids::erDelay, 0.1f }, { ids::glideMode, 2.0f }, { ids::glidePeriod, 450.0f }, { ids::glideDepth, 35.0f },
+            { ids::glideShape, shape(ShapePreset::Dive) }, { ids::glideRandom, 0.2f }, { ids::glideSmooth, 0.2f } } },
+        // Soft playing with the bar and the guitar's tone knob down.
+        { "MBV Slow tone down", 17,
+          { { ids::erRoomSize, 20.0f }, { ids::erLiveness, 5.0f }, { ids::erDelay, 25.0f }, { ids::erLpf, 8.0f /* 2.5 kHz */ }, { ids::glidePeriod, 1200.0f }, { ids::glideDepth, 25.0f }, { ids::glideRandom, 0.4f },
+            { ids::glideSmooth, 0.5f } } },
+        // Two strings tuned almost alike, bent together.
+        { "MBV two-string unison", 17,
+          { { ids::erRoomSize, 20.0f }, { ids::erLiveness, 4.0f }, { ids::erDelay, 25.0f }, { ids::glidePeriod, 1500.0f }, { ids::glideDepth, 15.0f }, { ids::glideRandom, 0.6f },
+            { ids::glideSmooth, 0.5f }, { ids::glideTwinDetune, 15.0f }, { ids::glideTwinLevel, 1.0f } } },
         { "Whammy on pitch bend", 17,
           { { ids::glideMode, 3.0f }, { ids::glideManualSource, (float) ManualSource::PitchBend },
             { ids::glideDepth, 200.0f }, { ids::glideDirection, 1.0f }, { ids::glideSmooth, 0.15f } } },
-        { "Glide pedal (expression CC11)", 31,
-          { { ids::glideMode, 3.0f }, { ids::glideManualSource, (float) ManualSource::Expression },
+        { "Glide pedal CC11", 17,
+          { { ids::erRoomSize, 20.0f }, { ids::erLiveness, 4.0f }, { ids::erDelay, 25.0f }, { ids::glideMode, 3.0f }, { ids::glideManualSource, (float) ManualSource::Expression },
             { ids::glideDepth, 100.0f }, { ids::glideSmooth, 0.3f } } },
-        { "Seasick twin strings", 17,
+        { "Seasick twin synced", 17,
           { { ids::glideMode, 1.0f }, { ids::glideDivision, 3.0f }, { ids::glideShape, shape(ShapePreset::Sine) },
             { ids::glideDepth, 15.0f }, { ids::glideDirection, 1.0f }, { ids::glideRandom, 0.3f },
             { ids::glideTwinDetune, 12.0f }, { ids::glideTwinLevel, 0.5f } } },
-        { "Reverse Gate, no glide", 17, { { ids::glideOn, 0.0f } } },
+        { "Synced swell 1 bar", 17,
+          { { ids::erRoomSize, 8.0f }, { ids::erLiveness, 5.0f }, { ids::erDelay, 10.0f }, { ids::glideMode, 1.0f }, { ids::glideDivision, 2.0f }, { ids::glideShape, shape(ShapePreset::Swell) },
+            { ids::glideDepth, 30.0f }, { ids::glideRandom, 0.1f } } },
+        { "Reverse Gate no glide", 17, { { ids::glideOn, 0.0f } } },
+        { "Short reverse swell", 17,
+          { { ids::erRoomSize, 8.0f }, { ids::erLiveness, 5.0f }, { ids::erDelay, 10.0f }, { ids::glideOn, 0.0f } } },
+        { "Gated slap", 16,
+          { { ids::erRoomSize, 1.0f }, { ids::erLiveness, 3.0f }, { ids::erDelay, 5.0f }, { ids::erLpf, 16.0f /* 6.3 kHz */ }, { ids::glideOn, 0.0f } } },
         { "Gate Reverb", 16, { { ids::glideOn, 0.0f } } },
         { "Early Ref 1", 5, { { ids::glideOn, 0.0f } } },
         { "Early Ref 2", 6, { { ids::glideOn, 0.0f } } },
@@ -106,7 +123,7 @@ Glide90Processor::Glide90Processor()
     : AudioProcessor(BusesProperties()
                          .withInput("Input", juce::AudioChannelSet::stereo(), true)
                          .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
-      apvts(*this, nullptr, "GLIDE90", createParameterLayout())
+      apvts(*this, &undo, "GLIDE90", createParameterLayout())
 {
     auto p = [this](const char* id) { return apvts.getRawParameterValue(id); };
     raw = { p(ids::erType),           p(ids::erRoomSize),        p(ids::erLiveness),     p(ids::erDelay),
@@ -115,11 +132,13 @@ Glide90Processor::Glide90Processor()
             p(ids::glideMode),        p(ids::glidePeriod),       p(ids::glideDivision),  p(ids::glideDepth),
             p(ids::glideDirection),   p(ids::glideRandom),       p(ids::glideSmooth),    p(ids::glideShape),
             p(ids::glideTriggerSource), p(ids::glideSensitivity), p(ids::glideManualSource), p(ids::glideBar),
-            p(ids::glideTwinDetune),  p(ids::glideTwinLevel),    p(ids::glideMix),       p(ids::glidePosition) };
+            p(ids::glideTwinDetune),  p(ids::glideTwinLevel),    p(ids::glideMix),       p(ids::glidePosition),
+            p(ids::outputMode),       p(ids::glideDynamics) };
     for (size_t i = 0; i < presetShapes.size(); ++i)
         presetShapes[i] = sway::makeShape((sway::ShapePreset) i);
     customShape = audioCustomShape = presetShapes[0];
     apvts.addParameterListener(ids::memory, this);
+    captureBaseline();
 }
 
 Glide90Processor::~Glide90Processor()
@@ -212,6 +231,7 @@ void Glide90Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
     w.smooth = raw.glideSmooth->load();
     w.triggerFromPick = (TriggerSource) choice(raw.glideTriggerSource) == TriggerSource::Pick;
     w.sensitivity = raw.glideSensitivity->load();
+    w.dynamics = raw.glideDynamics->load();
     w.midiTriggerVelocity = noteVelocity;
     w.twinDetuneCents = raw.glideTwinDetune->load();
     w.twinLevel = raw.glideTwinLevel->load();
@@ -256,6 +276,7 @@ void Glide90Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
         buffer.clear(ch, 0, n);
     lastBarCents.store(glideProcessor.barCents());
     lastGlidePhase.store(glideProcessor.phase());
+    lastPickAttacks.store(glideProcessor.pickAttacks());
 }
 
 void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start, int num, const spx::SpxSettings& s,
@@ -292,6 +313,17 @@ void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start,
     {
         float* channels[] = { l, r };
         glideProcessor.process(channels, 2, num, w);
+    }
+
+    switch ((OutputMode) choice(raw.outputMode))
+    {
+        case OutputMode::LeftOnly: juce::FloatVectorOperations::copy(r, l, num); break;
+        case OutputMode::MonoSum:
+            juce::FloatVectorOperations::add(l, r, num);
+            juce::FloatVectorOperations::multiply(l, 0.5f, num);
+            juce::FloatVectorOperations::copy(r, l, num);
+            break;
+        case OutputMode::Stereo: break;
     }
 }
 
@@ -421,10 +453,11 @@ void Glide90Processor::loadFactoryPreset(int index)
     const auto& p = factoryPresets()[(size_t) index];
     currentFactoryPreset = index;
     resetForPreset();
-    recallMemory(p.memory);
+    recallMemory(p.program);
     for (const auto& [id, value] : p.values)
         setParameter(id, value);
     presetName = p.name;
+    captureBaseline();
 }
 
 juce::File Glide90Processor::userPresetDirectory()
@@ -441,11 +474,8 @@ juce::Array<juce::File> Glide90Processor::userPresetFiles() const
     return files;
 }
 
-bool Glide90Processor::saveUserPreset(const juce::String& name)
+juce::ValueTree Glide90Processor::presetState()
 {
-    const auto clean = juce::File::createLegalFileName(name.trim());
-    if (clean.isEmpty())
-        return false;
     juce::ValueTree preset(kPresetFileTree);
     auto params = apvts.copyState();
     for (int i = params.getNumChildren(); --i >= 0;)
@@ -455,14 +485,31 @@ bool Glide90Processor::saveUserPreset(const juce::String& name)
     preset.appendChild(shapeToTree(), nullptr);
     preset.setProperty(kAlgorithmProp, currentAlgorithm.load(), nullptr);
     preset.setProperty(kLoadedProp, loaded.load(), nullptr);
+    return preset;
+}
 
+void Glide90Processor::applyPresetState(const juce::ValueTree& preset)
+{
+    shapeFromTree(preset.getChildWithName(kShapeTree));
+    currentAlgorithm.store(juce::jlimit(1, 30, (int) preset.getProperty(kAlgorithmProp, 17)));
+    // Set before the memory number arrives, so it does not recall that memory over the preset.
+    loaded.store(juce::jlimit(1, MemoryBank::kCount, (int) preset.getProperty(kLoadedProp, 17)));
+    setParametersExactly(preset.getChildWithName(apvts.state.getType()), false);
+}
+
+bool Glide90Processor::saveUserPreset(const juce::String& name)
+{
+    const auto clean = juce::File::createLegalFileName(name.trim());
+    if (clean.isEmpty())
+        return false;
     const auto dir = userPresetDirectory();
     if (!dir.createDirectory())
         return false;
-    auto xml = preset.createXml();
+    auto xml = presetState().createXml();
     if (xml == nullptr || !xml->writeTo(dir.getChildFile(clean + kPresetExtension)))
         return false;
     presetName = clean;
+    captureBaseline();
     return true;
 }
 
@@ -474,14 +521,42 @@ bool Glide90Processor::loadUserPreset(const juce::File& file)
     const auto preset = juce::ValueTree::fromXml(*xml);
     if (!preset.hasType(kPresetFileTree))
         return false;
-
-    shapeFromTree(preset.getChildWithName(kShapeTree));
-    currentAlgorithm.store(juce::jlimit(1, 30, (int) preset.getProperty(kAlgorithmProp, 17)));
-    // Set before the memory number arrives, so it does not recall that memory over the preset.
-    loaded.store(juce::jlimit(1, MemoryBank::kCount, (int) preset.getProperty(kLoadedProp, 17)));
-    setParametersExactly(preset.getChildWithName(apvts.state.getType()), false);
+    applyPresetState(preset);
     presetName = file.getFileNameWithoutExtension();
+    captureBaseline();
     return true;
+}
+
+void Glide90Processor::captureBaseline()
+{
+    baseline.clear();
+    for (auto* p : getParameters())
+        baseline.push_back(p->getValue());
+}
+
+bool Glide90Processor::isPresetModified() const
+{
+    const auto& params = getParameters();
+    if (baseline.size() != (size_t) params.size())
+        return false;
+    for (int i = 0; i < params.size(); ++i)
+        if (auto* p = dynamic_cast<juce::RangedAudioParameter*>(params[i]))
+            if (!rigParameters().contains(p->getParameterID()) && std::abs(p->getValue() - baseline[(size_t) i]) > 1e-4f)
+                return true;
+    return false;
+}
+
+void Glide90Processor::selectAB(int slot)
+{
+    slot = juce::jlimit(0, 1, slot);
+    if (slot == abIndex)
+        return;
+    abStates[(size_t) abIndex] = presetState();
+    abIndex = slot;
+    if (abStates[(size_t) slot].isValid())
+        applyPresetState(abStates[(size_t) slot]);
+    else
+        abStates[(size_t) slot] = presetState(); // B starts as a copy of A
 }
 
 void Glide90Processor::setParametersExactly(const juce::ValueTree& paramsTree, bool missingToDefault)
@@ -509,10 +584,20 @@ void Glide90Processor::setParameter(const char* id, float plainValue)
     p->endChangeGesture();
 }
 
-void Glide90Processor::parameterChanged(const juce::String& id, float)
+void Glide90Processor::parameterChanged(const juce::String& id, float value)
 {
-    if (id == ids::memory)
-        triggerAsyncUpdate(); // may come from the audio thread (automation)
+    if (id != ids::memory)
+        return;
+    if (undo.isPerformingUndoRedo())
+    {
+        // Undo restores the edit buffer's values along with the number: do not recall over them.
+        const int n = juce::jlimit(1, MemoryBank::kCount, juce::roundToInt(value));
+        loaded.store(n);
+        if (const auto m = bank.get(n); m.used)
+            currentAlgorithm.store(m.algorithm);
+        return;
+    }
+    triggerAsyncUpdate(); // may come from the audio thread (automation)
 }
 
 void Glide90Processor::handleAsyncUpdate()
@@ -587,6 +672,7 @@ void Glide90Processor::getStateInformation(juce::MemoryBlock& destData)
     st.setProperty(kPresetProp, currentFactoryPreset, nullptr);
     st.setProperty(kPresetNameProp, presetName, nullptr);
     st.setProperty(kVersionProp, kStateVersion, nullptr);
+    st.setProperty(kScaleProp, scale, nullptr);
     if (auto xml = st.createXml())
         copyXmlToBinary(*xml, destData);
 }
@@ -608,6 +694,7 @@ void Glide90Processor::setStateInformation(const void* data, int sizeInBytes)
     currentAlgorithm.store(juce::jlimit(1, 30, (int) st.getProperty(kAlgorithmProp, 17)));
     currentFactoryPreset = juce::jlimit(0, getNumPrograms() - 1, (int) st.getProperty(kPresetProp, 0));
     presetName = st.getProperty(kPresetNameProp, "Init").toString();
+    setUiScale((float) st.getProperty(kScaleProp, 1.0f));
     // Set before the parameters arrive, so restoring the memory number does not recall it over the
     // restored (possibly edited) values.
     loaded.store(juce::jlimit(1, MemoryBank::kCount, (int) st.getProperty(kLoadedProp, 17)));
@@ -622,6 +709,8 @@ void Glide90Processor::setStateInformation(const void* data, int sizeInBytes)
     // at a raw 0.57 stays there instead of the stored 1), and leaves parameters missing from older
     // states at whatever they were. Set every value exactly, missing ones to their default.
     setParametersExactly(saved, true);
+    captureBaseline();
+    undo.clearUndoHistory();
 }
 
 } // namespace glide90

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Widgets.h"
+#include "Controls.h"
 
 namespace glide90
 {
@@ -10,26 +10,31 @@ class Glide90Processor;
 namespace glide90::ui
 {
 
-// Every SPX setting on a knob: program, early-reflection parameters, mix and levels.
+// Every reverb setting on a control: program, type, the early-reflection parameters, mix and output
+// level. (The rear-panel switches are on the RearPanel strip.)
 class SpxControls : public juce::Component, private juce::Timer
 {
 public:
     explicit SpxControls(Glide90Processor& p);
     ~SpxControls() override;
 
+    // Called when a control is touched, with its parameter (the LCD shows it).
+    std::function<void(const juce::RangedAudioParameter&)> onTouch;
+
     void paint(juce::Graphics&) override;
     void resized() override;
 
 private:
     void timerCallback() override;
-    void rebuildProgramList();
+    void stepProgram(int delta);
+
+    static constexpr int kRowTop = 24;
 
     Glide90Processor& proc;
-    juce::ComboBox program;
-    ChoiceButtons type;
-    Knob roomSize, liveness, delay, lpf, mix, output, input;
-    ToggleKey inPad, outPad;
-    int listedRevision = -1;
+    GlassSelector program { true };
+    SelectorSwitch type;
+    Knob roomSize, liveness, delay, lpf, mix, output;
+
     int shownAlgorithm = -1;
 };
 

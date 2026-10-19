@@ -153,22 +153,151 @@ TEST_CASE("sync mode follows the host's beat position")
     }
 }
 
-TEST_CASE("trigger mode restarts the shape on a MIDI note")
+TEST_CASE("trigger mode plays the shape once per MIDI note, then rests")
 {
     const double rate = 48000.0;
+    const auto shape = sway::makeShape(sway::ShapePreset::Dive);
     SwaySettings s = steady();
     s.mode = GlideMode::Trigger;
     s.triggerFromPick = false;
-    s.cycleSeconds = 1.0;
+    s.shape = &shape;
+    s.depthCents = 50.0f;
+    s.cycleSeconds = 0.25;
     SwayProcessor p;
     p.prepare(rate);
     std::vector<float> block(256, 0.0f);
-    for (int b = 0; b < 40; ++b)
-        p.process(block.data(), 256, s);
-    CHECK(p.phase() > 0.1f);
+    auto runBlocks = [&](int n) {
+        for (int b = 0; b < n; ++b)
+            p.process(block.data(), 256, s);
+    };
+
+    runBlocks(40); // no note yet: the bar rests
+    CHECK(p.phase() == 0.0f);
+    CHECK(std::abs(p.barCents()) < 0.01f);
+
     s.midiTriggerAt = 200;
-    p.process(block.data(), 256, s);
-    CHECK(p.phase() == doctest::Approx(55.0 / rate).epsilon(0.05));
+    runBlocks(1);
+    s.midiTriggerAt = -1;
+    runBlocks(5); // ~32 ms into the dive
+    CHECK(p.phase() > 0.05f);
+    CHECK(p.barCents() < -10.0f);
+
+    runBlocks(60); // well past one cycle: back at rest and staying there
+    CHECK(p.phase() == 0.0f);
+    CHECK(std::abs(p.barCents()) < 1.0f);
+}
+
+TEST_CASE("pick attacks are caught in fast strumming over ringing chords, once each")
+{
+    // Down and up strums of a six-string chord every 1/8 at 120 BPM: each string a bright plucked
+    // tone that rings for seconds, so the chords pile up; the strings are hit 4 ms apart, up strums
+    // 6 dB softer and in reverse order, with a short pick click on each string.
+    const double rate = 48000.0;
+    const double strings[] { 82.4, 110.0, 146.8, 196.0, 246.9, 329.6 };
+    const double spacing = 0.25, seconds = 6.0;
+    std::vector<float> in((size_t) (seconds * rate), 0.0f);
+    uint32_t seed = 9;
+    int strums = 0;
+    for (double t0 = 0.5; t0 < seconds - 0.5; t0 += spacing, ++strums)
+    {
+        const bool up = strums % 2 == 1;
+        const float level = up ? 0.5f : 1.0f;
+        for (int s = 0; s < 6; ++s)
+        {
+            const size_t start = (size_t) ((t0 + 0.004 * (up ? 5 - s : s)) * rate);
+            for (size_t i = start; i < in.size() && i < start + (size_t) (3.0 * rate); ++i)
+            {
+                const double t = (double) (i - start) / rate;
+                double v = 0.0;
+                for (int h = 1; h <= 16; ++h)
+                    v += std::sin(2.0 * test::kPi * strings[s] * h * t) / h * std::exp(-t * (0.8 + 0.6 * h));
+                if (i - start < (size_t) (0.002 * rate))
+                {
+                    seed = seed * 1664525u + 1013904223u;
+                    v += 0.5 * ((double) (seed >> 8) / 8388608.0 - 1.0); // the pick
+                }
+                in[i] += (float) (0.05 * level * v);
+            }
+        }
+    }
+
+    for (float sensitivity : { 0.1f, 0.5f, 0.8f, 1.0f })
+    {
+        CAPTURE(sensitivity);
+        SwaySettings s = steady();
+        s.mode = GlideMode::Trigger;
+        s.sensitivity = sensitivity;
+        SwayProcessor p;
+        p.prepare(rate);
+        auto x = in;
+        for (size_t i = 0; i < x.size(); i += 256)
+            p.process(x.data() + i, (int) std::min<size_t>(256, x.size() - i), s);
+        MESSAGE("strums " << strums << ", attacks detected " << p.pickAttacks());
+        CHECK(p.pickAttacks() <= strums); // never twice for one strum
+        if (sensitivity >= 0.5f)
+            CHECK(p.pickAttacks() >= strums - 1); // the soft up strums too
+        else
+            CHECK(p.pickAttacks() >= strums / 2); // at least the down strums
+    }
+}
+
+TEST_CASE("with DYNAMICS, a harder pick strike bends further")
+{
+    // Single plucks with a pick click, alternating hard and 12 dB softer, half a second apart.
+    const double rate = 48000.0;
+    std::vector<float> in((size_t) (8 * rate), 0.0f);
+    uint32_t seed = 5;
+    std::vector<size_t> starts;
+    for (int k = 0; k < 14; ++k)
+    {
+        const size_t start = (size_t) ((0.5 + 0.5 * k) * rate);
+        starts.push_back(start);
+        const float level = k % 2 == 0 ? 1.0f : 0.25f;
+        for (size_t i = start; i < start + (size_t) (0.4 * rate); ++i)
+        {
+            const double t = (double) (i - start) / rate;
+            double v = std::sin(2.0 * test::kPi * 196.0 * t) * std::exp(-t * 6.0)
+                       * std::min(1.0, (0.4 - t) / 0.02); // faded out, not cut (a cut would click)
+            if (i - start < (size_t) (0.002 * rate))
+            {
+                seed = seed * 1664525u + 1013904223u;
+                v += 0.6 * ((double) (seed >> 8) / 8388608.0 - 1.0);
+            }
+            in[i] = (float) (0.3 * level * v);
+        }
+    }
+    const auto shape = sway::makeShape(sway::ShapePreset::Dive);
+    auto deepest = [&](float dynamics) {
+        SwaySettings s = steady();
+        s.mode = GlideMode::Trigger;
+        s.shape = &shape;
+        s.depthCents = 60.0f;
+        s.cycleSeconds = 0.3;
+        s.dynamics = dynamics;
+        SwayProcessor p;
+        p.prepare(rate);
+        std::vector<float> block(256);
+        std::vector<float> lowest(starts.size(), 0.0f);
+        for (size_t i = 0; i < in.size(); i += 256)
+        {
+            std::copy(in.begin() + (long) i, in.begin() + (long) i + 256, block.begin());
+            p.process(block.data(), 256, s);
+            for (size_t k = 0; k < starts.size(); ++k)
+                if (i >= starts[k] && i < starts[k] + (size_t) (0.25 * rate))
+                    lowest[k] = std::min(lowest[k], p.barCents());
+        }
+        return lowest;
+    };
+
+    const auto full = deepest(0.0f);
+    const auto dyn = deepest(1.0f);
+    for (size_t k = 4; k + 1 < full.size(); k += 2) // once the average has settled
+    {
+        CAPTURE(k);
+        CHECK(full[k] == doctest::Approx(full[k + 1]).epsilon(0.1)); // DYNAMICS 0: every strike alike
+        CHECK(dyn[k] < -50.0f);                                       // a hard strike: about full depth
+        CHECK(dyn[k + 1] > 0.7f * dyn[k]);                            // the soft one bends clearly less
+    }
 }
 
 TEST_CASE("random never pushes the bar past the depth")

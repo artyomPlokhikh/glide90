@@ -3,6 +3,7 @@
 #include "Shape.h"
 
 #include <cstdint>
+#include <vector>
 
 namespace sway
 {
@@ -11,7 +12,7 @@ enum class GlideMode
 {
     Free,    // the shape loops every cycleSeconds
     Sync,    // the shape loops every syncBeats, locked to the host's beat position
-    Trigger, // the shape restarts on each picking attack (or MIDI note) and loops at cycleSeconds
+    Trigger, // each picking attack (or MIDI note) plays the shape once, over cycleSeconds
     Manual,  // no movement of its own: the bar follows `manual` (knob, pitch bend, CC)
 };
 
@@ -42,6 +43,7 @@ struct SwaySettings
     float sensitivity = 0.5f;     // Trigger: attack detector sensitivity
     int midiTriggerAt = -1;       // Trigger: sample index of a MIDI note-on in this block, or -1
     float midiTriggerVelocity = 1.0f;
+    float dynamics = 0.0f;        // Trigger: 0 = every strike or note at full depth, 1 = depth follows its strength
 
     float manual = 0.0f;          // Manual: -1 - 1, positive pushes the bar (towards `direction`)
 
@@ -64,19 +66,33 @@ public:
 
     // Position in the cycle (0 - 1) of the last sample, for display.
     float phase() const { return (float) cyclePhase; }
+    // Picking attacks detected so far (TRIGGER from PICK ATTACK), for display and tests.
+    int pickAttacks() const { return triggers; }
 
 private:
     float uniform();
     void startCycle(bool freeTiming, float random);
     bool detectAttack(float input, float sensitivity);
+    float strikeStrength(float peak);
+
+    static constexpr float kTypicalStrike = 0.85f; // depth of a strike at the player's usual level
 
     double rate = 48000.0;
     double cyclePhase = 0.0;
+    bool resting = true; // TRIGGER: the shape has played out and waits for the next attack
     float depthScale = 1.0f, rateScale = 1.0f, velocityScale = 1.0f;
     float drift = 0.0f, driftTarget = 0.0f;
     int driftCountdown = 0;
-    float envFast = 0.0f, envSlow = 0.0f;
+    float envFast = 0.0f;
+    float highPassLow = 0.0f, highPassLow2 = 0.0f, highPassCoeff = 0.3f;
+    std::vector<float> levelHistory; // the top-end level over the last 10 ms, in dB
+    int historyPos = 0;
     int refractory = 0;
+    int triggers = 0;
+    int strikeSamplesLeft = 0; // measuring the strike just detected
+    float strikePeak = 0.0f;
+    float averageStrikeDb = 0.0f;
+    bool haveAverageStrike = false;
     float smoothed = 0.0f;
     uint32_t seed = 0x1234567u;
 };

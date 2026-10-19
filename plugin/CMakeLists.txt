@@ -12,7 +12,7 @@ elseif(UNIX)
 endif()
 
 juce_add_plugin(Glide90
-    PRODUCT_NAME "Glide90"
+    PRODUCT_NAME "GLIDE90"
     COMPANY_NAME "Glide90"
     BUNDLE_ID "io.github.glide90.Glide90"
     PLUGIN_MANUFACTURER_CODE Gl9d
@@ -29,17 +29,28 @@ juce_add_plugin(Glide90
     LV2URI "https://github.com/glide90/glide90"
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
+# Fonts (SIL Open Font License, licences next to them): Barlow Condensed for the panel legends,
+# DSEG7 for the memory number.
+juce_add_binary_data(glide90_fonts
+    NAMESPACE GlideFonts
+    HEADER_NAME GlideFonts.h
+    SOURCES
+        Resources/fonts/BarlowCondensed-Medium.ttf
+        Resources/fonts/BarlowCondensed-SemiBold.ttf
+        Resources/fonts/DSEG7Classic-Bold.ttf)
+
 set(GLIDE90_PLUGIN_SOURCES
     Source/Parameters.cpp
     Source/Memories.cpp
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/ui/PanelLookAndFeel.cpp
-    Source/ui/Widgets.cpp
+    Source/ui/Controls.cpp
     Source/ui/LcdDisplay.cpp
     Source/ui/HeaderBar.cpp
     Source/ui/SpxPanel.cpp
     Source/ui/SpxControls.cpp
+    Source/ui/RearPanel.cpp
     Source/ui/ShapeDisplay.cpp
     Source/ui/GlidePanel.cpp)
 set(GLIDE90_JUCE_DEFINITIONS
@@ -55,6 +66,7 @@ target_compile_definitions(Glide90 PUBLIC ${GLIDE90_JUCE_DEFINITIONS})
 target_link_libraries(Glide90
     PRIVATE
         glide90_dsp
+        glide90_fonts
         juce::juce_audio_utils
     PUBLIC
         juce::juce_recommended_config_flags
@@ -68,8 +80,8 @@ if(GLIDE90_BUILD_TESTS)
     target_sources(glide90_plugin_tests PRIVATE ${GLIDE90_PLUGIN_SOURCES} ${CMAKE_SOURCE_DIR}/tests/plugin/test_plugin.cpp)
     target_include_directories(glide90_plugin_tests PRIVATE Source ${doctest_SOURCE_DIR})
     target_compile_definitions(glide90_plugin_tests PRIVATE ${GLIDE90_JUCE_DEFINITIONS}
-        JucePlugin_Name="Glide90" JUCE_STANDALONE_APPLICATION=1 JUCE_MODAL_LOOPS_PERMITTED=1)
-    target_link_libraries(glide90_plugin_tests PRIVATE glide90_dsp juce::juce_audio_utils
+        JucePlugin_Name="GLIDE90" JUCE_STANDALONE_APPLICATION=1 JUCE_MODAL_LOOPS_PERMITTED=1)
+    target_link_libraries(glide90_plugin_tests PRIVATE glide90_dsp glide90_fonts juce::juce_audio_utils
         juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
     add_test(NAME plugin COMMAND glide90_plugin_tests)
 endif()

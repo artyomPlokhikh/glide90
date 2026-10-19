@@ -68,6 +68,7 @@ public:
     // for display.
     float barCents() const { return lastCents; }
     float phase() const { return bar.phase(); }
+    int pickAttacks() const { return bar.pickAttacks(); }
 
 private:
     BarGenerator bar;

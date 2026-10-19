@@ -1,7 +1,7 @@
 #pragma once
 
 #include "LcdDisplay.h"
-#include "Widgets.h"
+#include "Controls.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -26,6 +26,9 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
 
+    // Shows a parameter on the LCD's second line for a moment, as the unit does while editing.
+    void showParameter(const juce::RangedAudioParameter& p);
+
 private:
     void timerCallback() override;
     void refresh();
@@ -39,8 +42,7 @@ private:
     LcdDisplay lcd;
     SevenSegment memoryLed;
     LevelMeter meter;
-    juce::Slider inputKnob { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
-    juce::AudioProcessorValueTreeState::SliderAttachment inputAttachment;
+    Knob inputKnob;
 
     juce::TextButton parameterKey { "PARAM-\nETER" }, balanceKey { "BALANCE" };
     juce::TextButton incKey { juce::String::fromUTF8("\xe2\x96\xb2") }, decKey { juce::String::fromUTF8("\xe2\x96\xbc") };

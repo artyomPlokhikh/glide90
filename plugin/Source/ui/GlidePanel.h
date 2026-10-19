@@ -1,7 +1,7 @@
 #pragma once
 
+#include "Controls.h"
 #include "ShapeDisplay.h"
-#include "Widgets.h"
 
 namespace glide90
 {
@@ -11,8 +11,10 @@ class Glide90Processor;
 namespace glide90::ui
 {
 
-// The Glide block: the shape screen on the left, the controls on the right. Controls that do not
-// apply to the current mode swap out (RATE in ms or as a note value, the trigger or manual source).
+// The Glide unit in three groups: DRIVE (on, mode, and what the mode uses: rate, source, pick
+// sensitivity), the shape screen, and MOTION over SOUND (depth, direction, random, smooth; twin,
+// mix, position). Every control keeps its place; RATE becomes a note value in SYNC and the BAR in
+// MANUAL.
 class GlidePanel : public juce::Component, private juce::Timer
 {
 public:
@@ -25,14 +27,17 @@ public:
 private:
     void timerCallback() override;
     void updateForMode();
+    int choice(const char* id) const;
+
+    static constexpr int kRow1 = 24, kRow2 = 140;
 
     Glide90Processor& proc;
     ToggleKey on;
-    ChoiceButtons mode, direction, position;
+    SelectorSwitch mode;
+    GlassSelector source { false };
     ShapeDisplay display;
-    Knob period, division, depth, random, smooth, sensitivity, bar, twinDetune, twinLevel, mix;
-    juce::ComboBox triggerSource, manualSource;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> triggerAttachment, manualAttachment;
+    Knob period, division, bar, depth, random, smooth, twinDetune, twinLevel, mix, sensitivity, dynamics;
+    ToggleSwitch direction, position;
     int shownMode = -1, shownTrigger = -1, shownManual = -1;
 };
 

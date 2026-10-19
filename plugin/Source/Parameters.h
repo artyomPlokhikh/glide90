@@ -25,6 +25,7 @@ inline constexpr const char* input = "input";
 inline constexpr const char* inputSwitch = "input_switch";
 inline constexpr const char* outputSwitch = "output_switch";
 inline constexpr const char* bypass = "spx_bypass";
+inline constexpr const char* outputMode = "output_mode";
 
 // Glide: the vibrato bar.
 inline constexpr const char* glideOn = "glide_on";
@@ -38,6 +39,7 @@ inline constexpr const char* glideSmooth = "glide_smooth";
 inline constexpr const char* glideShape = "glide_shape";
 inline constexpr const char* glideTriggerSource = "glide_trigger_source";
 inline constexpr const char* glideSensitivity = "glide_sensitivity";
+inline constexpr const char* glideDynamics = "glide_dynamics";
 inline constexpr const char* glideManualSource = "glide_manual_source";
 inline constexpr const char* glideBar = "glide_bar";
 inline constexpr const char* glideTwinDetune = "glide_twin_detune";
@@ -58,6 +60,15 @@ enum class ManualSource
     PitchBend,
     ModWheel,
     Expression // CC 11
+};
+
+// What leaves the plugin: both SPX outputs, the left one on both channels (one output of the unit
+// into one amp), or their sum.
+enum class OutputMode
+{
+    Stereo,
+    LeftOnly,
+    MonoSum
 };
 
 enum class GlidePosition

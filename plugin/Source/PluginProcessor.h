@@ -82,12 +82,25 @@ public:
     bool saveUserPreset(const juce::String& name);
     bool loadUserPreset(const juce::File& file);
     juce::String currentPresetName() const { return presetName; }
+    // True once anything (but the rig's input gain) differs from the preset as loaded.
+    bool isPresetModified() const;
+
+    // --- Editing (message thread) ---
+    juce::UndoManager& undoManager() { return undo; }
+    // A/B: two working copies of the whole setting; switching keeps the one you leave.
+    int abSlot() const { return abIndex; }
+    void selectAB(int slot);
+    // Editor zoom, stored with the project.
+    float uiScale() const { return scale; }
+    void setUiScale(float s) { scale = juce::jlimit(0.75f, 2.0f, s); }
 
     // --- Meters and display (any thread) ---
     // Peak at the A/D since the last call, relative to its full scale.
     float takeInputPeak() { return inputPeak.exchange(0.0f); }
     float barCents() const { return lastBarCents.load(); }
     float glidePhase() const { return lastGlidePhase.load(); }
+    // Picking attacks detected so far (they restart the glide in TRIGGER mode).
+    int pickAttacks() const { return lastPickAttacks.load(); }
     double hostBpm() const { return lastBpm.load(); }
 
 private:
@@ -100,9 +113,13 @@ private:
     juce::ValueTree shapeToTree() const;
     void shapeFromTree(const juce::ValueTree& tree);
     void setParametersExactly(const juce::ValueTree& paramsTree, bool missingToDefault);
+    juce::ValueTree presetState();
+    void applyPresetState(const juce::ValueTree& preset);
+    void captureBaseline();
     void processChunk(juce::AudioBuffer<float>& buffer, int start, int num, const spx::SpxSettings& spxSettings,
                       sway::SwaySettings glide, int midiNoteAt);
 
+    juce::UndoManager undo; // before apvts, which records into it
     juce::AudioProcessorValueTreeState apvts;
     MemoryBank bank;
     std::atomic<int> bankRevision { 0 };
@@ -110,6 +127,10 @@ private:
     std::atomic<int> currentAlgorithm { 17 };
     int currentFactoryPreset = 0;
     juce::String presetName { "Init" };
+    std::vector<float> baseline; // normalised parameter values of the preset as loaded
+    std::array<juce::ValueTree, 2> abStates;
+    int abIndex = 0;
+    float scale = 1.0f;
 
     // The custom shape is edited on the message thread and copied for the audio thread under a lock
     // that the audio thread only ever tries.
@@ -132,6 +153,7 @@ private:
     float modWheel = 0.0f;   // 0 .. 1
     float expression = 0.0f; // 0 .. 1
     std::atomic<float> inputPeak { 0.0f }, lastBarCents { 0.0f }, lastGlidePhase { 0.0f };
+    std::atomic<int> lastPickAttacks { 0 };
     std::atomic<double> lastBpm { 120.0 };
 
     struct RawParams
@@ -139,7 +161,7 @@ private:
         std::atomic<float>*erType, *erRoomSize, *erLiveness, *erDelay, *erLpf, *balance, *outLevel, *input, *inputSwitch,
             *outputSwitch, *bypass, *glideOn, *glideMode, *glidePeriod, *glideDivision, *glideDepth, *glideDirection,
             *glideRandom, *glideSmooth, *glideShape, *glideTriggerSource, *glideSensitivity, *glideManualSource,
-            *glideBar, *glideTwinDetune, *glideTwinLevel, *glideMix, *glidePosition;
+            *glideBar, *glideTwinDetune, *glideTwinLevel, *glideMix, *glidePosition, *outputMode, *glideDynamics;
     } raw;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Glide90Processor)
