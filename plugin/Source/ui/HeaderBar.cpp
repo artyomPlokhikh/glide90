@@ -106,25 +106,20 @@ void HeaderBar::timerCallback()
 
 void HeaderBar::paint(juce::Graphics& g)
 {
-    const auto r = getLocalBounds().toFloat();
-    g.setColour(colours::header);
-    g.fillRect(r);
-    g.setColour(juce::Colours::black);
-    g.drawHorizontalLine(getHeight() - 1, 0.0f, r.getRight());
-
-    g.setFont(panelFont(22.0f, true));
+    drawRackUnit(g, getLocalBounds());
+    g.setFont(panelFont(20.0f, true));
     g.setColour(colours::legend);
-    g.drawText("GLIDE", 22, 0, 80, getHeight(), juce::Justification::centredLeft);
-    g.setColour(colours::glideAccent);
-    g.drawText("90", 89, 0, 40, getHeight(), juce::Justification::centredLeft);
-    g.setFont(panelFont(10.5f, true));
+    g.drawText("GLIDE", 42, 0, 80, getHeight(), juce::Justification::centredLeft);
+    g.setColour(colours::vfd);
+    g.drawText("90", 107, 0, 40, getHeight(), juce::Justification::centredLeft);
+    g.setFont(panelFont(10.0f));
     g.setColour(colours::legendDim);
-    g.drawText("REVERSE GATE  +  VIBRATO BAR", 132, 0, 220, getHeight(), juce::Justification::centredLeft);
+    g.drawText("PRESET", presets.getX() - 96, 0, 50, getHeight(), juce::Justification::centredRight);
 }
 
 void HeaderBar::resized()
 {
-    const int h = 28, y = (getHeight() - h) / 2;
+    const int h = 30, y = (getHeight() - h) / 2;
     int x = getWidth() / 2 - 160;
     prev.setBounds(x, y, 30, h);
     presets.setBounds(x + 34, y, 300, h);

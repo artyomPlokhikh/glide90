@@ -5,12 +5,12 @@
 namespace glide90::ui
 {
 
-// A parameter knob with its name above and its value below. Double-click resets to the default.
+// A parameter knob with its name above and its value in a small window below. Double-click resets
+// it to the default.
 class Knob : public juce::Component
 {
 public:
-    Knob(juce::AudioProcessorValueTreeState& state, const char* paramId, const juce::String& name,
-         juce::Colour accent, bool bipolar = false);
+    Knob(juce::AudioProcessorValueTreeState& state, const char* paramId, const juce::String& name);
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -23,23 +23,16 @@ private:
     juce::AudioProcessorValueTreeState::SliderAttachment attachment;
 };
 
-// A row (or column) of buttons choosing one value of a choice parameter.
+// A row of keys choosing one value of a choice parameter; the chosen key's LED is lit.
 class ChoiceButtons : public juce::Component, public juce::SettableTooltipClient
 {
 public:
-    ChoiceButtons(juce::AudioProcessorValueTreeState& state, const char* paramId, juce::Colour accent,
-                  bool vertical = false);
+    ChoiceButtons(juce::AudioProcessorValueTreeState& state, const char* paramId);
 
-    void paint(juce::Graphics&) override;
-    void mouseDown(const juce::MouseEvent&) override;
+    void resized() override;
 
 private:
-    juce::Rectangle<float> segment(int index) const;
-
-    juce::StringArray labels;
-    juce::Colour accent;
-    bool vertical;
-    int selected = 0;
+    juce::OwnedArray<juce::TextButton> keys;
     juce::ParameterAttachment attachment;
 };
 

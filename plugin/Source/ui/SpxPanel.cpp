@@ -14,13 +14,23 @@ constexpr int kMessageMs = 1500;
 
 } // namespace
 
-SpxPanel::SpxPanel(Glide90Processor& p) : proc(p), bypassKey(p.state(), ids::bypass, "BYPASS")
+SpxPanel::SpxPanel(Glide90Processor& p)
+    : proc(p), inputAttachment(p.state(), ids::input, inputKnob), bypassKey(p.state(), ids::bypass, "BYPASS")
 {
-    for (auto* c : std::initializer_list<juce::Component*> { &lcd, &memoryLed, &meter, &parameterKey, &balanceKey,
+    for (auto* c : std::initializer_list<juce::Component*> { &lcd, &memoryLed, &meter, &inputKnob, &parameterKey, &balanceKey,
                                                              &incKey, &decKey, &storeKey, &recallKey, &memUpKey,
                                                              &memDownKey, &bypassKey })
         addAndMakeVisible(c);
 
+    lcd.setFramed(false);
+    memoryLed.setFramed(false);
+    for (auto* key : { &parameterKey, &balanceKey })
+        key->getProperties().set(PanelLookAndFeel::kLed, true);
+    for (auto* key : { &incKey, &memUpKey })
+        key->getProperties().set(PanelLookAndFeel::kArrow, 1);
+    for (auto* key : { &decKey, &memDownKey })
+        key->getProperties().set(PanelLookAndFeel::kArrow, -1);
+    inputKnob.setTooltip("INPUT: unity at 8, +12 dB at 10. Not stored with memories.");
     lcd.setTooltip("Mouse wheel or drag: change the value shown");
     lcd.onStep = [this](int dir) { step(dir); };
     bypassKey.setTooltip("SPX bypass (analog): full bandwidth, the effect and BALANCE / OUT LVL bypassed");
@@ -166,6 +176,8 @@ void SpxPanel::refresh()
         message.clear();
 
     memoryLed.setValue(pendingMemory, pendingMemory != loaded);
+    parameterKey.setToggleState(!balanceMode, juce::dontSendNotification);
+    balanceKey.setToggleState(balanceMode, juce::dontSendNotification);
 
     juce::String bottom = message;
     if (bottom.isEmpty())
@@ -178,70 +190,64 @@ void SpxPanel::refresh()
 
 void SpxPanel::paint(juce::Graphics& g)
 {
-    const auto r = getLocalBounds().toFloat();
-    g.setGradientFill(juce::ColourGradient(colours::stripTop, 0.0f, 0.0f, colours::stripBottom, 0.0f, r.getBottom(), false));
-    g.fillRect(r);
-    // Brushed texture.
-    g.setColour(juce::Colours::white.withAlpha(0.015f));
-    for (int y = 2; y < getHeight(); y += 3)
-        g.drawHorizontalLine(y, 24.0f, r.getRight() - 24.0f);
+    drawRackUnit(g, getLocalBounds());
 
-    // Rack ears with their slots.
-    for (float x : { 0.0f, r.getRight() - 24.0f })
-    {
-        g.setColour(juce::Colour(0xff161617));
-        g.fillRect(x, 0.0f, 24.0f, r.getHeight());
-        g.setColour(juce::Colour(0xff050505));
-        for (float y : { 14.0f, r.getBottom() - 34.0f })
-            g.fillRoundedRectangle(x + 7.0f, y, 10.0f, 20.0f, 5.0f);
-    }
-
-    g.setColour(colours::legend);
-    g.setFont(panelFont(20.0f, true));
-    g.drawText("Glide90", 40, 26, 120, 24, juce::Justification::centredLeft);
-    g.setColour(colours::legendDim);
-    g.setFont(panelFont(9.5f, true));
-    g.drawText("SPX90-STYLE", 40, 50, 120, 12, juce::Justification::centredLeft);
-    g.drawText("DIGITAL MULTI-EFFECT", 40, 62, 140, 12, juce::Justification::centredLeft);
-
-    auto legend = [&g](const juce::String& text, juce::Rectangle<int> below) {
-        g.setFont(panelFont(9.0f, true));
-        g.setColour(colours::legendDim);
-        g.drawText(text, below.withY(below.getBottom() + 3).withHeight(12).expanded(30, 0), juce::Justification::centred);
+    auto legend = [&g](const juce::String& text, juce::Rectangle<int> area) {
+        g.setFont(panelFont(10.0f));
+        g.setColour(colours::legend);
+        g.drawText(text, area, juce::Justification::centred);
     };
-    legend("MEMORY", memoryLed.getBounds());
-    legend("PARAMETER", incKey.getBounds().getUnion(decKey.getBounds()));
-    legend("MEMORY", memUpKey.getBounds().getUnion(memDownKey.getBounds()));
+    legend("INPUT", inputKnob.getBounds().withHeight(12).translated(0, -14));
+    legend("0", { inputKnob.getX() - 2, inputKnob.getBottom() - 4, 12, 12 });
+    legend("10", { inputKnob.getRight() - 12, inputKnob.getBottom() - 4, 14, 12 });
+
+    // One smoked window over the logo, meter, memory number and LCD, as on the unit.
+    const auto window = juce::Rectangle<int>(meter.getX() - 104, lcd.getY() - 6, lcd.getRight() + 8 - (meter.getX() - 104),
+                                             lcd.getHeight() + 12)
+                            .toFloat();
+    drawGlass(g, window, 2.0f);
+    g.setColour(colours::legend);
+    g.setFont(panelFont(19.0f, true));
+    g.drawText("Glide90", window.withWidth(96.0f).withTrimmedBottom(window.getHeight() * 0.42f).toNearestInt(),
+               juce::Justification::centredBottom);
+    g.setColour(colours::vfd.withAlpha(0.75f));
+    g.setFont(panelFont(12.5f, true));
+    g.drawText("SPX90-STYLE", window.withWidth(96.0f).withTrimmedTop(window.getHeight() * 0.58f).toNearestInt(),
+               juce::Justification::centredTop);
+    g.setColour(colours::legendDim);
+    g.setFont(panelFont(9.0f));
+    g.drawText("MEMORY", memoryLed.getBounds().withY(memoryLed.getBottom()).withHeight(12), juce::Justification::centred);
 }
 
 void SpxPanel::resized()
 {
-    meter.setBounds(158, 18, 40, 74);
-    memoryLed.setBounds(206, 26, 60, 50);
-    lcd.setBounds(274, 18, 280, 70);
+    inputKnob.setBounds(40, 34, 50, 50);
+    meter.setBounds(212, 22, 34, 68);
+    memoryLed.setBounds(252, 26, 58, 46);
+    lcd.setBounds(316, 20, 236, 70);
 
     // Keys as on the unit: PARAMETER, data up/down, BALANCE | STORE, memory up/down, RECALL | BYPASS.
-    const int top = 22, keyH = 34, w = 54, arrowW = 32;
-    int x = 566;
-    auto key = [&](juce::Button& b, int width) {
-        b.setBounds(x, top + 18, width, keyH);
-        x += width + 4;
+    const int keyTop = 33, keyH = 44, w = 52, arrowW = 34;
+    int x = 576;
+    auto key = [&](juce::Button& b) {
+        b.setBounds(x, keyTop, w, keyH);
+        x += w + 4;
     };
     auto arrows = [&](juce::Button& up, juce::Button& down) {
-        up.setBounds(x, top, arrowW, 33);
-        down.setBounds(x, top + 37, arrowW, 33);
+        up.setBounds(x, 14, arrowW, 40);
+        down.setBounds(x, 56, arrowW, 40);
         x += arrowW + 4;
     };
-    key(parameterKey, w);
+    key(parameterKey);
     arrows(incKey, decKey);
-    key(balanceKey, w);
-    x += 6;
-    key(storeKey, w);
-    arrows(memUpKey, memDownKey);
-    key(recallKey, w);
+    key(balanceKey);
     x += 8;
-    key(bypassKey, 66);
-    jassert(bypassKey.getRight() <= getWidth() - 24 - 8);
+    key(storeKey);
+    arrows(memUpKey, memDownKey);
+    key(recallKey);
+    x += 12;
+    key(bypassKey);
+    jassert(bypassKey.getRight() <= getWidth() - PanelLookAndFeel::kEar);
 }
 
 } // namespace glide90::ui

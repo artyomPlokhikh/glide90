@@ -5,14 +5,16 @@
 namespace glide90::ui
 {
 
-Knob::Knob(juce::AudioProcessorValueTreeState& state, const char* paramId, const juce::String& n, juce::Colour accent,
-           bool bipolar)
+Knob::Knob(juce::AudioProcessorValueTreeState& state, const char* paramId, const juce::String& n)
     : name(n), attachment(state, paramId, slider)
 {
-    slider.getProperties().set(PanelLookAndFeel::kAccent, (juce::int64) accent.getARGB());
-    slider.getProperties().set(PanelLookAndFeel::kBipolar, bipolar);
-    slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 90, 18);
-    slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+    slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 74, 20);
+    // Set here rather than by the look-and-feel: the value box takes its colours when it is created,
+    // before the editor's look-and-feel reaches this knob.
+    slider.setColour(juce::Slider::textBoxTextColourId, colours::vfd);
+    slider.setColour(juce::Slider::textBoxBackgroundColourId, colours::glass);
+    slider.setColour(juce::Slider::textBoxOutlineColourId, colours::glassEdge);
+    slider.setColour(juce::Slider::textBoxHighlightColourId, colours::vfd.withAlpha(0.3f));
     auto* p = state.getParameter(paramId);
     slider.setDoubleClickReturnValue(true, p->convertFrom0to1(p->getDefaultValue()));
     slider.setMouseDragSensitivity(220);
@@ -21,71 +23,43 @@ Knob::Knob(juce::AudioProcessorValueTreeState& state, const char* paramId, const
 
 void Knob::paint(juce::Graphics& g)
 {
-    g.setFont(panelFont(11.5f, true));
+    g.setFont(panelFont(11.0f));
     g.setColour(isEnabled() ? colours::legend : colours::legendDim);
-    g.drawText(name, getLocalBounds().removeFromTop(16), juce::Justification::centred);
+    g.drawText(name, getLocalBounds().removeFromTop(15), juce::Justification::centred);
 }
 
 void Knob::resized()
 {
-    slider.setBounds(getLocalBounds().withTrimmedTop(16));
+    slider.setBounds(getLocalBounds().withTrimmedTop(15));
 }
 
-ChoiceButtons::ChoiceButtons(juce::AudioProcessorValueTreeState& state, const char* paramId, juce::Colour a,
-                             bool isVertical)
-    : accent(a), vertical(isVertical),
-      attachment(*state.getParameter(paramId), [this](float v) {
-          selected = juce::roundToInt(v);
-          repaint();
+ChoiceButtons::ChoiceButtons(juce::AudioProcessorValueTreeState& state, const char* paramId)
+    : attachment(*state.getParameter(paramId), [this](float v) {
+          const int selected = juce::roundToInt(v);
+          for (int i = 0; i < keys.size(); ++i)
+          {
+              keys[i]->setToggleState(i == selected, juce::dontSendNotification);
+              keys[i]->repaint();
+          }
       })
 {
     if (auto* choice = dynamic_cast<juce::AudioParameterChoice*>(state.getParameter(paramId)))
-        labels = choice->choices;
+        for (int i = 0; i < choice->choices.size(); ++i)
+        {
+            auto* key = keys.add(new juce::TextButton(choice->choices[i]));
+            key->getProperties().set(PanelLookAndFeel::kLed, true);
+            key->onClick = [this, i] { attachment.setValueAsCompleteGesture((float) i); };
+            addAndMakeVisible(key);
+        }
     attachment.sendInitialUpdate();
 }
 
-juce::Rectangle<float> ChoiceButtons::segment(int index) const
+void ChoiceButtons::resized()
 {
-    const auto r = getLocalBounds().toFloat().reduced(1.0f);
-    const int n = juce::jmax(1, labels.size());
-    if (vertical)
-    {
-        const float h = r.getHeight() / (float) n;
-        return { r.getX(), r.getY() + h * (float) index, r.getWidth(), h };
-    }
-    const float w = r.getWidth() / (float) n;
-    return { r.getX() + w * (float) index, r.getY(), w, r.getHeight() };
-}
-
-void ChoiceButtons::paint(juce::Graphics& g)
-{
-    const auto r = getLocalBounds().toFloat().reduced(1.0f);
-    const float alpha = isEnabled() ? 1.0f : 0.4f;
-    g.setColour(juce::Colour(0xff0b0c0d).withAlpha(alpha));
-    g.fillRoundedRectangle(r, 4.0f);
-    g.setFont(panelFont(juce::jmin(12.0f, (vertical ? r.getHeight() / (float) juce::jmax(1, labels.size()) : r.getHeight()) * 0.5f), true));
-    for (int i = 0; i < labels.size(); ++i)
-    {
-        const auto s = segment(i).reduced(2.0f);
-        if (i == selected)
-        {
-            g.setColour(accent.withAlpha(alpha));
-            g.fillRoundedRectangle(s, 3.0f);
-            g.setColour(juce::Colour(0xff1a1612));
-        }
-        else
-            g.setColour(colours::legend.withAlpha(0.75f * alpha));
-        g.drawFittedText(labels[i], s.toNearestInt().reduced(2, 0), juce::Justification::centred, 1);
-    }
-    g.setColour(juce::Colours::black);
-    g.drawRoundedRectangle(r, 4.0f, 1.0f);
-}
-
-void ChoiceButtons::mouseDown(const juce::MouseEvent& e)
-{
-    for (int i = 0; i < labels.size(); ++i)
-        if (segment(i).contains(e.position))
-            attachment.setValueAsCompleteGesture((float) i);
+    const int n = juce::jmax(1, keys.size()), gap = 4;
+    const int w = (getWidth() - gap * (n - 1)) / n;
+    for (int i = 0; i < keys.size(); ++i)
+        keys[i]->setBounds(i * (w + gap), 0, i == n - 1 ? getWidth() - i * (w + gap) : w, getHeight());
 }
 
 ToggleKey::ToggleKey(juce::AudioProcessorValueTreeState& state, const char* paramId, const juce::String& label)
@@ -95,7 +69,7 @@ ToggleKey::ToggleKey(juce::AudioProcessorValueTreeState& state, const char* para
           repaint();
       })
 {
-    getProperties().set("led", true);
+    getProperties().set(PanelLookAndFeel::kLed, true);
     onClick = [this] { attachment.setValueAsCompleteGesture(getToggleState() ? 0.0f : 1.0f); };
     attachment.sendInitialUpdate();
 }

@@ -17,22 +17,20 @@ void LcdDisplay::setText(const juce::String& top, const juce::String& bottom)
 
 void LcdDisplay::paint(juce::Graphics& g)
 {
-    auto r = getLocalBounds().toFloat();
-    // Bezel and glass.
-    g.setColour(juce::Colour(0xff0b0b0c));
-    g.fillRoundedRectangle(r, 5.0f);
-    auto glass = r.reduced(6.0f);
-    g.setGradientFill(juce::ColourGradient(juce::Colour(0xff17241d), glass.getX(), glass.getY(),
-                                           juce::Colour(0xff0c140f), glass.getX(), glass.getBottom(), false));
-    g.fillRoundedRectangle(glass, 3.0f);
+    auto glass = getLocalBounds().toFloat();
+    if (framed)
+    {
+        drawGlass(g, glass);
+        glass = glass.reduced(6.0f);
+    }
 
     // 16 characters of 5 dots plus a 1-dot gap; two rows of 7 dots with a 3-dot gap between them.
     constexpr int dotsW = kColumns * 6 - 1, dotsH = 7 * 2 + 3;
     const float pitch = juce::jmin((glass.getWidth() - 12.0f) / dotsW, (glass.getHeight() - 10.0f) / dotsH);
-    const float dot = pitch * 0.86f;
+    const float dot = pitch * 0.82f;
     const float x0 = glass.getCentreX() - pitch * dotsW * 0.5f;
     const float y0 = glass.getCentreY() - pitch * dotsH * 0.5f;
-    const auto lit = juce::Colour(0xff9df2c0), unlit = juce::Colour(0xff15241b);
+    const auto lit = colours::vfd, unlit = colours::vfd.withAlpha(0.045f);
 
     for (int row = 0; row < 2; ++row)
     {
@@ -49,7 +47,7 @@ void LcdDisplay::paint(juce::Graphics& g)
                     const float px = x0 + (float) (col * 6 + x) * pitch, py = y0 + (float) (row * 10 + y) * pitch;
                     if (on)
                     {
-                        g.setColour(lit.withAlpha(0.18f)); // glow
+                        g.setColour(lit.withAlpha(0.12f)); // glow
                         g.fillRect(px - pitch * 0.3f, py - pitch * 0.3f, dot + pitch * 0.6f, dot + pitch * 0.6f);
                     }
                     g.setColour(on ? lit : unlit);
@@ -58,10 +56,6 @@ void LcdDisplay::paint(juce::Graphics& g)
         }
     }
 
-    // Glare.
-    g.setGradientFill(juce::ColourGradient(juce::Colours::white.withAlpha(0.05f), glass.getX(), glass.getY(),
-                                           juce::Colours::transparentWhite, glass.getX(), glass.getCentreY(), false));
-    g.fillRoundedRectangle(glass.withHeight(glass.getHeight() * 0.5f), 3.0f);
 }
 
 void LcdDisplay::mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel)
@@ -123,14 +117,12 @@ void SevenSegment::timerCallback()
 void SevenSegment::paint(juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat();
-    g.setColour(juce::Colour(0xff0b0b0c));
-    g.fillRoundedRectangle(r, 4.0f);
-    g.setColour(juce::Colour(0xff1d0806));
-    g.fillRoundedRectangle(r.reduced(4.0f), 2.0f);
+    if (framed)
+        drawGlass(g, r);
 
     // Segment bits: a b c d e f g.
     static constexpr uint8_t digits[10] { 0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x6f };
-    const auto lit = juce::Colour(0xffff3a22), unlit = juce::Colour(0xff3a100b);
+    const auto lit = juce::Colour(0xffff3a22), unlit = juce::Colour(0xff2a0e0a);
     const float h = r.getHeight() * 0.68f, w = h * 0.5f, t = h * 0.11f, skew = h * 0.08f;
     const float gap = w * 0.45f;
     float x = r.getCentreX() - (2.0f * w + gap) * 0.5f;
@@ -193,20 +185,19 @@ void LevelMeter::setLevelDb(float db)
 
 void LevelMeter::paint(juce::Graphics& g)
 {
-    // A column of seven LEDs, loudest at the top, with their thresholds on the left.
+    // A column of seven bars, loudest at the top, with their thresholds on the right.
     const auto r = getLocalBounds().toFloat();
     const float cell = r.getHeight() / 7.0f;
-    const float d = juce::jmin(cell * 0.62f, 8.0f);
-    g.setFont(panelFont(8.5f));
+    g.setFont(panelFont(8.0f));
     static const char* labels[7] { "-36", "-24", "-15", "-9", "-5", "-2", "0" };
     for (int i = 0; i < 7; ++i)
     {
         const auto colour = i == 6 ? colours::ledRed : (i == 5 ? colours::ledYellow : colours::ledGreen);
         const float cy = r.getBottom() - cell * ((float) i + 0.5f);
-        drawLed(g, juce::Rectangle<float>(d * 1.6f, d).withCentre({ r.getRight() - d, cy }), colour, levelDb >= kPointsDb[i]);
+        drawLed(g, juce::Rectangle<float>(r.getX(), cy - cell * 0.32f, 12.0f, cell * 0.64f), colour, levelDb >= kPointsDb[i]);
         g.setColour(colours::legendDim);
-        g.drawText(labels[i], juce::Rectangle<float>(r.getX(), cy - 5.0f, r.getWidth() - d * 2.2f, 10.0f),
-                   juce::Justification::centredRight);
+        g.drawText(labels[i], juce::Rectangle<float>(r.getX() + 15.0f, cy - 5.0f, r.getWidth() - 15.0f, 10.0f),
+                   juce::Justification::centredLeft);
     }
 }
 

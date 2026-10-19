@@ -5,6 +5,7 @@
 #include "PluginProcessor.h"
 
 #include <juce_events/juce_events.h>
+#include <juce_gui_basics/juce_gui_basics.h>
 
 using glide90::Glide90Processor;
 namespace ids = glide90::ids;
@@ -211,6 +212,23 @@ TEST_CASE("parameters missing from a saved state come back at their defaults")
     CHECK(plain(*b, ids::glideDepth) == doctest::Approx(30.0f));
     CHECK(plain(*b, ids::glideMix) == doctest::Approx(1.0f));
     CHECK(plain(*b, ids::glideOn) > 0.5f);
+}
+
+TEST_CASE("the editor builds and lays out; GLIDE90_SNAPSHOT=<file.png> saves a picture of it")
+{
+    auto p = make();
+    std::unique_ptr<juce::AudioProcessorEditor> editor(p->createEditor());
+    REQUIRE(editor != nullptr);
+    CHECK(editor->getWidth() > 0);
+    if (const auto path = juce::SystemStats::getEnvironmentVariable("GLIDE90_SNAPSHOT", {}); path.isNotEmpty())
+    {
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(300); // let the timers fill the displays
+        const auto image = editor->createComponentSnapshot(editor->getLocalBounds(), true, 2.0f);
+        juce::File file(path);
+        file.deleteFile();
+        juce::FileOutputStream out(file);
+        REQUIRE(juce::PNGImageFormat().writeImageToStream(image, out));
+    }
 }
 
 int main(int argc, char** argv)

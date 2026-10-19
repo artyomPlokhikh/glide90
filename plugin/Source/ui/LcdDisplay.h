@@ -14,6 +14,8 @@ public:
     static constexpr int kColumns = 16;
 
     void setText(const juce::String& top, const juce::String& bottom);
+    // Without its own glass, for a display that sits behind a shared window.
+    void setFramed(bool f) { framed = f; }
 
     // Mouse wheel or vertical drag over the display: one step up (+1) or down (-1).
     std::function<void(int)> onStep;
@@ -25,6 +27,7 @@ public:
 
 private:
     juce::String lines[2];
+    bool framed = true;
     float wheelAccumulator = 0.0f;
     int dragAnchor = 0;
 };
@@ -34,13 +37,14 @@ class SevenSegment : public juce::Component, private juce::Timer
 {
 public:
     void setValue(int value, bool blinking);
+    void setFramed(bool f) { framed = f; }
     void paint(juce::Graphics&) override;
 
 private:
     void timerCallback() override;
 
     int value = 0;
-    bool blinking = false, blinkOn = true;
+    bool blinking = false, blinkOn = true, framed = true;
 };
 
 // The 7-point input level meter.

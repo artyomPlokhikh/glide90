@@ -39,8 +39,10 @@ private:
     LcdDisplay lcd;
     SevenSegment memoryLed;
     LevelMeter meter;
+    juce::Slider inputKnob { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
+    juce::AudioProcessorValueTreeState::SliderAttachment inputAttachment;
 
-    juce::TextButton parameterKey { "PARAM" }, balanceKey { "BALANCE" };
+    juce::TextButton parameterKey { "PARAM-\nETER" }, balanceKey { "BALANCE" };
     juce::TextButton incKey { juce::String::fromUTF8("\xe2\x96\xb2") }, decKey { juce::String::fromUTF8("\xe2\x96\xbc") };
     juce::TextButton storeKey { "STORE" }, recallKey { "RECALL" };
     juce::TextButton memUpKey { juce::String::fromUTF8("\xe2\x96\xb2") }, memDownKey { juce::String::fromUTF8("\xe2\x96\xbc") };

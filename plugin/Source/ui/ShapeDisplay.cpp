@@ -131,30 +131,27 @@ void ShapeDisplay::timerCallback()
 void ShapeDisplay::paint(juce::Graphics& g)
 {
     const auto bounds = getLocalBounds().toFloat();
-    g.setColour(colours::screen);
-    g.fillRoundedRectangle(bounds, 8.0f);
-    g.setColour(juce::Colours::black);
-    g.drawRoundedRectangle(bounds.reduced(0.5f), 8.0f, 1.5f);
+    drawGlass(g, bounds, 3.0f);
 
     const auto r = plotArea();
     const bool on = proc.state().getRawParameterValue(ids::glideOn)->load() > 0.5f;
-    const auto accent = colours::glideAccent.withAlpha(on ? 1.0f : 0.4f);
+    const auto accent = colours::vfd.withAlpha(on ? 1.0f : 0.35f);
 
     // Grid: quarters of the cycle, and the rest line (no bend).
-    g.setColour(juce::Colours::white.withAlpha(0.06f));
+    g.setColour(colours::vfd.withAlpha(0.07f));
     for (int i = 1; i < 4; ++i)
         g.drawVerticalLine((int) (r.getX() + r.getWidth() * (float) i / 4.0f), r.getY(), r.getBottom());
     for (int i = 1; i < 4; ++i)
         g.drawHorizontalLine((int) (r.getY() + r.getHeight() * (float) i / 4.0f), r.getX(), r.getRight());
     const auto direction = (sway::BendDirection) choiceOf(proc, ids::glideDirection);
     const float restY = direction == sway::BendDirection::Both ? toScreen(0.0f, 0.5f).y : toScreen(0.0f, 0.0f).y;
-    g.setColour(juce::Colours::white.withAlpha(0.25f));
+    g.setColour(colours::vfd.withAlpha(0.25f));
     g.drawHorizontalLine((int) restY, r.getX(), r.getRight());
 
     // Axis labels: the pitch at the top and bottom of the screen.
     const float depth = proc.state().getRawParameterValue(ids::glideDepth)->load();
     g.setFont(panelFont(10.0f, true));
-    g.setColour(colours::legendDim);
+    g.setColour(colours::vfd.withAlpha(0.5f));
     auto centsLabel = [&](float push) {
         float c = 0.0f;
         switch (direction)
@@ -202,9 +199,9 @@ void ShapeDisplay::paint(juce::Graphics& g)
         {
             const auto pt = toScreen(shape.point(i).x, shape.point(i).y);
             const float rad = i == hoverIndex || i == dragIndex ? kPointRadius + 2.0f : kPointRadius;
-            g.setColour(colours::screen);
+            g.setColour(colours::glass);
             g.fillEllipse(juce::Rectangle<float>(rad * 2.0f, rad * 2.0f).withCentre(pt));
-            g.setColour(i == dragIndex ? juce::Colours::white : colours::legend);
+            g.setColour(i == dragIndex ? juce::Colours::white : colours::vfd);
             g.drawEllipse(juce::Rectangle<float>(rad * 2.0f, rad * 2.0f).withCentre(pt), 2.0f);
         }
 
@@ -212,7 +209,7 @@ void ShapeDisplay::paint(juce::Graphics& g)
         if (on)
         {
             const float px = r.getX() + phase * r.getWidth();
-            g.setColour(juce::Colours::white.withAlpha(0.35f));
+            g.setColour(colours::vfd.withAlpha(0.35f));
             g.drawVerticalLine((int) px, r.getY(), r.getBottom());
             const auto now = juce::Point<float>(px, toScreen(0.0f, pushFromCents(cents)).y);
             g.setColour(accent.withAlpha(0.3f));
@@ -243,9 +240,9 @@ void ShapeDisplay::paint(juce::Graphics& g)
     }
 
     // Readouts: the bar now, and the timing.
-    g.setColour(on ? juce::Colours::white : colours::legendDim);
+    g.setColour(on ? colours::vfd : colours::vfd.withAlpha(0.35f));
     g.setFont(panelFont(20.0f, true));
-    g.drawText((cents > 0.5f ? "+" : "") + juce::String(juce::roundToInt(cents)) + " ct",
+    g.drawText(on ? (cents > 0.5f ? "+" : "") + juce::String(juce::roundToInt(cents)) + " ct" : juce::String("OFF"),
                juce::Rectangle<float>(bounds.getRight() - 120.0f, 8.0f, 106.0f, 26.0f), juce::Justification::centredRight);
     g.setFont(panelFont(11.0f, true));
     g.setColour(accent);
@@ -253,7 +250,7 @@ void ShapeDisplay::paint(juce::Graphics& g)
                juce::Rectangle<float>(r.getX(), r.getBottom() + 6.0f, r.getWidth(), 14.0f), juce::Justification::centredLeft);
     if (editable())
     {
-        g.setColour(colours::legendDim);
+        g.setColour(colours::vfd.withAlpha(0.4f));
         g.drawText("drag points / double-click to add or remove",
                    juce::Rectangle<float>(r.getX(), r.getBottom() + 6.0f, r.getWidth(), 14.0f),
                    juce::Justification::centredRight);

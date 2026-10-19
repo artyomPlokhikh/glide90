@@ -208,7 +208,7 @@ void SwayProcessor::process(float* const* channels, int numChannels, int numSamp
 
         enabledMix += std::clamp(targetMix - enabledMix, -mixStep, mixStep);
         const float cents = bar.next(sum / (float) numChannels, n, s);
-        lastCents = cents;
+        lastCents = cents * enabledMix; // what is actually applied: 0 while off
         const bool off = enabledMix <= 0.0f && targetMix <= 0.0f;
 
         for (int ch = 0; ch < numChannels; ++ch)

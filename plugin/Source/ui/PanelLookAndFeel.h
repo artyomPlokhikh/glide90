@@ -5,26 +5,36 @@
 namespace glide90::ui
 {
 
+// The SPX90's look: black brushed panels, small knurled knobs, square black keys with red LEDs,
+// green text behind smoked glass.
 namespace colours
 {
-inline const juce::Colour header { 0xff121314 };
-inline const juce::Colour stripTop { 0xff1d1d1f }, stripBottom { 0xff0e0e0f };
-inline const juce::Colour spxTop { 0xff223042 }, spxBottom { 0xff161f2b };
-inline const juce::Colour glideTop { 0xff17332f }, glideBottom { 0xff0e221f };
-inline const juce::Colour legend { 0xffefe6d2 }, legendDim { 0xff9a9888 };
-inline const juce::Colour spxAccent { 0xfff2a23a }, glideAccent { 0xffff8a3d };
-inline const juce::Colour keyTop { 0xff3a3b3e }, keyBottom { 0xff252628 };
-inline const juce::Colour ledGreen { 0xff46f05a }, ledYellow { 0xffffcf3a }, ledRed { 0xffff3b2a };
-inline const juce::Colour ledOff { 0xff2a2b2c };
-inline const juce::Colour screen { 0xff07090a };
+inline const juce::Colour panelTop { 0xff1d1d1e }, panelBottom { 0xff0f0f10 };
+inline const juce::Colour ear { 0xff151516 };
+inline const juce::Colour legend { 0xffe4e4e0 }, legendDim { 0xff85857f };
+inline const juce::Colour glass { 0xff0a0e0c }, glassEdge { 0xff2a2c2b };
+inline const juce::Colour vfd { 0xff7de0a6 }, vfdDim { 0xff1f3a2a };
+inline const juce::Colour ledRed { 0xffff3322 }, ledGreen { 0xff46e06a }, ledYellow { 0xffffcf3a };
+inline const juce::Colour ledOff { 0xff3a1512 };
 } // namespace colours
 
 juce::Font panelFont(float height, bool bold = false);
 
-// Cream knobs with a coloured value arc, rubber keys, LED toggles.
+// A 1U-style unit: brushed black face with rack ears and slots.
+void drawRackUnit(juce::Graphics&, juce::Rectangle<int> bounds);
+// A smoked-glass window.
+void drawGlass(juce::Graphics&, juce::Rectangle<float> area, float corner = 3.0f);
+// The small red LED of a key.
+void drawKeyLed(juce::Graphics&, juce::Point<float> centre, bool on);
+// A round LED (level meter).
+void drawLed(juce::Graphics&, juce::Rectangle<float> area, juce::Colour colour, bool on);
+
 class PanelLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
+    // Margin of the rack ears; content starts inside it.
+    static constexpr int kEar = 30;
+
     PanelLookAndFeel();
 
     void drawRotarySlider(juce::Graphics&, int x, int y, int w, int h, float pos, float start, float end,
@@ -32,19 +42,17 @@ public:
     void drawButtonBackground(juce::Graphics&, juce::Button&, const juce::Colour&, bool highlighted,
                               bool down) override;
     void drawButtonText(juce::Graphics&, juce::TextButton&, bool highlighted, bool down) override;
-    void drawToggleButton(juce::Graphics&, juce::ToggleButton&, bool highlighted, bool down) override;
-    juce::Font getComboBoxFont(juce::ComboBox&) override { return panelFont(13.0f, true); }
+    void drawComboBox(juce::Graphics&, int width, int height, bool down, int bx, int by, int bw, int bh,
+                      juce::ComboBox&) override;
+    juce::Font getComboBoxFont(juce::ComboBox&) override { return panelFont(14.0f); }
     juce::Font getPopupMenuFont() override { return panelFont(14.0f); }
-    juce::Font getLabelFont(juce::Label&) override { return panelFont(12.5f, true); }
+    juce::Font getLabelFont(juce::Label&) override { return panelFont(13.0f); }
     juce::Label* createSliderTextBox(juce::Slider&) override;
 
-    // Slider properties: the arc colour ("accent", a Colour as int64) and whether the arc starts
-    // from the centre ("bipolar").
-    static constexpr const char* kAccent = "accent";
-    static constexpr const char* kBipolar = "bipolar";
+    // Button properties: "led" (a red LED that shows the toggle state) and "arrow" (+1 up, -1 down:
+    // a hollow triangle instead of text, as on the unit's data keys).
+    static constexpr const char* kLed = "led";
+    static constexpr const char* kArrow = "arrow";
 };
-
-// A round LED.
-void drawLed(juce::Graphics&, juce::Rectangle<float> area, juce::Colour colour, bool on);
 
 } // namespace glide90::ui

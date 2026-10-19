@@ -27,8 +27,7 @@ private:
     void updateForMode();
 
     Glide90Processor& proc;
-    juce::ToggleButton on { "GLIDE" };
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> onAttachment;
+    ToggleKey on;
     ChoiceButtons mode, direction, position;
     ShapeDisplay display;
     Knob period, division, depth, random, smooth, sensitivity, bar, twinDetune, twinLevel, mix;

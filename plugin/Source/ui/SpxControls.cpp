@@ -8,13 +8,13 @@ namespace glide90::ui
 {
 
 SpxControls::SpxControls(Glide90Processor& p)
-    : proc(p), type(p.state(), ids::erType, colours::spxAccent),
-      roomSize(p.state(), ids::erRoomSize, "ROOM SIZE", colours::spxAccent),
-      liveness(p.state(), ids::erLiveness, "LIVENESS", colours::spxAccent),
-      delay(p.state(), ids::erDelay, "PRE-DELAY", colours::spxAccent),
-      lpf(p.state(), ids::erLpf, "LPF", colours::spxAccent), mix(p.state(), ids::balance, "MIX", colours::spxAccent),
-      output(p.state(), ids::outLevel, "OUTPUT", colours::spxAccent),
-      input(p.state(), ids::input, "INPUT", colours::spxAccent), inPad(p.state(), ids::inputSwitch, "IN -20"),
+    : proc(p), type(p.state(), ids::erType),
+      roomSize(p.state(), ids::erRoomSize, "ROOM SIZE"),
+      liveness(p.state(), ids::erLiveness, "LIVENESS"),
+      delay(p.state(), ids::erDelay, "PRE-DELAY"),
+      lpf(p.state(), ids::erLpf, "LPF"), mix(p.state(), ids::balance, "MIX"),
+      output(p.state(), ids::outLevel, "OUTPUT"),
+      input(p.state(), ids::input, "INPUT"), inPad(p.state(), ids::inputSwitch, "IN -20"),
       outPad(p.state(), ids::outputSwitch, "OUT -20")
 {
     for (auto* c : std::initializer_list<juce::Component*> { &program, &type, &roomSize, &liveness, &delay, &lpf, &mix,
@@ -83,35 +83,36 @@ void SpxControls::timerCallback()
 
 void SpxControls::paint(juce::Graphics& g)
 {
-    const auto r = getLocalBounds().toFloat();
-    g.setGradientFill(juce::ColourGradient(colours::spxTop, 0.0f, 0.0f, colours::spxBottom, 0.0f, r.getBottom(), false));
-    g.fillRect(r);
-    g.setColour(juce::Colours::black);
-    g.drawHorizontalLine(0, 0.0f, r.getRight());
-
-    g.setColour(colours::spxAccent);
-    g.fillRect(24.0f, 14.0f, 4.0f, 20.0f);
+    drawRackUnit(g, getLocalBounds());
     g.setColour(colours::legend);
-    g.setFont(panelFont(18.0f, true));
-    g.drawText("REVERB", 36, 12, 120, 24, juce::Justification::centredLeft);
+    g.setFont(panelFont(15.0f, true));
+    g.drawText("REVERB", 42, 12, 120, 20, juce::Justification::centredLeft);
+    g.setFont(panelFont(10.0f));
+    g.setColour(colours::legendDim);
+    g.drawText("EARLY REFLECTIONS / REVERSE GATE", 112, 13, 260, 18, juce::Justification::centredLeft);
 
-    g.setFont(panelFont(11.5f, true));
-    g.drawText("PROGRAM", program.getBounds().translated(0, -16).withHeight(14), juce::Justification::centredLeft);
-    g.drawText("TYPE", type.getBounds().translated(0, -16).withHeight(14), juce::Justification::centredLeft);
+    g.setColour(colours::legend);
+    g.setFont(panelFont(11.0f));
+    g.drawText("PROGRAM", program.getBounds().translated(0, -15).withHeight(13), juce::Justification::centredLeft);
+    g.drawText("TYPE", type.getBounds().translated(0, -15).withHeight(13), juce::Justification::centredLeft);
 
-    // Separators between the reflection, level and rig groups.
-    g.setColour(juce::Colours::black.withAlpha(0.35f));
+    // Engraved lines between the reflection, level and rig groups.
     for (auto* c : std::initializer_list<juce::Component*> { &mix, &inPad })
-        g.fillRect((float) c->getX() - 9.0f, 18.0f, 2.0f, r.getHeight() - 36.0f);
+    {
+        g.setColour(juce::Colours::black.withAlpha(0.7f));
+        g.drawVerticalLine(c->getX() - 9, 22.0f, (float) getHeight() - 22.0f);
+        g.setColour(juce::Colours::white.withAlpha(0.06f));
+        g.drawVerticalLine(c->getX() - 8, 22.0f, (float) getHeight() - 22.0f);
+    }
 }
 
 void SpxControls::resized()
 {
-    program.setBounds(24, 60, 232, 28);
-    type.setBounds(24, 112, 232, 28);
+    program.setBounds(42, 56, 226, 28);
+    type.setBounds(42, 104, 226, 34);
 
-    const int knobW = 84, knobH = 116, y = 22;
-    int x = 274;
+    const int knobW = 82, knobH = 118, y = 18;
+    int x = 280;
     for (auto* k : { &roomSize, &liveness, &delay, &lpf })
     {
         k->setBounds(x, y, knobW, knobH);
@@ -124,8 +125,9 @@ void SpxControls::resized()
         x += knobW;
     }
     x += 18;
-    inPad.setBounds(x, 48, getWidth() - 24 - x, 30);
-    outPad.setBounds(x, 92, getWidth() - 24 - x, 30);
+    const int padW = getWidth() - PanelLookAndFeel::kEar - 6 - x;
+    inPad.setBounds(x, 34, padW, 44);
+    outPad.setBounds(x, 86, padW, 44);
 }
 
 } // namespace glide90::ui

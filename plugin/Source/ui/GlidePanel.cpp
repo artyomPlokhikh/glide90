@@ -8,23 +8,20 @@ namespace glide90::ui
 {
 
 GlidePanel::GlidePanel(Glide90Processor& p)
-    : proc(p), mode(p.state(), ids::glideMode, colours::glideAccent),
-      direction(p.state(), ids::glideDirection, colours::glideAccent),
-      position(p.state(), ids::glidePosition, colours::glideAccent), display(p),
-      period(p.state(), ids::glidePeriod, "RATE", colours::glideAccent),
-      division(p.state(), ids::glideDivision, "RATE", colours::glideAccent),
-      depth(p.state(), ids::glideDepth, "DEPTH", colours::glideAccent),
-      random(p.state(), ids::glideRandom, "RANDOM", colours::glideAccent),
-      smooth(p.state(), ids::glideSmooth, "SMOOTH", colours::glideAccent),
-      sensitivity(p.state(), ids::glideSensitivity, "SENSITIVITY", colours::glideAccent),
-      bar(p.state(), ids::glideBar, "BAR", colours::glideAccent),
-      twinDetune(p.state(), ids::glideTwinDetune, "TWIN DETUNE", colours::glideAccent),
-      twinLevel(p.state(), ids::glideTwinLevel, "TWIN LEVEL", colours::glideAccent),
-      mix(p.state(), ids::glideMix, "MIX", colours::glideAccent)
+    : proc(p), on(p.state(), ids::glideOn, "GLIDE"), mode(p.state(), ids::glideMode),
+      direction(p.state(), ids::glideDirection),
+      position(p.state(), ids::glidePosition), display(p),
+      period(p.state(), ids::glidePeriod, "RATE"),
+      division(p.state(), ids::glideDivision, "RATE"),
+      depth(p.state(), ids::glideDepth, "DEPTH"),
+      random(p.state(), ids::glideRandom, "RANDOM"),
+      smooth(p.state(), ids::glideSmooth, "SMOOTH"),
+      sensitivity(p.state(), ids::glideSensitivity, "SENSITIVITY"),
+      bar(p.state(), ids::glideBar, "BAR"),
+      twinDetune(p.state(), ids::glideTwinDetune, "TWIN DETUNE"),
+      twinLevel(p.state(), ids::glideTwinLevel, "TWIN LEVEL"),
+      mix(p.state(), ids::glideMix, "MIX")
 {
-    on.getProperties().set(PanelLookAndFeel::kAccent, (juce::int64) colours::glideAccent.getARGB());
-    onAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(p.state(), ids::glideOn, on);
-
     auto fill = [&p](juce::ComboBox& box, const char* id) {
         if (auto* choice = dynamic_cast<juce::AudioParameterChoice*>(p.state().getParameter(id)))
             box.addItemList(choice->choices, 1);
@@ -100,35 +97,33 @@ void GlidePanel::updateForMode()
 
 void GlidePanel::paint(juce::Graphics& g)
 {
-    const auto r = getLocalBounds().toFloat();
-    g.setGradientFill(juce::ColourGradient(colours::glideTop, 0.0f, 0.0f, colours::glideBottom, 0.0f, r.getBottom(), false));
-    g.fillRect(r);
-    g.setColour(juce::Colours::black);
-    g.drawHorizontalLine(0, 0.0f, r.getRight());
-
-    g.setColour(colours::legendDim);
-    g.setFont(panelFont(10.5f, true));
-    g.drawText("VIBRATO BAR", 120, 18, 120, 14, juce::Justification::centredLeft);
-    g.setFont(panelFont(11.5f, true));
+    drawRackUnit(g, getLocalBounds());
     g.setColour(colours::legend);
-    g.drawText("DIRECTION", direction.getBounds().translated(0, -16).withHeight(14), juce::Justification::centredLeft);
-    g.drawText("POSITION", position.getBounds().translated(0, -16).withHeight(14), juce::Justification::centredLeft);
+    g.setFont(panelFont(15.0f, true));
+    g.drawText("GLIDE", 42, 12, 80, 20, juce::Justification::centredLeft);
+    g.setFont(panelFont(10.0f));
+    g.setColour(colours::legendDim);
+    g.drawText("VIBRATO BAR", 98, 13, 120, 18, juce::Justification::centredLeft);
+
+    g.setFont(panelFont(11.0f));
+    g.setColour(colours::legend);
+    g.drawText("DIRECTION", direction.getBounds().translated(0, -15).withHeight(13), juce::Justification::centredLeft);
+    g.drawText("POSITION", position.getBounds().translated(0, -15).withHeight(13), juce::Justification::centredLeft);
     const auto current = (sway::GlideMode) shownMode;
     if (current == sway::GlideMode::Trigger || current == sway::GlideMode::Manual)
         g.drawText(current == sway::GlideMode::Trigger ? "TRIGGER" : "SOURCE",
-                   triggerSource.getBounds().translated(0, -16).withHeight(14), juce::Justification::centredLeft);
+                   triggerSource.getBounds().translated(0, -15).withHeight(13), juce::Justification::centredLeft);
 }
 
 void GlidePanel::resized()
 {
-    on.setBounds(22, 12, 96, 26);
-    mode.setBounds(250, 12, 300, 28);
-
-    display.setBounds(22, 52, 528, 252);
+    on.setBounds(42, 36, 74, 40);
+    mode.setBounds(130, 36, 420, 40);
+    display.setBounds(42, 88, 508, 222);
 
     // Controls: two rows of four knobs with the direction, source and position between them.
-    const int x0 = 570, knobW = 100, knobH = 108;
-    auto slot = [&](Knob& k, int col, int row) { k.setBounds(x0 + col * knobW, 14 + row * 178, knobW, knobH); };
+    const int x0 = 566, knobW = 96, knobH = 118;
+    auto slot = [&](Knob& k, int col, int row) { k.setBounds(x0 + col * knobW, 14 + row * 180, knobW, knobH); };
     slot(period, 0, 0);
     slot(division, 0, 0);
     slot(depth, 1, 0);
@@ -140,11 +135,11 @@ void GlidePanel::resized()
     slot(twinLevel, 2, 1);
     slot(mix, 3, 1);
 
-    const int midY = 146;
-    direction.setBounds(x0 + 4, midY, 150, 26);
-    triggerSource.setBounds(x0 + 166, midY, 150, 26);
-    manualSource.setBounds(x0 + 166, midY, 150, 26);
-    position.setBounds(x0 + 328, midY, getWidth() - 24 - (x0 + 328), 26);
+    const int midY = 152;
+    direction.setBounds(x0 + 4, midY, 150, 32);
+    triggerSource.setBounds(x0 + 164, midY + 2, 140, 28);
+    manualSource.setBounds(x0 + 164, midY + 2, 140, 28);
+    position.setBounds(x0 + 314, midY, getWidth() - PanelLookAndFeel::kEar - 4 - (x0 + 314), 32);
 }
 
 } // namespace glide90::ui

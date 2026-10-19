@@ -68,7 +68,7 @@ if(GLIDE90_BUILD_TESTS)
     target_sources(glide90_plugin_tests PRIVATE ${GLIDE90_PLUGIN_SOURCES} ${CMAKE_SOURCE_DIR}/tests/plugin/test_plugin.cpp)
     target_include_directories(glide90_plugin_tests PRIVATE Source ${doctest_SOURCE_DIR})
     target_compile_definitions(glide90_plugin_tests PRIVATE ${GLIDE90_JUCE_DEFINITIONS}
-        JucePlugin_Name="Glide90" JUCE_STANDALONE_APPLICATION=1)
+        JucePlugin_Name="Glide90" JUCE_STANDALONE_APPLICATION=1 JUCE_MODAL_LOOPS_PERMITTED=1)
     target_link_libraries(glide90_plugin_tests PRIVATE glide90_dsp juce::juce_audio_utils
         juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
     add_test(NAME plugin COMMAND glide90_plugin_tests)
