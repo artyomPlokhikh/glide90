@@ -43,8 +43,11 @@ TEST_CASE("REVERSE builds up towards its last reflections")
     s.density = 1;
     const auto taps = ErEngine::buildTaps(s, 0);
     REQUIRE(taps.size() >= 12);
-    CHECK(std::abs(taps.front().gain) < 0.1f);
-    CHECK(std::abs(taps.back().gain) > 0.9f);
+    float loudest = 0.0f;
+    for (const auto& t : taps)
+        loudest = std::max(loudest, std::abs(t.gain));
+    CHECK(std::abs(taps.front().gain) < 0.1f * loudest);
+    CHECK(std::abs(taps.back().gain) > 0.9f * loudest);
 }
 
 TEST_CASE("LIVENESS flattens the pattern when raised and steepens it when lowered")
@@ -54,10 +57,13 @@ TEST_CASE("LIVENESS flattens the pattern when raised and steepens it when lowere
     auto quietest = [&](int liveness) {
         s.liveness = liveness;
         const auto t = ErEngine::buildTaps(s, 0);
-        float m = 1.0f;
+        float quiet = 1e9f, loud = 0.0f;
         for (const auto& x : t)
-            m = std::min(m, std::abs(x.gain));
-        return m;
+        {
+            quiet = std::min(quiet, std::abs(x.gain));
+            loud = std::max(loud, std::abs(x.gain));
+        }
+        return quiet / loud;
     };
     CHECK(quietest(10) > quietest(5));
     CHECK(quietest(0) < quietest(5));

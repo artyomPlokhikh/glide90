@@ -62,14 +62,23 @@ void ErEngine::buildTaps(const ErSettings& s, int channel, std::vector<Tap>& tap
     const int pre = (int) std::lround(s.delayMs * kDspRate / 1000.0);
     const float exponent = livenessExponent(s.liveness);
     taps.clear();
+    float energy = 0.0f;
     for (const auto& t : tableFor(s.type, s.density, channel))
     {
+        const float mag = std::pow(std::abs(t.gain), exponent);
+        energy += mag * mag;
         const int d = pre + (int) std::lround(t.pos * s.roomSize);
         if (d < 1 || d >= kDelayMemory)
             continue;
-        const float mag = std::pow(std::abs(t.gain), exponent);
         taps.push_back({ d, std::copysign(mag, t.gain) });
     }
+
+    // The captures only give levels relative to the loudest reflection. Scale the pattern to unit
+    // energy so the effect is about as loud as the direct signal for any TYPE, density and LIVENESS;
+    // left at "loudest tap = 1", hundreds of taps put the effect 9-17 dB over the D/A's full scale.
+    const float norm = energy > 0.0f ? 1.0f / std::sqrt(energy) : 1.0f;
+    for (auto& t : taps)
+        t.gain *= norm;
 
     // Taps that land on the same sample (small rooms) add up.
     std::sort(taps.begin(), taps.end(), [](const Tap& a, const Tap& b) { return a.delay < b.delay; });

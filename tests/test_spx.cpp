@@ -189,7 +189,9 @@ TEST_CASE("the response does not depend on when the input arrives")
             diff += std::pow((double) first[0][i] - second[0][later + i], 2.0);
             energy += std::pow((double) first[0][i], 2.0);
         }
-        CHECK(db(std::sqrt(diff / energy)) < -60.0);
+        // What remains is the 16-bit converters rounding the two impulses differently; a time slip
+        // would leave the difference near 0 dB.
+        CHECK(db(std::sqrt(diff / energy)) < -40.0);
     }
 }
 
@@ -221,6 +223,58 @@ TEST_CASE("irregular host block sizes give the same output as fixed ones")
         // (1 LSB = 3e-5) here and there; a time slip would be orders of magnitude larger.
         CHECK(worst < 1e-4);
     }
+}
+
+TEST_CASE("the effect is about as loud as the direct signal and does not clip at a sane level")
+{
+    // Pink-ish noise at -12 dBFS peak, roughly a hot guitar DI.
+    const double rate = 48000.0;
+    std::vector<float> in((size_t) (4 * rate));
+    uint32_t seed = 3;
+    float lp = 0.0f;
+    for (auto& v : in)
+    {
+        seed = seed * 1664525u + 1013904223u;
+        lp += 0.2f * (((float) (seed >> 8) / 8388608.0f - 1.0f) - lp);
+        v = 0.6f * lp;
+    }
+    for (int program : { 5, 6, 16, 17 })
+        for (float rs : { 2.0f, 20.0f })
+            for (int liveness : { 0, 5, 10 })
+            {
+                CAPTURE(program);
+                CAPTURE(rs);
+                CAPTURE(liveness);
+                auto s = programSettings(program);
+                s.er.roomSize = rs;
+                s.er.liveness = liveness;
+                const auto out = test::render(in, rate, s);
+                const size_t from = (size_t) (1.5 * rate);
+                const double gain = db(test::rms(out[0], from, in.size()) / test::rms(in, from, in.size()));
+                CHECK(std::abs(gain) < 6.0);
+                float peak = 0.0f;
+                for (size_t i = from; i < in.size(); ++i)
+                    peak = std::max(peak, std::abs(out[0][i]));
+                CHECK(peak < 0.9f);
+            }
+}
+
+TEST_CASE("the output level switch is analog: same signal 24 dB down, not 4 bits less")
+{
+    const double rate = 48000.0;
+    auto in = test::sine(440.0, rate, 24000, 0.01f); // quiet: the 16-bit steps matter
+    auto s = programSettings(17);
+    const auto normal = test::render(in, rate, s);
+    s.outputMinus20 = true;
+    const auto lowered = test::render(in, rate, s);
+    double err = 0.0, ref = 0.0;
+    const double g = std::pow(10.0, -24.0 / 20.0);
+    for (size_t i = 12000; i < 24000; ++i)
+    {
+        err += std::pow(lowered[0][i] - g * normal[0][i], 2.0);
+        ref += std::pow(g * normal[0][i], 2.0);
+    }
+    CHECK(db(std::sqrt(err / ref)) < -80.0);
 }
 
 TEST_CASE("bypass is the analog path: full bandwidth, same latency")

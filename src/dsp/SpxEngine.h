@@ -63,6 +63,9 @@ private:
     float bypassMix = 0.0f;
     float bypassStep = 0.0f;
     std::vector<float> scratchL, scratchR;
+
+    // Rear-panel output switch, analog: smoothed at the host rate (-1 = take the next setting as is).
+    float analogOut = -1.0f, analogCoeff = 0.0f;
 };
 
 } // namespace spx

@@ -46,6 +46,7 @@ void SpxEngine::prepare(double rate, int maxBlockSize)
 
     smoothCoeff = (float) (1.0 - std::exp(-1.0 / (kSmoothingMs * 0.001 * kDspRate)));
     bypassStep = (float) (1.0 / (kBypassFadeMs * 0.001 * hostRate));
+    analogCoeff = (float) (1.0 - std::exp(-1.0 / (kSmoothingMs * 0.001 * hostRate)));
 
     bypassDelay.assign(1, 0.0f); // the measurement below runs process()
     latency = measureLatency();
@@ -65,6 +66,7 @@ void SpxEngine::reset()
     std::fill(bypassDelay.begin(), bypassDelay.end(), 0.0f);
     bypassPos = 0;
     snapParameters = true;
+    analogOut = -1.0f;
 }
 
 int SpxEngine::measureLatency()
@@ -101,7 +103,7 @@ void SpxEngine::processDsp(int numDsp, const SpxSettings& s)
 
     const float targetIn = inputGain(s.inputKnob, s.inputMinus20);
     const float targetBal = std::clamp(s.balance, 0.0f, 1.0f);
-    const float targetOut = std::clamp(s.outLevel, 0.0f, 1.0f) * (s.outputMinus20 ? dbToGain(-kLevelSwitchDb) : 1.0f);
+    const float targetOut = std::clamp(s.outLevel, 0.0f, 1.0f); // OUT LVL is digital, before the D/A
     if (snapParameters)
     {
         gainIn = targetIn;
@@ -159,9 +161,14 @@ void SpxEngine::process(const float* monoIn, float* outL, float* outR, int numSa
     upR.pull(outR, numSamples);
 
     // Analog bypass, kept time-aligned with the processed path and crossfaded on toggling.
-    const float bypassGain = inputGain(s.inputKnob, s.inputMinus20) * (s.outputMinus20 ? dbToGain(-kLevelSwitchDb) : 1.0f);
+    const float bypassGain = inputGain(s.inputKnob, s.inputMinus20);
+    // The rear-panel output switch is analog, after the D/A: it scales the converted output (and the
+    // bypass) without costing resolution.
+    const float analogTarget = s.outputMinus20 ? dbToGain(-kLevelSwitchDb) : 1.0f;
     const float target = s.bypass ? 1.0f : 0.0f;
     const int size = (int) bypassDelay.size();
+    if (analogOut < 0.0f)
+        analogOut = analogTarget; // first block after a reset
     for (int n = 0; n < numSamples; ++n)
     {
         bypassDelay[(size_t) bypassPos] = monoIn[n] * bypassGain;
@@ -173,6 +180,9 @@ void SpxEngine::process(const float* monoIn, float* outL, float* outR, int numSa
             outL[n] = outL[n] * (1.0f - bypassMix) + delayed * bypassMix;
             outR[n] = outR[n] * (1.0f - bypassMix) + delayed * bypassMix;
         }
+        analogOut += analogCoeff * (analogTarget - analogOut);
+        outL[n] *= analogOut;
+        outR[n] *= analogOut;
     }
 }
 
