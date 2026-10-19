@@ -238,15 +238,18 @@ void SpxPanel::paint(juce::Graphics& g)
 void SpxPanel::resized()
 {
     inputKnob.setBounds(44, 50, 88, 88);
-    meter.setBounds(148, 62, 168, 38);
-    inSwitch.setBounds(152, 136, 76, 26);
-    outSwitch.setBounds(238, 136, 76, 26);
-    memoryLed.setBounds(334, 56, 80, 68);
-    lcd.setBounds(428, 46, 300, 86);
-    bypassKey.setBounds(428, 146, 96, 30);
+    meter.setBounds(146, 62, 154, 38);
+    inSwitch.setBounds(148, 136, 72, 26);
+    outSwitch.setBounds(228, 136, 72, 26);
+    memoryLed.setBounds(316, 56, 80, 68);
+    lcd.setBounds(410, 46, 288, 86);
+    bypassKey.setBounds(410, 146, 96, 30);
 
-    const int x0 = getWidth() - 24 - 16 - 4 * 64;
-    auto key = [x0](int col, int row) { return juce::Rectangle<int>(x0 + col * 64 + 2, 60 + row * 72, 60, 32); };
+    // Keys right-aligned, clear of the LCD.
+    constexpr int pitch = 62, keyWidth = 58;
+    const int x0 = getWidth() - 24 - 16 - 4 * pitch;
+    jassert(x0 > lcd.getRight() + 8);
+    auto key = [x0](int col, int row) { return juce::Rectangle<int>(x0 + col * pitch + 2, 60 + row * 72, keyWidth, 32); };
     parameterKey.setBounds(key(0, 0));
     balanceKey.setBounds(key(1, 0));
     decKey.setBounds(key(2, 0));
