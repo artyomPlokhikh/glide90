@@ -657,6 +657,13 @@ bool Glide90Processor::loadUserPreset(const juce::File& file)
     return true;
 }
 
+bool Glide90Processor::deleteUserPreset(const juce::File& file)
+{
+    if (!file.existsAsFile() || !file.isAChildOf(userPresetDirectory()) || !file.hasFileExtension(kPresetExtension))
+        return false;
+    return file.moveToTrash() || file.deleteFile();
+}
+
 void Glide90Processor::captureBaseline()
 {
     baseline.clear();

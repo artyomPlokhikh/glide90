@@ -187,6 +187,27 @@ TEST_CASE("factory presets bring their own reverb settings and load unmodified")
     }
 }
 
+TEST_CASE("deleting a user preset removes its file only, and keeps the sound loaded")
+{
+    auto p = make();
+    const juce::String name = "glide90 test " + juce::Uuid().toString();
+    REQUIRE(p->saveUserPreset(name));
+    const auto file = Glide90Processor::userPresetDirectory().getChildFile(name + Glide90Processor::presetExtension());
+    CHECK(p->userPresetFiles().contains(file));
+
+    CHECK(p->deleteUserPreset(file));
+    CHECK_FALSE(file.existsAsFile());
+    CHECK_FALSE(p->userPresetFiles().contains(file));
+    CHECK_FALSE(p->deleteUserPreset(file));
+    CHECK(p->currentPresetName() == name);
+
+    // Nothing outside the preset folder, whatever its extension.
+    juce::TemporaryFile outside(Glide90Processor::presetExtension());
+    REQUIRE(outside.getFile().replaceWithText("x"));
+    CHECK_FALSE(p->deleteUserPreset(outside.getFile()));
+    CHECK(outside.getFile().existsAsFile());
+}
+
 TEST_CASE("memories added in a later version are filled when an older state is restored")
 {
     glide90::MemoryBank bank;

@@ -30,7 +30,13 @@ void LcdDisplay::paint(juce::Graphics& g)
     const float dot = pitch * 0.82f;
     const float x0 = glass.getCentreX() - pitch * dotsW * 0.5f;
     const float y0 = glass.getCentreY() - pitch * dotsH * 0.5f;
-    const auto lit = colours::display, unlit = colours::display.withAlpha(0.045f);
+    const auto lit = colours::display, unlit = colours::displayUnlit;
+    if (!framed)
+    {
+        // The LCD's own backlit panel, behind the window's glass.
+        g.setColour(colours::lcd);
+        g.fillRect(juce::Rectangle<float>(x0, y0, pitch * dotsW, pitch * dotsH).expanded(pitch * 2.5f));
+    }
 
     for (int row = 0; row < 2; ++row)
     {

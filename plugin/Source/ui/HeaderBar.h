@@ -11,7 +11,7 @@ namespace glide90::ui
 {
 
 // Preset bar: browse and step through factory and user presets (an asterisk marks unsaved changes),
-// save, compare A/B, undo/redo and zoom the window.
+// save or delete, compare A/B, undo/redo and zoom the window.
 class HeaderBar : public juce::Component, private juce::Timer
 {
 public:
@@ -30,6 +30,9 @@ private:
     void stepPreset(int delta);
     void askToSave();
     void savePreset(const juce::String& name);
+    // The file of the current preset, if it is a user preset that still exists.
+    juce::File currentUserFile() const;
+    void askToDelete(const juce::File& file);
     // Shows a dialog inside the plugin window (it gets the panel's look and closes with the window).
     void showDialog(std::unique_ptr<juce::AlertWindow> window, std::function<void(int)> onResult);
 

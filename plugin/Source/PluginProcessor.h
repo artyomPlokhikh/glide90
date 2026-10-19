@@ -87,6 +87,9 @@ public:
     juce::Array<juce::File> userPresetFiles() const;
     bool saveUserPreset(const juce::String& name);
     bool loadUserPreset(const juce::File& file);
+    // Moves a user preset file to the trash (or deletes it). Refuses anything outside the preset
+    // folder. The current sound stays loaded, so SAVE puts a deleted current preset back.
+    bool deleteUserPreset(const juce::File& file);
     juce::String currentPresetName() const { return presetName; }
     // True when the current preset is a user preset file (whatever its name), false for a factory one.
     bool currentPresetIsUser() const { return presetIsUser; }

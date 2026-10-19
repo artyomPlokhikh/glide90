@@ -30,13 +30,14 @@ juce_add_plugin(Glide90
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
 # Fonts (SIL Open Font License, licences next to them): Barlow Condensed for the panel legends,
-# DSEG7 for the memory number.
+# Liberation Sans for the key legends, DSEG7 for the memory number.
 juce_add_binary_data(glide90_fonts
     NAMESPACE GlideFonts
     HEADER_NAME GlideFonts.h
     SOURCES
         Resources/fonts/BarlowCondensed-Medium.ttf
         Resources/fonts/BarlowCondensed-SemiBold.ttf
+        Resources/fonts/LiberationSans-Regular.ttf
         Resources/fonts/DSEG7Classic-Bold.ttf)
 
 set(GLIDE90_PLUGIN_SOURCES
@@ -51,6 +52,7 @@ set(GLIDE90_PLUGIN_SOURCES
     Source/ui/SpxPanel.cpp
     Source/ui/SpxControls.cpp
     Source/ui/RearPanel.cpp
+    Source/ui/Rack.cpp
     Source/ui/ShapeDisplay.cpp
     Source/ui/GlidePanel.cpp)
 set(GLIDE90_JUCE_DEFINITIONS

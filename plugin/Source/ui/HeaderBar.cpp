@@ -11,7 +11,8 @@ HeaderBar::HeaderBar(Glide90Processor& p) : proc(p)
     for (auto* c : std::initializer_list<juce::Component*> { &presets, &save, &a, &b, &undoKey, &redoKey, &zoom })
         addAndMakeVisible(c);
 
-    presets.setTooltip("Preset: the whole plugin, reverb and glide. Arrows step through the list; * means changed");
+    presets.setTooltip("Preset: the whole plugin, reverb and glide. Arrows step through the list; * means changed. "
+                       "The menu can delete the current user preset");
     presets.getText = [this] { return proc.currentPresetName() + (proc.isPresetModified() ? " *" : ""); };
     presets.onStep = [this](int d) { stepPreset(d); };
     presets.fillMenu = [this](juce::PopupMenu& menu) {
@@ -27,6 +28,10 @@ HeaderBar::HeaderBar(Glide90Processor& p) : proc(p)
         for (const auto& f : userFiles)
             menu.addItem(f.getFileNameWithoutExtension(), true, user && f.getFileNameWithoutExtension() == proc.currentPresetName(),
                          [this, f] { proc.loadUserPreset(f); });
+        const auto current = currentUserFile();
+        menu.addSeparator();
+        menu.addItem("Delete " + (current.exists() ? "\"" + current.getFileNameWithoutExtension() + "\"" : juce::String("preset")),
+                     current.exists(), false, [this, current] { askToDelete(current); });
     };
 
     save.setTooltip(juce::String("Save as a user preset in ") + Glide90Processor::userPresetDirectory().getFullPathName());
@@ -137,6 +142,29 @@ void HeaderBar::askToSave()
     });
 }
 
+juce::File HeaderBar::currentUserFile() const
+{
+    if (proc.currentPresetIsUser())
+        for (const auto& f : userFiles)
+            if (f.getFileNameWithoutExtension() == proc.currentPresetName())
+                return f;
+    return {};
+}
+
+void HeaderBar::askToDelete(const juce::File& file)
+{
+    auto confirm = std::make_unique<juce::AlertWindow>("Delete preset?",
+                                                       "\"" + file.getFileNameWithoutExtension() + "\" goes to the trash.",
+                                                       juce::MessageBoxIconType::NoIcon);
+    confirm->addButton("Delete", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    confirm->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    showDialog(std::move(confirm), [this, file](int answer) {
+        dialog.reset();
+        if (answer == 1 && proc.deleteUserPreset(file))
+            refreshUserFiles();
+    });
+}
+
 void HeaderBar::savePreset(const juce::String& name)
 {
     if (proc.saveUserPreset(name))
@@ -163,13 +191,17 @@ void HeaderBar::resized()
 {
     const int h = 28, y = (getHeight() - h) / 2;
     presets.setBounds(240, y, 340, h);
-    save.setBounds(586, y, 58, h);
-    a.setBounds(668, y, 36, h);
-    b.setBounds(708, y, 36, h);
-    undoKey.setBounds(766, y, 54, h);
-    redoKey.setBounds(824, y, 54, h);
+    // Keys: their caps line up with the windows; their bounds add room for the shadow.
+    auto key = [y, h](juce::Button& k, int x, int w) { k.setBounds(PanelLookAndFeel::keyBounds({ x, y, w, h })); };
+    key(save, 586, 58);
+    key(a, 668, 36);
+    key(b, 708, 36);
+    key(undoKey, 766, 54);
+    key(redoKey, 824, 54);
     // Groups: preset + SAVE, A/B, UNDO/REDO, zoom; 4 px inside a group, 22 px between groups.
-    zoom.setBounds(getWidth() - PanelLookAndFeel::kMargin - 74, y, 74, h);
+    // Just wide enough for "175%".
+    const int zoomW = (int) matrixTextWidth("175%", kSmallTextPitch) + 22;
+    zoom.setBounds(getWidth() - PanelLookAndFeel::kMargin - zoomW, y, zoomW, h);
 }
 
 } // namespace glide90::ui

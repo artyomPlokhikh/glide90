@@ -430,7 +430,7 @@ void ToggleSwitch::paint(juce::Graphics& g)
     }
     if (!enabled)
     {
-        g.setColour(colours::anodized.withAlpha(0.5f));
+        g.setColour(colours::panel.withAlpha(0.5f));
         g.fillRect(getLocalBounds().withTrimmedTop(16));
     }
 }

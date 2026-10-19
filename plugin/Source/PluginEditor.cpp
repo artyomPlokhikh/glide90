@@ -10,7 +10,7 @@ Glide90Editor::Glide90Editor(Glide90Processor& p)
     addAndMakeVisible(content);
     for (auto* c : std::initializer_list<juce::Component*> { &header, &strip, &spx, &glide, &rear })
         content.addAndMakeVisible(c);
-    content.setSize(kWidth, kHeight);
+    content.setSize(kWindowWidth, kHeight);
 
     spx.onTouch = [this](const juce::RangedAudioParameter& param) { strip.showParameter(param); };
     header.onZoom = [this](float s) { setZoom(s); };
@@ -26,12 +26,12 @@ void Glide90Editor::setZoom(float scale)
 {
     proc.setUiScale(scale);
     content.setTransform(juce::AffineTransform::scale(proc.uiScale()));
-    setSize(juce::roundToInt(kWidth * proc.uiScale()), juce::roundToInt(kHeight * proc.uiScale()));
+    setSize(juce::roundToInt(kWindowWidth * proc.uiScale()), juce::roundToInt(kHeight * proc.uiScale()));
 }
 
 void Glide90Editor::resized()
 {
-    auto r = juce::Rectangle<int>(0, 0, kWidth, kHeight);
+    auto r = juce::Rectangle<int>(ui::Rack::kEarWidth, 0, kWidth, kHeight);
     header.setBounds(r.removeFromTop(kHeaderHeight));
     strip.setBounds(r.removeFromTop(kStripHeight));
     spx.setBounds(r.removeFromTop(kSpxHeight));

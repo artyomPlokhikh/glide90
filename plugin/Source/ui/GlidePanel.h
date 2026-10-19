@@ -11,10 +11,10 @@ class Glide90Processor;
 namespace glide90::ui
 {
 
-// The Glide unit in three groups: DRIVE (on, mode, and what the mode uses: rate, source, pick
-// sensitivity), the shape screen, and MOTION over SOUND (depth, direction, random, smooth; twin,
-// mix, position). Every control keeps its place; RATE becomes a note value in SYNC and the BAR in
-// MANUAL.
+// The Glide unit in three groups: DRIVE (on, mode and rate; then what the mode listens to: source,
+// pick sensitivity, dynamics), the shape screen, and MOTION over SOUND (depth, direction, random,
+// smooth; twin, mix, position). Every control keeps its place; RATE becomes a note value in SYNC and
+// the BAR in MANUAL.
 class GlidePanel : public juce::Component, private juce::Timer
 {
 public:

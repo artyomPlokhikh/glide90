@@ -135,18 +135,21 @@ void GlidePanel::resized()
     const int m = PanelLookAndFeel::kMargin, h = Knob::kHeight;
     const int lw = Knob::widthFor(Knob::Size::Large), sw = Knob::widthFor(Knob::Size::Small);
 
-    // DRIVE: what moves the bar. On and the mode above; what the mode uses below it.
-    on.setBounds(m, kRow1 + 30, 56, 44);
-    mode.setBounds(m + 70, kRow1, 216, h);
+    // DRIVE: what moves the bar. On, the mode and its RATE above; what the mode listens to below,
+    // spread over the same width.
+    on.setBounds(PanelLookAndFeel::keyBounds({ m, kRow1 + 30, 52, 42 }));
+    mode.setBounds(m + 56, kRow1, 150, h); // just wide enough for FREE and MANUAL
     for (auto* k : { &period, &division, &bar })
-        k->setBounds(m, kRow2, lw, h);
-    source.setBounds(m + lw + 4, kRow2 + 28, 104, 28);
-    sensitivity.setBounds(source.getRight() + 4, kRow2, sw, h);
-    dynamics.setBounds(sensitivity.getRight(), kRow2, sw, h);
+        k->setBounds(mode.getRight() + 2, kRow1, lw, h);
+    const int driveRight = period.getRight();
+    const int spare = driveRight - m - 104 - 2 * sw;
+    source.setBounds(m, kRow2 + 28, 104, 28);
+    sensitivity.setBounds(source.getRight() + spare / 2, kRow2, sw, h);
+    dynamics.setBounds(driveRight - sw, kRow2, sw, h);
 
     // The screen, the full height of both rows.
     constexpr int column = 72;
-    const int screenLeft = dynamics.getRight() + 22, screenRight = getWidth() - m - 4 * column - 22;
+    const int screenLeft = driveRight + 20, screenRight = getWidth() - m - 4 * column - 20;
     display.setBounds(screenLeft, kRow1, screenRight - screenLeft, kRow2 + h - kRow1);
 
     // MOTION over SOUND: four columns.
