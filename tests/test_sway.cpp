@@ -4,6 +4,8 @@
 #include <doctest/doctest.h>
 
 #include <cmath>
+#include <ostream> // doctest prints string_view through it (MSVC does not pull it in)
+#include <string>
 
 using sway::BendDirection;
 using sway::GlideMode;
@@ -51,7 +53,8 @@ TEST_CASE("shapes are smooth, periodic and pass through their points")
 {
     for (size_t p = 0; p < sway::kShapePresetNames.size(); ++p)
     {
-        CAPTURE(sway::kShapePresetNames[p]);
+        const std::string name(sway::kShapePresetNames[p]);
+        CAPTURE(name);
         const auto shape = sway::makeShape((sway::ShapePreset) p);
         for (int i = 0; i < shape.size(); ++i)
             CHECK(shape.at(shape.point(i).x) == doctest::Approx(shape.point(i).y).epsilon(1e-4));
