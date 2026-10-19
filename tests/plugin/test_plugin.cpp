@@ -1,5 +1,6 @@
 // Processor-level tests: memories, state, latency and host bypass of the Glide90 plugin.
 #define DOCTEST_CONFIG_IMPLEMENT
+#define JUCE_GUI_BASICS_INCLUDE_XHEADERS 1 // Linux: the X11 calls in main()
 #include <doctest/doctest.h>
 
 #include "PluginProcessor.h"
@@ -300,10 +301,15 @@ TEST_CASE("a knob's value field: a click elsewhere applies it; Alt-click resets 
 {
     auto p = make();
     std::unique_ptr<juce::AudioProcessorEditor> editor(p->createEditor());
+    // Clear of the screen's corner, where macOS has its menu bar: a click is delivered only where the
+    // window is really the one on top.
+    editor->setTopLeftPosition(160, 160);
     editor->setVisible(true);
     editor->addToDesktop(0);
+    editor->toFront(true);
     auto* peer = editor->getPeer();
     REQUIRE(peer != nullptr);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(100);
 
     // The reverb's MIX knob (BALANCE).
     glide90::ui::Knob* knob = nullptr;
@@ -401,6 +407,15 @@ TEST_CASE("output mode: left only copies the left output, mono sums them")
 
 int main(int argc, char** argv)
 {
+   #if JUCE_LINUX
+    // On a bare X server (CI's Xvfb, no window manager) the window manager's atoms do not exist, and
+    // JUCE fails with BadAtom when it sets them on a new window. Create them before JUCE looks them
+    // up, on a connection kept open: the server forgets its atoms when its last client leaves.
+    if (auto* x11 = juce::X11Symbols::getInstance(); x11->loadAllSymbols())
+        if (auto* display = x11->xOpenDisplay(nullptr)) // closed when the tests exit
+            for (const char* name : { "WM_PROTOCOLS", "WM_TAKE_FOCUS", "WM_DELETE_WINDOW", "_NET_WM_PING", "WM_CHANGE_STATE", "WM_STATE" })
+                x11->xInternAtom(display, name, False);
+   #endif
     juce::ScopedJuceInitialiser_GUI juce;
     doctest::Context context(argc, argv);
     return context.run();
