@@ -4,6 +4,7 @@
 #include "ErEngine.h"
 #include "SincResampler.h"
 
+#include <utility>
 #include <vector>
 
 namespace spx
@@ -32,6 +33,9 @@ public:
 
     void process(const float* monoIn, float* outL, float* outR, int numSamples, const SpxSettings& s);
 
+    // Peak of the effect alone (before BALANCE) since the last call: how loud the reverse swell is.
+    float takeWetPeak() { return std::exchange(wetPeak, 0.0f); }
+
     // Constant delay from input to output in host samples.
     int latencySamples() const { return latency; }
 
@@ -54,6 +58,7 @@ private:
 
     // Smoothed at the DSP rate.
     float gainIn = 1.0f, balance = 1.0f, outGain = 1.0f;
+    float wetPeak = 0.0f;
     float smoothCoeff = 0.0f;
     bool snapParameters = true; // jump straight to the settings after a reset
 

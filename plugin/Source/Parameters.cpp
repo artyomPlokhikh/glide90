@@ -182,17 +182,6 @@ std::unique_ptr<AudioParameterChoice> choiceParam(const char* id, const juce::St
             }));
 }
 
-// Text shown on the LCD in front of "=", per parameter.
-const std::map<juce::String, juce::String>& lcdLabels()
-{
-    static const std::map<juce::String, juce::String> labels {
-        { ids::erType, "TYPE" },       { ids::erRoomSize, "ROOM SIZE" }, { ids::erLiveness, "LIVENESS" },
-        { ids::erDelay, "DELAY" },     { ids::erLpf, "LPF" },            { ids::balance, "BALANCE" },
-        { ids::outLevel, "OUT LVL" },
-    };
-    return labels;
-}
-
 } // namespace
 
 int lpfIndex(float hz)
@@ -236,11 +225,10 @@ Layout createParameterLayout()
     const auto& rom17 = spx::romProgram(17).er;
     const auto oneDecimal = [](float v) { return juce::String(v, 1); };
 
-    // Edit buffer of the SPX90: the parameters of the recalled memory.
-    layout.add(intParam(ids::memory, "Memory", 1, 90, 17));
-    layout.add(choiceParam(ids::erType, "ER Type", { "HALL", "RANDOM", "REVERSE", "PLATE" }, (int) rom17.type));
-    layout.add(floatParam(ids::erRoomSize, "ER Room Size", steppedRange(0.1f, 20.0f, 0.1f, 4.0f), rom17.roomSize, oneDecimal));
-    layout.add(intParam(ids::erLiveness, "ER Liveness", 0, 10, rom17.liveness));
+    // The defaults are the first factory preset, Glide Guitar.
+    // The reverse gate: the SPX90's program 17, here at its longest swell.
+    layout.add(floatParam(ids::erRoomSize, "ER Room Size", steppedRange(0.1f, 20.0f, 0.1f, 4.0f), 20.0f, oneDecimal));
+    layout.add(intParam(ids::erLiveness, "ER Liveness", 0, 10, 4));
     layout.add(floatParam(ids::erDelay, "ER Delay", steppedRange(0.1f, 400.0f, 0.1f, 40.0f), rom17.delayMs,
                           [](float v) { return juce::String(v, 1) + "ms"; }));
     juce::StringArray lpfNames;
@@ -257,26 +245,26 @@ Layout createParameterLayout()
     layout.add(choiceParam(ids::outputMode, "Output Mode", { "STEREO", "L ONLY", "MONO" }, 0));
 
     layout.add(std::make_unique<AudioParameterBool>(ParameterID { ids::glideOn, kVersion }, "Glide On", true));
-    layout.add(choiceParam(ids::glideMode, "Glide Mode", { "FREE", "SYNC", "TRIGGER", "MANUAL" }, 0));
-    layout.add(floatParam(ids::glidePeriod, "Glide Rate", steppedRange(30.0f, 4000.0f, 1.0f, 400.0f), 333.0f,
+    layout.add(choiceParam(ids::glideMode, "Glide Mode", { "FREE", "SYNC", "TRIGGER", "MANUAL" }, 2));
+    layout.add(floatParam(ids::glidePeriod, "Glide Rate", steppedRange(30.0f, 4000.0f, 1.0f, 400.0f), 600.0f,
                           [](float v) { return juce::String(juce::roundToInt(v)) + " ms"; }));
     juce::StringArray divisions;
     for (const auto& d : kDivisions)
         divisions.add(d.label);
     layout.add(choiceParam(ids::glideDivision, "Glide Sync Rate", divisions, kDefaultDivision));
-    layout.add(floatParam(ids::glideDepth, "Glide Depth", steppedRange(0.0f, 300.0f, 0.1f, 60.0f), 30.0f,
+    layout.add(floatParam(ids::glideDepth, "Glide Depth", steppedRange(0.0f, 300.0f, 0.1f, 60.0f), 40.0f,
                           [](float v) { return juce::String(v, v < 10.0f ? 1 : 0) + " ct"; }));
     layout.add(choiceParam(ids::glideDirection, "Glide Direction", { "DOWN", "BOTH", "UP" }, 0));
-    layout.add(percentParam(ids::glideRandom, "Glide Random", 0.15f));
-    layout.add(percentParam(ids::glideSmooth, "Glide Smooth", 0.2f));
+    layout.add(percentParam(ids::glideRandom, "Glide Random", 0.25f));
+    layout.add(percentParam(ids::glideSmooth, "Glide Smooth", 0.25f));
     juce::StringArray shapes;
     for (auto name : sway::kShapePresetNames)
         shapes.add(juce::String(name.data(), name.size()));
     shapes.add(kCustomShapeName);
-    layout.add(choiceParam(ids::glideShape, "Glide Shape", shapes, 0));
+    layout.add(choiceParam(ids::glideShape, "Glide Shape", shapes, (int) sway::ShapePreset::Dive));
     layout.add(choiceParam(ids::glideTriggerSource, "Glide Trigger", { "PICK ATTACK", "MIDI NOTE" }, 0));
-    layout.add(percentParam(ids::glideSensitivity, "Glide Sensitivity", 0.5f));
-    layout.add(percentParam(ids::glideDynamics, "Glide Dynamics", 0.0f));
+    layout.add(percentParam(ids::glideSensitivity, "Glide Sensitivity", 0.55f));
+    layout.add(percentParam(ids::glideDynamics, "Glide Dynamics", 0.6f));
     layout.add(choiceParam(ids::glideManualSource, "Glide Manual Source",
                            { "BAR KNOB", "PITCH BEND", "MOD WHEEL", "EXPRESSION (CC11)" }, 0));
     layout.add(percentParam(ids::glideBar, "Glide Bar", 0.0f, 0.001f));
@@ -286,27 +274,6 @@ Layout createParameterLayout()
     layout.add(percentParam(ids::glideMix, "Glide Mix", 1.0f));
     layout.add(choiceParam(ids::glidePosition, "Glide Position", { "PRE", "POST" }, 0));
     return layout;
-}
-
-std::vector<juce::String> parameterPages(int algorithm)
-{
-    const auto& prog = spx::romProgram(juce::jlimit(1, 30, algorithm));
-    if (prog.implemented && prog.algorithm == spx::Algorithm::EarlyReflection)
-        return { ids::erType, ids::erRoomSize, ids::erLiveness, ids::erDelay, ids::erLpf };
-    return {};
-}
-
-std::vector<juce::String> balancePages()
-{
-    return { ids::balance, ids::outLevel };
-}
-
-juce::String lcdText(const juce::RangedAudioParameter& p)
-{
-    const auto& labels = lcdLabels();
-    const auto it = labels.find(p.getParameterID());
-    const juce::String label = it != labels.end() ? it->second : p.getName(16).toUpperCase();
-    return label + "=" + p.getCurrentValueAsText();
 }
 
 } // namespace glide90

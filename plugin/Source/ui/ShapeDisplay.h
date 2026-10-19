@@ -1,6 +1,9 @@
 #pragma once
 
+#include "PanelLookAndFeel.h"
 #include "Shape.h"
+
+#include <vector>
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -17,10 +20,11 @@ namespace glide90::ui
 // The Glide screen: one cycle of the bar's movement with a playhead, editable by dragging its
 // points (double-click adds or removes a point, right-click removes). The shape's name at the top
 // steps with its arrows or opens a menu. In MANUAL mode it shows a scrolling trace of the bar.
-class ShapeDisplay : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
+class ShapeDisplay : public juce::Component, public juce::SettableTooltipClient
 {
 public:
     explicit ShapeDisplay(Glide90Processor& p);
+
     ~ShapeDisplay() override;
 
     void paint(juce::Graphics&) override;
@@ -31,7 +35,13 @@ public:
     void mouseDoubleClick(const juce::MouseEvent&) override;
 
 private:
-    void timerCallback() override;
+    // Every frame of the display: follows the bar, repaints what moved.
+    void frame(double seconds);
+    // What does not move between frames (the screen, grid, curve, points and labels), drawn once
+    // into `layer` and copied each frame.
+    void paintStill(juce::Graphics&);
+    void paintMoving(juce::Graphics&);
+    juce::String layerKey(float scale) const;
     juce::Rectangle<float> plotArea() const;
     juce::Rectangle<float> nameArea() const;
     juce::Point<float> toScreen(float x, float push) const;
@@ -58,6 +68,11 @@ private:
     juce::uint32 attackFlashUntil = 0;
     juce::String shownSettings;
     bool shownFlash = false;
+    double lastTraceTime = 0.0;
+    juce::Image layer;
+    juce::String shownLayer;
+    float layerScale = 1.0f;
+    juce::VBlankAttachment vblank { this, [this](double seconds) { frame(seconds); } };
 };
 
 } // namespace glide90::ui

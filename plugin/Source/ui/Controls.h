@@ -10,14 +10,50 @@ namespace glide90::ui
 // Alt-click (and Cmd-click on macOS) puts a control back to its default, as in most hosts.
 bool wantsDefault(const juce::ModifierKeys& mods);
 
-// A knob for one parameter: its name above, its value below in the display's dot matrix.
+// A one-line text field drawn like the plugin's values (the dot matrix, or the readout font), on a
+// screen's glass: the knobs' typed values and the preset names. It opens with everything selected,
+// so typing replaces it. Return, Escape and losing the focus are reported.
+class ReadoutField : public juce::Component, private juce::Timer
+{
+public:
+    explicit ReadoutField(bool large = false);
+    ~ReadoutField() override;
+
+    void setText(const juce::String& text); // selects it all
+    juce::String getText() const { return text; }
+    // Shown centred (a knob's value) or from the left (a name).
+    void setCentred(bool c) { centred = c; }
+    int maxLength = 64;
+
+    std::function<void()> onReturn, onEscape, onFocusLost;
+
+    void paint(juce::Graphics&) override;
+    bool keyPressed(const juce::KeyPress&) override;
+    void mouseDown(const juce::MouseEvent&) override;
+    void focusGained(FocusChangeType) override;
+    void focusLost(FocusChangeType) override;
+
+private:
+    void timerCallback() override;
+    void insert(const juce::String& s);
+    void moveCaret(int to);
+    float textX() const;
+
+    juce::String text;
+    int caret = 0;
+    bool allSelected = false, caretOn = true, large, centred = false;
+};
+
+// A knob for one parameter: its name above, its value below.
 // Drag up/down (Shift: fine), mouse wheel, double-click to type a value (Return or a click elsewhere
 // applies it, Escape cancels), Alt-click or right-click to reset.
 class Knob : public juce::Component, public juce::SettableTooltipClient
 {
 public:
+    // Hero: the one knob that defines a module, two rows tall. Large: the main ones. Small: the rest.
     enum class Size
     {
+        Hero,
         Large,
         Small
     };
@@ -26,12 +62,10 @@ public:
     ~Knob() override;
 
     void setLabel(const juce::String& text);
-    // Called when the knob is grabbed, turned or typed into.
-    std::function<void(juce::RangedAudioParameter&)> onTouch;
 
-    // Every knob is the same height, so that names and values line up along a row whatever the size.
-    static constexpr int kHeight = 100;
-    static int widthFor(Size s) { return s == Size::Large ? 86 : 72; }
+    // Every knob takes one column of the grid and one row (a hero two), whatever its size, so that
+    // names and values line up.
+    static constexpr int kHeight = 100, kColumn = 88;
 
     void paint(juce::Graphics&) override;
     void mouseEnter(const juce::MouseEvent&) override;
@@ -41,13 +75,11 @@ public:
     void mouseUp(const juce::MouseEvent&) override;
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     void mouseDoubleClick(const juce::MouseEvent&) override;
-    juce::String getTooltip() override;
 
 private:
     juce::Rectangle<float> knobArea() const;
     juce::Rectangle<int> valueArea() const;
     float snapped(float normalised) const;
-    void touch();
     void closeEditor(bool apply);
 
     juce::RangedAudioParameter& param;
@@ -58,96 +90,54 @@ private:
     float dragNormalised = 0.0f;
     juce::Point<float> lastDrag;
     bool hover = false, dragging = false;
-    std::unique_ptr<juce::TextEditor> editor;
+    class FieldGlass;
+    std::unique_ptr<FieldGlass> editorBox; // the glass the field sits on
+    ReadoutField* editor = nullptr;        // in editorBox
     std::unique_ptr<juce::MouseListener> outsideClick; // after `editor`: goes first
     bool closingEditor = false;
 };
 
-// A rotary selector switch: a small knob pointing at one of its printed positions. Click a
-// position, click the knob to step, or use the wheel.
-class SelectorSwitch : public juce::Component, public juce::SettableTooltipClient
+// A choice parameter as a short list under its name, the selected item marked. Click an item, or
+// use the wheel.
+class ChoiceList : public juce::Component, public juce::SettableTooltipClient
 {
 public:
-    SelectorSwitch(juce::AudioProcessorValueTreeState& state, const char* paramId, const juce::String& label,
-                   const juce::StringArray& positions = {});
+    // `labels` top to bottom; `values` the parameter value (choice index) of each item.
+    ChoiceList(juce::AudioProcessorValueTreeState& state, const char* paramId, const juce::String& label,
+               const juce::StringArray& labels, const juce::Array<int>& values);
+
+    static constexpr int kRowHeight = 17;
 
     void paint(juce::Graphics&) override;
     void mouseDown(const juce::MouseEvent&) override;
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
 private:
-    float angleOf(int position) const;
-    juce::Point<float> knobCentre() const;
-    float knobRadius() const;
-    juce::Rectangle<float> labelArea(int position) const;
-    void select(int position);
-
-    juce::RangedAudioParameter& param;
-    juce::ParameterAttachment attachment;
-    juce::String label;
-    juce::StringArray positions;
-    int selected = 0;
-};
-
-// A bat-lever toggle switch with two or three positions, labelled top to bottom.
-class ToggleSwitch : public juce::Component, public juce::SettableTooltipClient
-{
-public:
-    // `labels` top to bottom; `values` the parameter value (choice index or 0/1) of each position.
-    ToggleSwitch(juce::AudioProcessorValueTreeState& state, const char* paramId, const juce::String& label,
-                 const juce::StringArray& labels, const juce::Array<int>& values);
-
-    void paint(juce::Graphics&) override;
-    void mouseDown(const juce::MouseEvent&) override;
-
-private:
-    float positionY(int position) const;
-    juce::Point<float> pivot() const;
+    juce::Rectangle<float> rowArea(int row) const;
+    void select(int row);
 
     juce::RangedAudioParameter& param;
     juce::ParameterAttachment attachment;
     juce::String label;
     juce::StringArray labels;
     juce::Array<int> values;
-    int selected = 0; // position, top to bottom
+    int selected = 0; // row
 };
 
-// A key with an LED that toggles a two-state parameter.
+// A key that toggles a two-state parameter and shows its state. `inverted`: lit while the parameter
+// is off (ON for a bypass).
 class ToggleKey : public juce::TextButton
 {
 public:
-    ToggleKey(juce::AudioProcessorValueTreeState& state, const char* paramId, const juce::String& label);
+    ToggleKey(juce::AudioProcessorValueTreeState& state, const char* paramId, const juce::String& label, bool inverted = false);
 
 private:
     juce::RangedAudioParameter& param;
     juce::ParameterAttachment attachment;
+    bool inverted;
 };
 
-// A horizontal slide switch with its positions printed under the slot, for the rear panel.
-class SlideSwitch : public juce::Component, public juce::SettableTooltipClient
-{
-public:
-    SlideSwitch(juce::AudioProcessorValueTreeState& state, const char* paramId, const juce::String& label,
-                const juce::StringArray& positions);
-
-    // Width that fits the legend and the positions.
-    int idealWidth() const;
-
-    void paint(juce::Graphics&) override;
-    void mouseDown(const juce::MouseEvent&) override;
-
-private:
-    juce::Rectangle<float> slot() const;
-    float legendWidth() const;
-
-    juce::RangedAudioParameter& param;
-    juce::ParameterAttachment attachment;
-    juce::String label;
-    juce::StringArray positions;
-    int selected = 0;
-};
-
-// A small display window: dot-matrix text, optional step arrows at its ends, a menu on click.
+// A small screen: text, optional step arrows at its ends, a menu on click.
 class GlassSelector : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
 {
 public:
@@ -166,6 +156,26 @@ private:
 
     bool arrows, large;
     juce::String shown;
+};
+
+// A level meter: a column of segments, the top one for clipping, with a falling peak.
+class LevelMeter : public juce::Component
+{
+public:
+    // Reads the peak (linear, 1 = full scale) since the last call.
+    explicit LevelMeter(std::function<float()> takePeak);
+    ~LevelMeter() override;
+
+    void paint(juce::Graphics&) override;
+
+private:
+    void frame(double seconds);
+
+    std::function<float()> takePeak;
+    float levelDb = -100.0f;
+    int litShown = 0;
+    double lastFrame = 0.0;
+    juce::VBlankAttachment vblank { this, [this](double seconds) { frame(seconds); } };
 };
 
 } // namespace glide90::ui

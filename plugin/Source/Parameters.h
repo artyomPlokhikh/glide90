@@ -3,17 +3,13 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <optional>
-#include <vector>
 
 namespace glide90
 {
 
 namespace ids
 {
-// SPX90 memory and edit buffer. Everything from erType to outLevel is stored with a memory,
-// like on the unit ("all parameters except Input Level can be memorized").
-inline constexpr const char* memory = "memory";
-inline constexpr const char* erType = "er_type";
+// The reverse gate (the SPX90's program 17, the only one kept) and its mix and output level.
 inline constexpr const char* erRoomSize = "er_room_size";
 inline constexpr const char* erLiveness = "er_liveness";
 inline constexpr const char* erDelay = "er_delay";
@@ -95,14 +91,6 @@ inline constexpr int kDefaultDivision = 6; // 1/4
 inline constexpr const char* kCustomShapeName = "Custom";
 
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
-
-// The parameters the PARAMETER key steps through for a program's algorithm (empty for the
-// programs that are not emulated yet), and the two the BALANCE key steps through.
-std::vector<juce::String> parameterPages(int algorithm);
-std::vector<juce::String> balancePages();
-
-// One LCD line for a parameter, e.g. "ROOM SIZE=3.3" or "LPF=THRU".
-juce::String lcdText(const juce::RangedAudioParameter& p);
 
 // A value typed by the user, as a plain value of `p`: "50" on a percentage is 50 %, "1.2 s" is 1200 ms,
 // "2.5" on the LPF is 2.5 kHz, "thru", "1/4d". Nothing when the text names no value.

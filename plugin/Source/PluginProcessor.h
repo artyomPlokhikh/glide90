@@ -1,6 +1,5 @@
 #pragma once
 
-#include "Memories.h"
 #include "Parameters.h"
 
 #include "Shape.h"
@@ -15,12 +14,9 @@
 namespace glide90
 {
 
-// Glide90: a vibrato-bar glide (before or after) and an SPX90-style processor. Mono in (stereo
+// Glide90: a vibrato-bar glide (before or after) and the SPX90's reverse gate. Mono in (stereo
 // inputs are summed), stereo out, like the unit.
-class Glide90Processor : public juce::AudioProcessor,
-                         private juce::AudioProcessorValueTreeState::Listener,
-                         private juce::AudioProcessorParameter::Listener,
-                         private juce::AsyncUpdater
+class Glide90Processor : public juce::AudioProcessor, private juce::AudioProcessorParameter::Listener
 {
 public:
     Glide90Processor();
@@ -58,21 +54,6 @@ public:
 
     juce::AudioProcessorValueTreeState& state() { return apvts; }
 
-    // --- SPX90 memories (message thread) ---
-    const MemoryBank& memories() const { return bank; }
-    // Bumped whenever a memory is stored or the bank is restored, so lists can refresh.
-    int memoriesRevision() const { return bankRevision.load(); }
-    // Loads a memory into the edit buffer, as the RECALL key does. Empty user memories change nothing.
-    // False, and nothing changes, for a factory program that is not emulated yet.
-    bool recallMemory(int number);
-    // Stores the edit buffer, as the STORE key does. False for the read-only memories 1-30.
-    bool storeMemory(int number, const juce::String& title);
-    int loadedMemory() const { return loaded.load(); }
-    // A memory change from the host is recalled on the message thread; this runs it right away.
-    void flushPendingRecall() { handleUpdateNowIfNeeded(); }
-    // The ROM program whose algorithm the edit buffer runs.
-    int algorithm() const { return currentAlgorithm.load(); }
-
     // --- Glide shape (message thread) ---
     // The shape selected by the glide_shape parameter (a preset or the custom one).
     sway::Shape currentShape() const;
@@ -97,9 +78,11 @@ public:
     bool isPresetModified() const;
 
     // --- Editing (message thread) ---
-    // Undo steps are what the editor does: each knob gesture, preset load or recall, and each
-    // beginEdit()/endEdit() pair (drawing the shape). Host automation is not an edit.
-    juce::UndoManager& undoManager() { return undo; }
+    // Undo steps are what the editor does: each knob gesture and each beginEdit()/endEdit() pair
+    // (drawing the shape). Host automation is not an edit. Loading a preset starts the history of
+    // the current A/B slot afresh.
+    // Each A/B slot has its own history: undo in B never brings back a state of A.
+    juce::UndoManager& undoManager() { return undos[(size_t) abIndex]; }
     void beginEdit();
     void endEdit();
     // A/B: two working copies of the whole setting; switching keeps the one you leave.
@@ -112,6 +95,10 @@ public:
     // --- Meters and display (any thread) ---
     // Peak at the A/D since the last call, relative to its full scale.
     float takeInputPeak() { return inputPeak.exchange(0.0f); }
+    // Peak at the outputs since the last call.
+    float takeOutputPeak() { return outputPeak.exchange(0.0f); }
+    // Peak of the reverse gate's effect alone since the last call (0 while it is bypassed).
+    float takeWetPeak() { return wetPeak.exchange(0.0f); }
     float barCents() const { return lastBarCents.load(); }
     float glidePhase() const { return lastGlidePhase.load(); }
     // Picking attacks detected so far (they restart the glide in TRIGGER mode).
@@ -122,17 +109,13 @@ private:
     struct Batch;
     class SnapshotAction;
 
-    void parameterChanged(const juce::String& id, float value) override;
     void parameterValueChanged(int, float) override {}
     void parameterGestureChanged(int, bool starting) override;
     void commitEdit(const juce::ValueTree& before);
     juce::ValueTree editState(); // presetState() with the rig's settings
-    void handleAsyncUpdate() override;
-    bool loadMemory(int number);
     void processInternal(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi);
     // The input, delayed by the latency, into `dryOut` (the host-bypass path, kept current always).
     void delayDry(const juce::AudioBuffer<float>& buffer, int numSamples);
-    Memory editBuffer() const;
     void setParameter(const char* id, float plainValue);
     void resetForPreset();
     juce::ValueTree shapeToTree() const;
@@ -144,17 +127,13 @@ private:
     void processChunk(juce::AudioBuffer<float>& buffer, int start, int num, const spx::SpxSettings& spxSettings,
                       sway::SwaySettings glide, int midiNoteAt);
 
-    juce::UndoManager undo;
+    std::array<juce::UndoManager, 2> undos;
     int openEdits = 0;  // gestures (or beginEdit) under way
     int quietEdits = 0; // inside a Batch: single parameter gestures are not steps of their own
     juce::ValueTree editBefore;
     juce::AudioProcessorValueTreeState apvts;
-    MemoryBank bank;
-    std::atomic<int> bankRevision { 0 };
-    std::atomic<int> loaded { 17 };
-    std::atomic<int> currentAlgorithm { 17 };
     int currentFactoryPreset = 0;
-    juce::String presetName { "Init" };
+    juce::String presetName { "Glide Guitar" };
     bool presetIsUser = false;
     std::vector<float> baseline; // normalised parameter values of the preset as loaded
     juce::ValueTree baselineShape;
@@ -181,19 +160,23 @@ private:
     int bypassPos = 0;
     bool wasBypassed = false;
     int fadeLength = 1;
+    // The order that plays (it follows glide_position through a fade) and what is left of the fade.
+    bool activePost = false;
+    int orderFadeLeft = 0;
+    int inputRampLeft = 0; // the input fading into engines just cleared
     int bypassFadeLeft = 0; // still processing while fading into the bypass
     int resumeLeft = 0;     // the latency and then a fade, after the bypass
 
     float pitchBend = 0.0f;  // -1 .. 1
     float modWheel = 0.0f;   // 0 .. 1
     float expression = 0.0f; // 0 .. 1
-    std::atomic<float> inputPeak { 0.0f }, lastBarCents { 0.0f }, lastGlidePhase { 0.0f };
+    std::atomic<float> inputPeak { 0.0f }, outputPeak { 0.0f }, wetPeak { 0.0f }, lastBarCents { 0.0f }, lastGlidePhase { 0.0f };
     std::atomic<int> lastPickAttacks { 0 };
     std::atomic<double> lastBpm { 120.0 };
 
     struct RawParams
     {
-        std::atomic<float>*erType, *erRoomSize, *erLiveness, *erDelay, *erLpf, *balance, *outLevel, *input, *inputSwitch,
+        std::atomic<float>*erRoomSize, *erLiveness, *erDelay, *erLpf, *balance, *outLevel, *input, *inputSwitch,
             *outputSwitch, *bypass, *glideOn, *glideMode, *glidePeriod, *glideDivision, *glideDepth, *glideDirection,
             *glideRandom, *glideSmooth, *glideShape, *glideTriggerSource, *glideSensitivity, *glideManualSource,
             *glideBar, *glideTwinDetune, *glideTwinLevel, *glideMix, *glidePosition, *outputMode, *glideDynamics;

@@ -17,7 +17,7 @@ juce_add_plugin(Glide90
     BUNDLE_ID "io.github.glide90.Glide90"
     PLUGIN_MANUFACTURER_CODE Gl9d
     PLUGIN_CODE G90s
-    DESCRIPTION "SPX90-style early reflections and reverse gate, with Sway glide"
+    DESCRIPTION "Reverse gate and vibrato-bar glide"
     FORMATS ${GLIDE90_FORMATS}
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT TRUE   # pitch bend / mod wheel can drive the Sway bar
@@ -29,30 +29,30 @@ juce_add_plugin(Glide90
     LV2URI "https://github.com/glide90/glide90"
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
-# Fonts (SIL Open Font License, licences next to them): Barlow Condensed for the panel legends,
-# Liberation Sans for the key legends, DSEG7 for the memory number.
+# Fonts (SIL Open Font License, licences next to them): Barlow and Barlow Condensed for legends and
+# values, Courier Prime for the print look.
 juce_add_binary_data(glide90_fonts
     NAMESPACE GlideFonts
     HEADER_NAME GlideFonts.h
     SOURCES
         Resources/fonts/BarlowCondensed-Medium.ttf
         Resources/fonts/BarlowCondensed-SemiBold.ttf
-        Resources/fonts/LiberationSans-Regular.ttf
-        Resources/fonts/DSEG7Classic-Bold.ttf)
+        Resources/fonts/Barlow-Light.ttf
+        Resources/fonts/Barlow-Regular.ttf
+        Resources/fonts/Barlow-Medium.ttf
+        Resources/fonts/CourierPrime-Regular.ttf
+        Resources/fonts/CourierPrime-Bold.ttf)
 
 set(GLIDE90_PLUGIN_SOURCES
     Source/Parameters.cpp
-    Source/Memories.cpp
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/ui/PanelLookAndFeel.cpp
     Source/ui/Controls.cpp
-    Source/ui/LcdDisplay.cpp
     Source/ui/HeaderBar.cpp
-    Source/ui/SpxPanel.cpp
-    Source/ui/SpxControls.cpp
-    Source/ui/RearPanel.cpp
-    Source/ui/Rack.cpp
+    Source/ui/ModulePanel.cpp
+    Source/ui/Dialog.cpp
+    Source/ui/GatePanel.cpp
     Source/ui/ShapeDisplay.cpp
     Source/ui/GlidePanel.cpp)
 set(GLIDE90_JUCE_DEFINITIONS

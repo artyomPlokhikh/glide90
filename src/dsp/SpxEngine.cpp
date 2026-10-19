@@ -126,6 +126,8 @@ void SpxEngine::processDsp(int numDsp, const SpxSettings& s)
     {
         er.setSettings(s.er);
         er.process(dspIn.data(), dspWetL.data(), dspWetR.data(), numDsp);
+        for (int n = 0; n < numDsp; ++n)
+            wetPeak = std::max({ wetPeak, std::abs(dspWetL[(size_t) n]), std::abs(dspWetR[(size_t) n]) });
     }
     else
     {

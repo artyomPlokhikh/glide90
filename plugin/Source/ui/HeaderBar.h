@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Controls.h"
+#include "Dialog.h"
 
 namespace glide90
 {
@@ -10,8 +11,9 @@ class Glide90Processor;
 namespace glide90::ui
 {
 
-// Preset bar: browse and step through factory and user presets (an asterisk marks unsaved changes),
-// save or delete, compare A/B, undo/redo and zoom the window.
+// The top bar: the name; browse and step through factory and user presets (an asterisk marks
+// unsaved changes), save or delete, compare A/B, undo/redo; SETUP for the rig's levels, the outputs,
+// the window size and the look.
 class HeaderBar : public juce::Component, private juce::Timer
 {
 public:
@@ -20,6 +22,8 @@ public:
 
     // Called with the new zoom factor.
     std::function<void(float)> onZoom;
+    // Called with the index of the look chosen.
+    std::function<void(int)> onTheme;
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -34,13 +38,15 @@ private:
     juce::File currentUserFile() const;
     void askToDelete(const juce::File& file);
     // Shows a dialog inside the plugin window (it gets the panel's look and closes with the window).
-    void showDialog(std::unique_ptr<juce::AlertWindow> window, std::function<void(int)> onResult);
+    void showDialog(std::unique_ptr<Dialog> window, std::function<void(int)> onResult);
 
     Glide90Processor& proc;
-    GlassSelector presets { true, true }, zoom { false };
-    juce::TextButton save { "SAVE" }, a { "A" }, b { "B" }, undoKey { "UNDO" }, redoKey { "REDO" };
+    void showSetup();
+
+    GlassSelector presets { true, true };
+    juce::TextButton save { "SAVE" }, a { "A" }, b { "B" }, undoKey { "UNDO" }, redoKey { "REDO" }, setup { "SETUP" };
     juce::Array<juce::File> userFiles;
-    std::unique_ptr<juce::AlertWindow> dialog;
+    std::unique_ptr<Dialog> dialog;
 };
 
 } // namespace glide90::ui

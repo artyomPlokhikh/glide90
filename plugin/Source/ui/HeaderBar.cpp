@@ -1,6 +1,7 @@
 #include "HeaderBar.h"
 
 #include "PanelLookAndFeel.h"
+#include "Parameters.h"
 #include "PluginProcessor.h"
 
 namespace glide90::ui
@@ -8,7 +9,7 @@ namespace glide90::ui
 
 HeaderBar::HeaderBar(Glide90Processor& p) : proc(p)
 {
-    for (auto* c : std::initializer_list<juce::Component*> { &presets, &save, &a, &b, &undoKey, &redoKey, &zoom })
+    for (auto* c : std::initializer_list<juce::Component*> { &presets, &save, &a, &b, &undoKey, &redoKey, &setup })
         addAndMakeVisible(c);
 
     presets.setTooltip("Preset: the whole plugin, reverb and glide. Arrows step through the list; * means changed. "
@@ -37,25 +38,22 @@ HeaderBar::HeaderBar(Glide90Processor& p) : proc(p)
     save.setTooltip(juce::String("Save as a user preset in ") + Glide90Processor::userPresetDirectory().getFullPathName());
     save.onClick = [this] { askToSave(); };
 
-    for (auto* key : { &a, &b })
-        key->getProperties().set(PanelLookAndFeel::kLed, true);
+    a.getProperties().set(PanelLookAndFeel::kSegment, "left");
+    b.getProperties().set(PanelLookAndFeel::kSegment, "right");
     a.setTooltip("Compare: two working versions of the setting");
     b.setTooltip("Compare: two working versions of the setting (B starts as a copy of A)");
     a.onClick = [this] { proc.selectAB(0); };
     b.onClick = [this] { proc.selectAB(1); };
 
+    undoKey.getProperties().set(PanelLookAndFeel::kIcon, "undo");
+    redoKey.getProperties().set(PanelLookAndFeel::kIcon, "redo");
+    undoKey.setTooltip("Undo");
+    redoKey.setTooltip("Redo");
     undoKey.onClick = [this] { proc.undoManager().undo(); };
     redoKey.onClick = [this] { proc.undoManager().redo(); };
 
-    zoom.setTooltip("Window size");
-    zoom.getText = [this] { return juce::String(juce::roundToInt(proc.uiScale() * 100.0f)) + "%"; };
-    zoom.fillMenu = [this](juce::PopupMenu& menu) {
-        for (float s : { 0.75f, 1.0f, 1.25f, 1.5f, 1.75f })
-            menu.addItem(juce::String(juce::roundToInt(s * 100.0f)) + "%", true, std::abs(s - proc.uiScale()) < 0.01f, [this, s] {
-                if (onZoom)
-                    onZoom(s);
-            });
-    };
+    setup.setTooltip("The levels of your rig, the outputs, the window size and the look");
+    setup.onClick = [this] { showSetup(); };
 
     refreshUserFiles();
     timerCallback();
@@ -95,13 +93,58 @@ void HeaderBar::stepPreset(int delta)
         proc.loadUserPreset(userFiles[next - factory.size()]);
 }
 
-void HeaderBar::showDialog(std::unique_ptr<juce::AlertWindow> window, std::function<void(int)> onResult)
+void HeaderBar::showSetup()
+{
+    juce::PopupMenu menu;
+    menu.setLookAndFeel(&getLookAndFeel());
+    // A choice parameter as a submenu.
+    auto choices = [this](const char* id) {
+        juce::PopupMenu sub;
+        auto* param = dynamic_cast<juce::AudioParameterChoice*>(proc.state().getParameter(id));
+        for (int i = 0; i < param->choices.size(); ++i)
+            sub.addItem(param->choices[i], true, i == param->getIndex(), [param, i] {
+                param->beginChangeGesture();
+                param->setValueNotifyingHost(param->convertTo0to1((float) i));
+                param->endChangeGesture();
+            });
+        return sub;
+    };
+    menu.addSectionHeader("Rig");
+    menu.addSubMenu("Input level", choices(ids::inputSwitch));
+    menu.addSubMenu("Output level", choices(ids::outputSwitch));
+    menu.addSubMenu("Outputs", choices(ids::outputMode));
+    menu.addSectionHeader("Window");
+    juce::PopupMenu sizes;
+    for (float s : { 0.75f, 1.0f, 1.25f, 1.5f, 1.75f })
+        sizes.addItem(juce::String(juce::roundToInt(s * 100.0f)) + "%", true, std::abs(s - proc.uiScale()) < 0.01f, [this, s] {
+            if (onZoom)
+                onZoom(s);
+        });
+    menu.addSubMenu("Size", sizes);
+    juce::PopupMenu looks;
+    for (int i = 0; i < kThemeCount; ++i)
+        looks.addItem(themeAt(i).name, true, themeAt(i).id == theme().id, [this, i] {
+            if (onTheme)
+                onTheme(i);
+        });
+    menu.addSubMenu("Look", looks);
+    juce::PopupMenu motionMenu;
+    const std::pair<const char*, MotionLevel> levels[] { { "Full", MotionLevel::Full },
+                                                         { "Screens only", MotionLevel::Subtle },
+                                                         { "Off", MotionLevel::Off } };
+    for (const auto& [name, level] : levels)
+        motionMenu.addItem(name, true, motionLevel() == level, [level] { setMotionLevel(level); });
+    menu.addSubMenu("Motion", motionMenu);
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&setup));
+}
+
+void HeaderBar::showDialog(std::unique_ptr<Dialog> window, std::function<void(int)> onResult)
 {
     dialog = std::move(window);
     if (auto* parent = getParentComponent())
     {
         parent->addAndMakeVisible(*dialog);
-        dialog->setCentrePosition(parent->getLocalBounds().getCentre());
+        dialog->setBounds(parent->getLocalBounds());
     }
     // The callback comes after the dialog is gone, possibly after this panel is gone too (the plugin
     // window closed with the dialog open): it must not touch either then.
@@ -110,36 +153,31 @@ void HeaderBar::showDialog(std::unique_ptr<juce::AlertWindow> window, std::funct
                                           if (safe != nullptr)
                                               onResult(result);
                                       }));
+    dialog->focus();
 }
 
 void HeaderBar::askToSave()
 {
-    auto window = std::make_unique<juce::AlertWindow>("Save preset", "Name:", juce::MessageBoxIconType::NoIcon);
-    window->addTextEditor("name", proc.currentPresetName());
-    window->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
-    window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
-    showDialog(std::move(window), [this](int result) {
-        const auto name = dialog != nullptr ? dialog->getTextEditorContents("name").trim() : juce::String();
-        dialog.reset();
-        if (result != 1 || name.isEmpty())
-            return;
-        // Saving over another preset than the one being edited asks first.
-        const auto file = Glide90Processor::userPresetDirectory().getChildFile(juce::File::createLegalFileName(name)
-                                                                                + Glide90Processor::presetExtension());
-        const bool same = proc.currentPresetIsUser() && file.getFileNameWithoutExtension() == proc.currentPresetName();
-        if (!file.existsAsFile() || same)
-            return savePreset(name);
-        auto confirm = std::make_unique<juce::AlertWindow>("Replace preset?",
-                                                           "\"" + file.getFileNameWithoutExtension() + "\" already exists.",
-                                                           juce::MessageBoxIconType::NoIcon);
-        confirm->addButton("Replace", 1, juce::KeyPress(juce::KeyPress::returnKey));
-        confirm->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
-        showDialog(std::move(confirm), [this, name](int answer) {
-            dialog.reset();
-            if (answer == 1)
-                savePreset(name);
-        });
-    });
+    showDialog(std::make_unique<Dialog>("Save preset", "Name of the user preset:", "Save", true, proc.currentPresetName()),
+               [this](int result) {
+                   const auto name = dialog != nullptr ? dialog->getFieldText() : juce::String();
+                   dialog.reset();
+                   if (result != 1 || name.isEmpty())
+                       return;
+                   // Saving over another preset than the one being edited asks first.
+                   const auto file = Glide90Processor::userPresetDirectory().getChildFile(
+                       juce::File::createLegalFileName(name) + Glide90Processor::presetExtension());
+                   const bool same = proc.currentPresetIsUser() && file.getFileNameWithoutExtension() == proc.currentPresetName();
+                   if (!file.existsAsFile() || same)
+                       return savePreset(name);
+                   showDialog(std::make_unique<Dialog>("Replace preset?",
+                                                       "\"" + file.getFileNameWithoutExtension() + "\" already exists.", "Replace"),
+                              [this, name](int answer) {
+                                  dialog.reset();
+                                  if (answer == 1)
+                                      savePreset(name);
+                              });
+               });
 }
 
 juce::File HeaderBar::currentUserFile() const
@@ -153,12 +191,9 @@ juce::File HeaderBar::currentUserFile() const
 
 void HeaderBar::askToDelete(const juce::File& file)
 {
-    auto confirm = std::make_unique<juce::AlertWindow>("Delete preset?",
-                                                       "\"" + file.getFileNameWithoutExtension() + "\" goes to the trash.",
-                                                       juce::MessageBoxIconType::NoIcon);
-    confirm->addButton("Delete", 1, juce::KeyPress(juce::KeyPress::returnKey));
-    confirm->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
-    showDialog(std::move(confirm), [this, file](int answer) {
+    showDialog(std::make_unique<Dialog>("Delete preset?", "\"" + file.getFileNameWithoutExtension() + "\" goes to the trash.",
+                                        "Delete"),
+               [this, file](int answer) {
         dialog.reset();
         if (answer == 1 && proc.deleteUserPreset(file))
             refreshUserFiles();
@@ -181,27 +216,24 @@ void HeaderBar::timerCallback()
 
 void HeaderBar::paint(juce::Graphics& g)
 {
-    drawRackUnit(g, getLocalBounds());
-    g.setFont(legendFont(24.0f, true));
-    g.setColour(colours::silkscreen);
-    g.drawText("GLIDE90", PanelLookAndFeel::kMargin, 0, 120, getHeight(), juce::Justification::centredLeft);
+    const bool big = !theme().matrix;
+    g.setFont(legendFont(big ? 30.0f : 26.0f, !big || theme().face == Theme::Face::Courier).withExtraKerningFactor(big ? -0.01f : 0.03f));
+    g.setColour(theme().text);
+    g.drawText(themed("GLIDE90"), PanelLookAndFeel::kMargin + 2, 0, 140, getHeight(), juce::Justification::centredLeft);
 }
 
 void HeaderBar::resized()
 {
-    const int h = 28, y = (getHeight() - h) / 2;
-    presets.setBounds(240, y, 340, h);
-    // Keys: their caps line up with the windows; their bounds add room for the shadow.
-    auto key = [y, h](juce::Button& k, int x, int w) { k.setBounds(PanelLookAndFeel::keyBounds({ x, y, w, h })); };
-    key(save, 586, 58);
-    key(a, 668, 36);
-    key(b, 708, 36);
-    key(undoKey, 766, 54);
-    key(redoKey, 824, 54);
-    // Groups: preset + SAVE, A/B, UNDO/REDO, zoom; 4 px inside a group, 22 px between groups.
-    // Just wide enough for "175%".
-    const int zoomW = (int) matrixTextWidth("175%", kSmallTextPitch) + 22;
-    zoom.setBounds(getWidth() - PanelLookAndFeel::kMargin - zoomW, y, zoomW, h);
+    // Three groups, 24 apart: the preset and SAVE, the A/B switch, undo and redo; SETUP at the far end.
+    // Everything as tall as the preset's window.
+    const int h = 32, y = (getHeight() - h) / 2;
+    presets.setBounds(160, y, 360, h);
+    save.setBounds(presets.getRight() + 6, y, 62, h);
+    a.setBounds(save.getRight() + 24, y, 40, h);
+    b.setBounds(a.getRight(), y, 40, h);
+    undoKey.setBounds(b.getRight() + 24, y, 36, h);
+    redoKey.setBounds(undoKey.getRight() + 4, y, 36, h);
+    setup.setBounds(getWidth() - PanelLookAndFeel::kMargin - 84, y, 84, h);
 }
 
 } // namespace glide90::ui

@@ -1,10 +1,15 @@
-// Processor-level tests: memories, state, latency and host bypass of the Glide90 plugin.
+// Processor-level tests: presets, state, latency and host bypass of the Glide90 plugin, and the editor.
 #define DOCTEST_CONFIG_IMPLEMENT
 #define JUCE_GUI_BASICS_INCLUDE_XHEADERS 1 // Linux: the X11 calls in main()
 #include <doctest/doctest.h>
 
+#include "PluginEditor.h"
 #include "PluginProcessor.h"
 #include "ui/Controls.h"
+#include "ui/Dialog.h"
+#include "ui/GatePanel.h"
+#include "ui/GlidePanel.h"
+#include "ui/PanelLookAndFeel.h"
 
 #include <juce_events/juce_events.h>
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -72,62 +77,55 @@ int impulsePeak(Glide90Processor& p, bool hostBypass)
 
 } // namespace
 
-TEST_CASE("changing the memory number recalls the memory, like RECALL")
-{
-    auto p = make();
-    CHECK(p->algorithm() == 17);
-    set(*p, ids::memory, 5.0f);
-    p->flushPendingRecall();
-    CHECK(p->loadedMemory() == 5);
-    CHECK(p->algorithm() == 5);
-    CHECK(plain(*p, ids::erType) == doctest::Approx((float) spx::ErType::Hall));
-    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(2.0f));
-    CHECK(plain(*p, ids::erDelay) == doctest::Approx(10.0f));
-
-    set(*p, ids::memory, 31.0f); // pre-filled user memory REV GATE 20/4
-    p->flushPendingRecall();
-    CHECK(p->algorithm() == 17);
-    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(20.0f));
-    CHECK(plain(*p, ids::erLiveness) == doctest::Approx(4.0f));
-}
-
-TEST_CASE("STORE writes user memories only, and an empty memory recalls nothing")
-{
-    auto p = make();
-    set(*p, ids::erRoomSize, 12.3f);
-    CHECK_FALSE(p->storeMemory(20, "MINE"));
-    CHECK(p->storeMemory(45, "MINE"));
-    CHECK(p->loadedMemory() == 45);
-
-    p->recallMemory(5);
-    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(2.0f));
-    p->recallMemory(50); // empty
-    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(2.0f));
-    CHECK(p->algorithm() == 5);
-    p->recallMemory(45);
-    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(12.3f));
-    CHECK(p->memories().get(45).title == "MINE");
-}
-
-TEST_CASE("state round trip keeps edits, user memories and the algorithm")
+TEST_CASE("the reverb is the reverse gate, and a state keeps its edits")
 {
     auto a = make();
-    a->recallMemory(16);
-    set(*a, ids::erRoomSize, 7.7f); // edited, not stored
-    a->storeMemory(60, "SIXTY");
-    set(*a, ids::erLiveness, 2.0f); // edited after storing
+    REQUIRE(a->state().getParameter("er_type") == nullptr);
+    REQUIRE(a->state().getParameter("memory") == nullptr);
+    set(*a, ids::erRoomSize, 7.7f);
+    set(*a, ids::erLiveness, 2.0f);
     const auto state = saveState(*a);
 
     auto b = make();
     b->setStateInformation(state.getData(), (int) state.getSize());
-    b->flushPendingRecall(); // must not recall memory 60 over the restored edit
-    CHECK(b->loadedMemory() == 60);
-    CHECK(b->algorithm() == 16);
     CHECK(plain(*b, ids::erRoomSize) == doctest::Approx(7.7f));
     CHECK(plain(*b, ids::erLiveness) == doctest::Approx(2.0f));
-    CHECK(b->memories().get(60).title == "SIXTY");
-    CHECK(b->memories().get(60).er.liveness == 5);
-    CHECK(b->memories().get(31).used); // factory user memories survive
+}
+
+TEST_CASE("a project saved with the SPX90 memories opens with its reverse gate settings")
+{
+    auto a = make();
+    set(*a, ids::erRoomSize, 12.0f);
+    set(*a, ids::erDelay, 80.0f);
+    const auto block = saveState(*a);
+    auto xml = juce::AudioProcessor::getXmlFromBinary(block.getData(), (int) block.getSize());
+    REQUIRE(xml != nullptr);
+    // What an older version saved besides: the memory number, the type, the memories, the program.
+    for (auto [id, value] : { std::pair<const char*, double> { "memory", 16.0 }, { "er_type", 1.0 } })
+    {
+        auto* param = xml->createNewChildElement("PARAM");
+        param->setAttribute("id", id);
+        param->setAttribute("value", value);
+    }
+    xml->createNewChildElement("MEMORIES")->createNewChildElement("MEMORY")->setAttribute("number", 31);
+    xml->setAttribute("algorithm", 16);
+    xml->setAttribute("loadedMemory", 16);
+    juce::MemoryBlock old;
+    juce::AudioProcessor::copyXmlToBinary(*xml, old);
+
+    auto b = make();
+    b->setStateInformation(old.getData(), (int) old.getSize());
+    CHECK(plain(*b, ids::erRoomSize) == doctest::Approx(12.0f));
+    CHECK(plain(*b, ids::erDelay) == doctest::Approx(80.0f));
+    CHECK_FALSE(b->isPresetModified());
+    // Saved again, nothing of the old memories is left.
+    const auto again = saveState(*b);
+    auto saved = juce::AudioProcessor::getXmlFromBinary(again.getData(), (int) again.getSize());
+    REQUIRE(saved != nullptr);
+    CHECK(saved->getChildByName("MEMORIES") == nullptr);
+    CHECK(saved->getChildByAttribute("id", "memory") == nullptr);
+    CHECK(saved->getChildByAttribute("id", "er_type") == nullptr);
+    CHECK_FALSE(saved->hasAttribute("algorithm"));
 }
 
 TEST_CASE("the reported latency is where the direct signal comes out, with or without host bypass")
@@ -146,7 +144,7 @@ TEST_CASE("the reported latency is where the direct signal comes out, with or wi
     CHECK(impulsePeak(*p, true) == p->getLatencySamples());
 }
 
-TEST_CASE("factory presets recall their memory and set the glide")
+TEST_CASE("factory presets set the reverse gate and the glide")
 {
     auto p = make();
     for (int i = 0; i < p->getNumPrograms(); ++i)
@@ -155,9 +153,10 @@ TEST_CASE("factory presets recall their memory and set the glide")
         p->setCurrentProgram(i);
         CHECK(p->getCurrentProgram() == i);
         CHECK(p->currentPresetName() == p->getProgramName(i));
-        CHECK(p->loadedMemory() == juce::roundToInt(plain(*p, ids::memory)));
+        for (const char* foreign : { "MBV", "Loveless", "Whammy", "Init" })
+            CHECK_FALSE(p->getProgramName(i).contains(foreign));
     }
-    p->setCurrentProgram(3); // a dive on each pick
+    p->setCurrentProgram(p->factoryPresetNames().indexOf("Steep Swell")); // a dive on each pick
     CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(20.0f));
     CHECK(plain(*p, ids::erLiveness) == doctest::Approx(10.0f));
     CHECK(plain(*p, ids::glideOn) > 0.5f);
@@ -174,16 +173,12 @@ TEST_CASE("factory presets recall their memory and set the glide")
 TEST_CASE("factory presets bring their own reverb settings and load unmodified")
 {
     auto p = make();
-    // Overwrite the user memories the presets might have relied on.
-    for (int n = glide90::MemoryBank::kFirstUser; n < glide90::MemoryBank::kFirstUser + 8; ++n)
-        p->storeMemory(n, "OVERWRITTEN");
     for (int i = 0; i < p->getNumPrograms(); ++i)
     {
         CAPTURE(p->getProgramName(i));
         p->setCurrentProgram(i);
-        p->flushPendingRecall();
         CHECK_FALSE(p->isPresetModified());
-        if (p->getProgramName(i).startsWith("MBV Loveless"))
+        if (p->getProgramName(i) == "Glide Guitar" || p->getProgramName(i) == "Steep Swell" || p->getProgramName(i) == "Wall")
             CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(20.0f));
     }
 }
@@ -207,14 +202,6 @@ TEST_CASE("deleting a user preset removes its file only, and keeps the sound loa
     REQUIRE(outside.getFile().replaceWithText("x"));
     CHECK_FALSE(p->deleteUserPreset(outside.getFile()));
     CHECK(outside.getFile().existsAsFile());
-}
-
-TEST_CASE("memories added in a later version are filled when an older state is restored")
-{
-    glide90::MemoryBank bank;
-    juce::ValueTree older(glide90::MemoryBank::treeType()); // a state saved before memory 34 existed
-    bank.fromTree(older);
-    CHECK(bank.get(34).used);
 }
 
 TEST_CASE("a drawn glide shape is selected and survives a state round trip")
@@ -258,14 +245,21 @@ TEST_CASE("parameters missing from a saved state come back at their defaults")
     set(*b, ids::glideDepth, 0.0f);
     set(*b, ids::glideMix, 0.0f);
     b->setStateInformation(old.getData(), (int) old.getSize());
-    CHECK(plain(*b, ids::glideDepth) == doctest::Approx(30.0f));
+    CHECK(plain(*b, ids::glideDepth) == doctest::Approx(40.0f));
     CHECK(plain(*b, ids::glideMix) == doctest::Approx(1.0f));
     CHECK(plain(*b, ids::glideOn) > 0.5f);
 }
 
-TEST_CASE("the editor builds and lays out; GLIDE90_SNAPSHOT=<file.png> saves a picture of it")
+TEST_CASE("the editor builds and lays out in every look; GLIDE90_SNAPSHOT=<file.png> saves a picture of each")
 {
+    namespace ui = glide90::ui;
+    const auto before = ui::theme().id;
+    for (int look = 0; look < ui::kThemeCount; ++look)
+    {
+    CAPTURE(ui::themeAt(look).name);
+    ui::setTheme(ui::themeAt(look).id);
     auto p = make();
+    p->setCurrentProgram(p->factoryPresetNames().indexOf("Two-String Unison"));
     std::unique_ptr<juce::AudioProcessorEditor> editor(p->createEditor());
     REQUIRE(editor != nullptr);
     CHECK(editor->getWidth() > 0);
@@ -273,28 +267,184 @@ TEST_CASE("the editor builds and lays out; GLIDE90_SNAPSHOT=<file.png> saves a p
     {
         juce::MessageManager::getInstance()->runDispatchLoopUntil(300); // let the timers fill the displays
         const auto image = editor->createComponentSnapshot(editor->getLocalBounds(), true, 2.0f);
-        juce::File file(path);
+        const juce::File given(path);
+        {
+            // The same look in motion: the bar pushed, a swell most of the way through.
+            ui::Motion m;
+            m.cents = -48.0f;
+            m.bend = 0.8f;
+            m.swell = 0.85f;
+            m.progress = 0.6f;
+            m.room = 20.0f;
+            m.time = 1.0;
+            dynamic_cast<glide90::Glide90Editor&>(*editor).showMotion(m);
+            const auto moving = editor->createComponentSnapshot(editor->getLocalBounds(), true, 1.0f);
+            juce::File movingFile(given.getSiblingFile(given.getFileNameWithoutExtension() + "-" + ui::themeAt(look).key + "-motion.png"));
+            movingFile.deleteFile();
+            juce::FileOutputStream movingOut(movingFile);
+            REQUIRE(juce::PNGImageFormat().writeImageToStream(moving, movingOut));
+            dynamic_cast<glide90::Glide90Editor&>(*editor).showMotion({});
+        }
+        juce::File file(given.getSiblingFile(given.getFileNameWithoutExtension() + "-" + ui::themeAt(look).key + ".png"));
         file.deleteFile();
         juce::FileOutputStream out(file);
         REQUIRE(juce::PNGImageFormat().writeImageToStream(image, out));
 
         // A sample of the popup menu look next to it, drawn by the same look-and-feel calls.
-        juce::Image menuImage(juce::Image::ARGB, 300, 190, true);
+        juce::Image menuImage(juce::Image::ARGB, 320, 260, true);
         juce::Graphics g(menuImage);
         auto& lf = editor->getLookAndFeel();
         lf.drawPopupMenuBackground(g, 300, 190);
         lf.drawPopupMenuSectionHeader(g, { 0, 4, 300, 22 }, "Factory");
-        const char* items[] { "Init Reverse Gate+Glide", "MBV Loveless roadie", "MBV To Here Knows When" };
+        const char* items[] { "Glide Guitar", "Steep Swell", "Drowned Shimmy" };
         for (int i = 0; i < 3; ++i)
             lf.drawPopupMenuItem(g, { 0, 28 + i * 24, 300, 24 }, false, true, i == 2, i == 1, false, items[i], {}, nullptr, nullptr);
         lf.drawPopupMenuItem(g, { 0, 100, 300, 9 }, true, true, false, false, false, {}, {}, nullptr, nullptr);
         lf.drawPopupMenuSectionHeader(g, { 0, 112, 300, 22 }, "User");
         lf.drawPopupMenuItem(g, { 0, 136, 300, 24 }, false, false, false, false, false, "Empty", {}, nullptr, nullptr);
+        // And a tooltip under it.
+        const juce::String tip = "Spacing of the reflections. At 20 the reverse gate swells for over a second";
+        const auto tipBounds = lf.getTooltipBounds(tip, { 0, 0 }, { 0, 0, 320, 400 });
+        juce::Graphics::ScopedSaveState save(g);
+        g.setOrigin(4, 196);
+        lf.drawTooltip(g, tip, tipBounds.getWidth(), tipBounds.getHeight());
         juce::File menuFile(file.getSiblingFile(file.getFileNameWithoutExtension() + "-menu.png"));
         menuFile.deleteFile();
         juce::FileOutputStream menuOut(menuFile);
         REQUIRE(juce::PNGImageFormat().writeImageToStream(menuImage, menuOut));
     }
+    }
+    ui::setTheme(before);
+}
+
+TEST_CASE("GLIDE90_PROFILE=1 reports what painting the whole window costs in each look")
+{
+    if (juce::SystemStats::getEnvironmentVariable("GLIDE90_PROFILE", {}).isEmpty())
+        return;
+    namespace ui = glide90::ui;
+    const auto before = ui::theme().id;
+    for (int look = 0; look < ui::kThemeCount; ++look)
+    {
+        ui::setTheme(ui::themeAt(look).id);
+        auto p = make();
+        std::unique_ptr<juce::AudioProcessorEditor> editor(p->createEditor());
+        for (float scale : { 1.0f, 2.0f })
+        {
+            editor->createComponentSnapshot(editor->getLocalBounds(), true, scale); // caches built
+            constexpr int frames = 30;
+            const auto start = juce::Time::getMillisecondCounterHiRes();
+            for (int i = 0; i < frames; ++i)
+            {
+                ui::Motion m;
+                m.time = i / 60.0;
+                m.cents = -20.0f * (float) (i % 7);
+                dynamic_cast<glide90::Glide90Editor&>(*editor).showMotion(m);
+                editor->createComponentSnapshot(editor->getLocalBounds(), true, scale);
+            }
+            MESSAGE(ui::themeAt(look).name << " x" << scale << ": "
+                    << (juce::Time::getMillisecondCounterHiRes() - start) / frames << " ms per full frame");
+        }
+    }
+    ui::setTheme(before);
+}
+
+TEST_CASE("dragging a module by its title bar to the other place turns the order round")
+{
+    auto p = make();
+    std::unique_ptr<juce::AudioProcessorEditor> editor(p->createEditor());
+    glide90::ui::GlidePanel* glidePanel = nullptr;
+    glide90::ui::GatePanel* gatePanel = nullptr;
+    std::function<void(juce::Component&)> find = [&](juce::Component& c) {
+        if (auto* g = dynamic_cast<glide90::ui::GlidePanel*>(&c))
+            glidePanel = g;
+        if (auto* g = dynamic_cast<glide90::ui::GatePanel*>(&c))
+            gatePanel = g;
+        for (auto* child : c.getChildren())
+            find(*child);
+    };
+    find(*editor);
+    REQUIRE(glidePanel != nullptr);
+    REQUIRE(gatePanel != nullptr);
+    auto settle = [] { juce::MessageManager::getInstance()->runDispatchLoopUntil(400); }; // the slides
+    auto glideFirst = [&] { return juce::roundToInt(plain(*p, ids::glidePosition)) == (int) glide90::GlidePosition::Pre; };
+    auto drag = [&](glide90::ui::ModulePanel& m, float dx, bool cancel) {
+        m.onDragStart();
+        for (int step = 1; step <= 10; ++step)
+            m.onDrag(dx * (float) step / 10.0f);
+        m.onDragEnd(cancel);
+        settle();
+    };
+    REQUIRE(glideFirst());
+    CHECK(glidePanel->getX() < gatePanel->getX());
+
+    if (const auto path = juce::SystemStats::getEnvironmentVariable("GLIDE90_SNAPSHOT", {}); path.isNotEmpty())
+    {
+        // Half way: the glide lifted and past the middle, the gate gone to the left, the landing marked.
+        glidePanel->onDragStart();
+        glidePanel->onDrag(220.0f);
+        settle();
+        const auto image = editor->createComponentSnapshot(editor->getLocalBounds(), true, 2.0f);
+        juce::File file(juce::File(path).getSiblingFile(juce::File(path).getFileNameWithoutExtension() + "-drag.png"));
+        file.deleteFile();
+        juce::FileOutputStream out(file);
+        REQUIRE(juce::PNGImageFormat().writeImageToStream(image, out));
+        glidePanel->onDragEnd(true);
+        settle();
+    }
+
+    // Not far enough: back where it was.
+    const int glideX = glidePanel->getX();
+    drag(*glidePanel, 60.0f, false);
+    CHECK(glideFirst());
+    CHECK(glidePanel->getX() == glideX);
+
+    // Past the gate: the gate plays first now, and both are in their new places.
+    drag(*glidePanel, 400.0f, false);
+    CHECK_FALSE(glideFirst());
+    CHECK(gatePanel->getX() < glidePanel->getX());
+    CHECK(gatePanel->getY() == glidePanel->getY()); // nothing left raised
+
+    // Escape: nothing changes.
+    drag(*glidePanel, -400.0f, true);
+    CHECK_FALSE(glideFirst());
+    CHECK(gatePanel->getX() < glidePanel->getX());
+
+    // One step to undo.
+    p->undoManager().undo();
+    settle();
+    CHECK(glideFirst());
+    CHECK(glidePanel->getX() < gatePanel->getX());
+}
+
+TEST_CASE("changing the order of the glide and the reverb does not click")
+{
+    // The largest sample-to-sample step of a sine through the plugin, with the order flipped twice
+    // or not at all: the flips may not add a jump of their own.
+    auto run = [](bool flip) {
+        auto p = make();
+        juce::AudioBuffer<float> buffer(2, kBlock);
+        juce::MidiBuffer midi;
+        float previous = 0.0f, worst = 0.0f;
+        for (int b = 0; b < 300; ++b)
+        {
+            if (flip && (b == 100 || b == 200))
+                set(*p, ids::glidePosition, b == 100 ? 1.0f : 0.0f);
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < kBlock; ++i)
+                    buffer.setSample(ch, i, 0.5f * (float) std::sin(2.0 * 3.14159265 * 220.0 * (b * kBlock + i) / kRate));
+            p->processBlock(buffer, midi);
+            for (int i = 0; i < kBlock; ++i)
+            {
+                if (b > 20)
+                    worst = std::max(worst, std::abs(buffer.getSample(0, i) - previous));
+                previous = buffer.getSample(0, i);
+            }
+        }
+        return worst;
+    };
+    const float steady = run(false), flipped = run(true);
+    MESSAGE("largest step " << flipped << ", without flips " << steady);
+    CHECK(flipped <= steady * 1.1f + 0.005f);
 }
 
 TEST_CASE("a knob's value field: a click elsewhere applies it; Alt-click resets the knob")
@@ -311,10 +461,10 @@ TEST_CASE("a knob's value field: a click elsewhere applies it; Alt-click resets 
     REQUIRE(peer != nullptr);
     juce::MessageManager::getInstance()->runDispatchLoopUntil(100);
 
-    // The reverb's MIX knob (BALANCE).
+    // The reverse gate's VERB MIX knob (BALANCE).
     glide90::ui::Knob* knob = nullptr;
     std::function<void(juce::Component&)> find = [&](juce::Component& c) {
-        if (auto* k = dynamic_cast<glide90::ui::Knob*>(&c); k != nullptr && k->getTooltip().startsWith("BALANCE"))
+        if (auto* k = dynamic_cast<glide90::ui::Knob*>(&c); k != nullptr && k->getTooltip().startsWith("0 = dry only"))
             knob = k;
         for (auto* child : c.getChildren())
             find(*child);
@@ -329,16 +479,23 @@ TEST_CASE("a knob's value field: a click elsewhere applies it; Alt-click resets 
         return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), centre, mods, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
                                 knob, knob, now, centre, now, clicks, false);
     };
-    auto fieldOf = [&]() -> juce::TextEditor* {
-        for (auto* child : knob->getChildren())
-            if (auto* t = dynamic_cast<juce::TextEditor*>(child))
-                return t;
-        return nullptr;
+    auto fieldOf = [&]() -> glide90::ui::ReadoutField* {
+        std::function<glide90::ui::ReadoutField*(juce::Component&)> search = [&](juce::Component& c) -> glide90::ui::ReadoutField* {
+            for (auto* child : c.getChildren())
+            {
+                if (auto* f = dynamic_cast<glide90::ui::ReadoutField*>(child))
+                    return f;
+                if (auto* f = search(*child))
+                    return f;
+            }
+            return nullptr;
+        };
+        return search(*knob);
     };
 
     knob->mouseDoubleClick(event(juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), 2));
     REQUIRE(fieldOf() != nullptr);
-    fieldOf()->setText("50", false);
+    fieldOf()->setText("50");
 
     // A real click (through the window, as the mouse would) on the bare panel left of the header's name.
     const auto spot = editor->localPointToGlobal(juce::Point<int>(4, 4)).toFloat() - peer->getBounds().getPosition().toFloat();
@@ -353,7 +510,7 @@ TEST_CASE("a knob's value field: a click elsewhere applies it; Alt-click resets 
     // Text that names no value leaves it alone; Escape-like cancel is the same path without applying.
     knob->mouseDoubleClick(event(juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), 2));
     REQUIRE(fieldOf() != nullptr);
-    fieldOf()->setText("abc", false);
+    fieldOf()->setText("abc");
     peer->handleMouseEvent(juce::MouseInputSource::InputSourceType::mouse, spot,
                            juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), 1.0f, 0.0f, t + 1000);
     peer->handleMouseEvent(juce::MouseInputSource::InputSourceType::mouse, spot, juce::ModifierKeys(), 1.0f, 0.0f, t + 1020);
@@ -584,19 +741,6 @@ TEST_CASE("the host's bypass fades in and out instead of switching")
     CHECK(worst < 0.08f);
 }
 
-TEST_CASE("programs that are not emulated yet do not replace the one that plays")
-{
-    auto p = make();
-    CHECK_FALSE(p->recallMemory(1)); // REV 1 HALL
-    CHECK(p->algorithm() == 17);
-    CHECK(p->loadedMemory() == 17);
-    set(*p, ids::memory, 18.0f); // automation to ADR NOISE GATE
-    p->flushPendingRecall();
-    CHECK(p->algorithm() == 17);
-    CHECK(p->recallMemory(16));
-    CHECK(p->algorithm() == 16);
-}
-
 TEST_CASE("restoring a project is not reported to the host as an edit, and keeps both A/B slots")
 {
     auto a = make();
@@ -626,14 +770,53 @@ TEST_CASE("restoring a project is not reported to the host as an edit, and keeps
     CHECK(plain(*b, ids::glideDepth) == doctest::Approx(50.0f));
 }
 
-TEST_CASE("the Loveless roadie preset bends with the strength of each strike")
+TEST_CASE("the plugin opens as Glide Guitar, the first preset, which bends with each strike's strength")
 {
     auto p = make();
-    const int index = p->factoryPresetNames().indexOf("MBV Loveless roadie");
-    REQUIRE(index >= 0);
-    p->setCurrentProgram(index);
+    CHECK(p->currentPresetName() == "Glide Guitar");
+    CHECK(p->factoryPresetNames()[0] == "Glide Guitar");
+    CHECK_FALSE(p->isPresetModified());
+    // Its values are the defaults: Alt-click on a knob comes back to it.
+    for (auto* param : p->getParameters())
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*>(param))
+        {
+            CAPTURE(ranged->getParameterID());
+            CHECK(ranged->getValue() == doctest::Approx(ranged->getDefaultValue()));
+        }
+    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(20.0f));
+    CHECK(plain(*p, ids::erLiveness) == doctest::Approx(4.0f));
     CHECK(plain(*p, ids::glideDynamics) == doctest::Approx(0.6f));
     CHECK(juce::roundToInt(plain(*p, ids::glideMode)) == (int) sway::GlideMode::Trigger);
+    p->setCurrentProgram(3);
+    p->setCurrentProgram(0);
+    CHECK_FALSE(p->isPresetModified());
+    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(20.0f));
+}
+
+TEST_CASE("A and B each keep their own undo history")
+{
+    auto p = make();
+    auto gesture = [&](const char* id, float value) {
+        auto* param = p->state().getParameter(id);
+        param->beginChangeGesture();
+        param->setValueNotifyingHost(param->convertTo0to1(value));
+        param->endChangeGesture();
+    };
+    gesture(ids::glideDepth, 100.0f); // in A
+    p->selectAB(1);                    // B starts as a copy of A
+    CHECK_FALSE(p->undoManager().canUndo());
+    gesture(ids::erRoomSize, 12.0f); // in B
+    p->undoManager().undo();
+    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(20.0f));
+    CHECK(plain(*p, ids::glideDepth) == doctest::Approx(100.0f)); // B's copy of A's edit stays
+    CHECK_FALSE(p->undoManager().canUndo());
+
+    p->selectAB(0);
+    REQUIRE(p->undoManager().canUndo());
+    p->undoManager().undo();
+    CHECK(plain(*p, ids::glideDepth) == doctest::Approx(40.0f));
+    p->selectAB(1);
+    CHECK(plain(*p, ids::glideDepth) == doctest::Approx(100.0f)); // A's undo left B alone
 }
 
 TEST_CASE("undo takes the editor's edits back, one gesture at a time, and never the host's automation")
@@ -659,16 +842,21 @@ TEST_CASE("undo takes the editor's edits back, one gesture at a time, and never 
     CHECK(plain(*p, ids::glideDepth) == doctest::Approx(59.0f));
     CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(12.0f));
     undo.undo();
-    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(3.3f));
+    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(20.0f));
     undo.redo();
     CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(12.0f));
 
-    // A preset load is one step.
+    // Loading a preset starts this slot's history afresh; the other slot keeps its own.
+    p->selectAB(1);
+    gesture(ids::glideDepth, 150.0f);
+    p->selectAB(0);
     p->setCurrentProgram(1);
     CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(20.0f));
-    undo.undo();
-    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(12.0f));
-    CHECK(p->algorithm() == 17);
+    CHECK_FALSE(p->undoManager().canUndo());
+    CHECK_FALSE(p->undoManager().canRedo());
+    p->selectAB(1);
+    CHECK(p->undoManager().canUndo());
+    p->selectAB(0);
 
     // Redrawing the custom shape: marks the preset changed, and comes back with undo.
     p->setCurrentProgram(0);
@@ -713,9 +901,9 @@ TEST_CASE("the save dialog opens inside the plugin window, and closing the windo
     REQUIRE(saveKey != nullptr);
     saveKey->onClick();
 
-    juce::AlertWindow* dialog = nullptr;
+    glide90::ui::Dialog* dialog = nullptr;
     std::function<void(juce::Component&)> findDialog = [&](juce::Component& c) {
-        if (auto* d = dynamic_cast<juce::AlertWindow*>(&c))
+        if (auto* d = dynamic_cast<glide90::ui::Dialog*>(&c))
             dialog = d;
         for (auto* child : c.getChildren())
             findDialog(*child);
@@ -735,5 +923,5 @@ TEST_CASE("the save dialog opens inside the plugin window, and closing the windo
 
     editor.reset(); // the host closes the window
     juce::MessageManager::getInstance()->runDispatchLoopUntil(100); // the dialog's callback arrives now
-    CHECK(p->currentPresetName() == "Init");
+    CHECK(p->currentPresetName() == "Glide Guitar");
 }

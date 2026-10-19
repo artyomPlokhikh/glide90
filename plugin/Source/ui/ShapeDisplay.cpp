@@ -12,7 +12,6 @@ namespace
 {
 
 constexpr float kPointSize = 7.0f;
-constexpr float kTextPitch = kSmallTextPitch;
 
 } // namespace
 
@@ -21,13 +20,9 @@ ShapeDisplay::ShapeDisplay(Glide90Processor& p) : proc(p), shapeParam(*p.state()
     setTooltip("Drag a point to reshape the cycle; double-click to add or remove one. Arrows at the top step "
                "through the shapes");
     shape = proc.currentShape();
-    startTimerHz(30);
 }
 
-ShapeDisplay::~ShapeDisplay()
-{
-    stopTimer();
-}
+ShapeDisplay::~ShapeDisplay() = default;
 
 int ShapeDisplay::choice(const char* id) const
 {
@@ -54,7 +49,7 @@ juce::Rectangle<float> ShapeDisplay::plotArea() const
 juce::Rectangle<float> ShapeDisplay::nameArea() const
 {
     // The name and its two arrows.
-    const float w = matrixTextWidth(shapeParam.getCurrentValueAsText().toUpperCase(), kTextPitch);
+    const float w = readoutWidth(shapeParam.getCurrentValueAsText());
     return { 10.0f, 6.0f, w + 30.0f, 22.0f };
 }
 
@@ -126,7 +121,7 @@ juce::String ShapeDisplay::settingsKey() const
     return key << juce::roundToInt(proc.hostBpm());
 }
 
-void ShapeDisplay::timerCallback()
+void ShapeDisplay::frame(double seconds)
 {
     // Redrawn only when something on it moved: the screen is the largest thing in the window.
     auto next = proc.currentShape();
@@ -155,24 +150,58 @@ void ShapeDisplay::timerCallback()
         changed = true;
     }
 
-    trace[(size_t) traceHead] = pushFromCents(cents);
-    traceHead = (traceHead + 1) % (int) trace.size();
+    // The trace takes 30 samples a second, whatever the display's rate: eight seconds of it.
+    bool traced = false;
+    if (seconds - lastTraceTime >= 1.0 / 30.0)
+    {
+        lastTraceTime = seconds;
+        trace[(size_t) traceHead] = pushFromCents(cents);
+        traceHead = (traceHead + 1) % (int) trace.size();
+        traced = true;
+    }
     // MANUAL scrolls its trace all the time.
-    if (changed || !editable())
+    if (changed || (traced && !editable()))
         repaint();
+}
+
+juce::String ShapeDisplay::layerKey(float scale) const
+{
+    juce::String key = settingsKey();
+    key << '|' << scale << '|' << getWidth() << 'x' << getHeight() << '|' << theme().key << '|' << hoverIndex << ' ' << dragIndex << '|';
+    for (int i = 0; i < shape.size(); ++i)
+        key << shape.point(i).x << ',' << shape.point(i).y << ' ';
+    return key;
 }
 
 void ShapeDisplay::paint(juce::Graphics& g)
 {
+    const float scale = g.getInternalContext().getPhysicalPixelScaleFactor();
+    if (const auto key = layerKey(scale); key != shownLayer || layer.isNull())
+    {
+        shownLayer = key;
+        layerScale = scale;
+        layer = juce::Image(juce::Image::ARGB, juce::jmax(1, juce::roundToInt((float) getWidth() * scale)),
+                            juce::jmax(1, juce::roundToInt((float) getHeight() * scale)), true);
+        juce::Graphics lg(layer);
+        lg.addTransform(juce::AffineTransform::scale(scale));
+        paintStill(lg);
+    }
+    g.drawImageTransformed(layer, juce::AffineTransform::scale(1.0f / layerScale));
+    paintMoving(g);
+}
+
+void ShapeDisplay::paintStill(juce::Graphics& g)
+{
+    const auto& t = theme();
     const auto bounds = getLocalBounds().toFloat();
     drawGlass(g, bounds);
 
     const auto r = plotArea();
     const bool on = proc.state().getRawParameterValue(ids::glideOn)->load() > 0.5f;
-    const auto ink = colours::display.withAlpha(on ? 1.0f : 0.35f);
+    const auto ink = t.ink.withAlpha(on ? 1.0f : 0.35f);
 
     // Grid: a dot at each eighth of the cycle and quarter of the depth.
-    g.setColour(colours::display.withAlpha(0.18f));
+    g.setColour(t.ink.withAlpha(0.18f));
     for (int i = 0; i <= 8; ++i)
         for (int j = 0; j <= 4; ++j)
             g.fillRect(r.getX() + r.getWidth() * (float) i / 8.0f - 0.5f, r.getY() + r.getHeight() * (float) j / 4.0f - 0.5f, 1.2f, 1.2f);
@@ -180,7 +209,7 @@ void ShapeDisplay::paint(juce::Graphics& g)
     // The rest line (no bend), dashed.
     const auto direction = (sway::BendDirection) choice(ids::glideDirection);
     const float restY = direction == sway::BendDirection::Both ? toScreen(0.0f, 0.5f).y : toScreen(0.0f, 0.0f).y;
-    g.setColour(colours::display.withAlpha(0.3f));
+    g.setColour(t.ink.withAlpha(0.3f));
     for (float x = r.getX(); x < r.getRight(); x += 6.0f)
         g.fillRect(x, restY - 0.5f, 3.0f, 1.0f);
 
@@ -200,8 +229,7 @@ void ShapeDisplay::paint(juce::Graphics& g)
     const float scaleX = r.getRight() + 4.0f, scaleW = bounds.getRight() - 8.0f - scaleX;
     auto scaleLabel = [&](float push) {
         const float y = toScreen(0.0f, push).y;
-        drawMatrixText(g, centsAt(push), { scaleX, y - 6.0f, scaleW, 12.0f }, kTextPitch, colours::display.withAlpha(0.45f),
-                       juce::Justification::right);
+        drawReadout(g, centsAt(push), { scaleX, y - 6.0f, scaleW, 12.0f }, t.ink.withAlpha(0.45f), juce::Justification::right);
     };
     if (direction == sway::BendDirection::Both)
         scaleLabel(0.0f);
@@ -229,18 +257,17 @@ void ShapeDisplay::paint(juce::Graphics& g)
         fill.closeSubPath();
         // A wash that fades in away from the rest line, so the line itself carries the shape.
         const float farY = toScreen(0.0f, 1.0f).y;
-        g.setGradientFill(juce::ColourGradient(colours::display.withAlpha(0.0f), 0.0f, restY,
-                                               colours::display.withAlpha(on ? 0.1f : 0.04f), 0.0f, farY, false));
+        g.setGradientFill(juce::ColourGradient(t.ink.withAlpha(0.0f), 0.0f, restY,
+                                               t.ink.withAlpha(on ? 0.1f : 0.04f), 0.0f, farY, false));
         g.fillPath(fill);
-        g.setColour(ink);
-        g.strokePath(curve, juce::PathStrokeType(1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        strokeGlowing(g, curve, ink, 1.6f);
 
         // Editable points: small squares.
         for (int i = 0; i < shape.size(); ++i)
         {
             const auto pt = toScreen(shape.point(i).x, shape.point(i).y);
             const auto box = juce::Rectangle<float>(kPointSize, kPointSize).withCentre(pt);
-            g.setColour(colours::glass);
+            g.setColour(t.menu);
             g.fillRect(box);
             g.setColour(ink);
             if (i == hoverIndex || i == dragIndex)
@@ -249,13 +276,44 @@ void ShapeDisplay::paint(juce::Graphics& g)
                 g.drawRect(box, 1.2f);
         }
 
+        // The shape's name with its arrows right beside it.
+        const auto name = nameArea();
+        const auto label = shapeParam.getCurrentValueAsText();
+        const float w = readoutWidth(label);
+        const float x = name.getX() + 14.0f, cy = name.getCentreY();
+        g.setColour(t.ink.withAlpha(0.8f));
+        juce::Path left, right;
+        left.addTriangle(name.getX() + 2.0f, cy, name.getX() + 8.0f, cy - 5.0f, name.getX() + 8.0f, cy + 5.0f);
+        right.addTriangle(x + w + 12.0f, cy, x + w + 6.0f, cy - 5.0f, x + w + 6.0f, cy + 5.0f);
+        g.fillPath(left);
+        g.fillPath(right);
+        drawReadout(g, label, { x, name.getY(), w + 2.0f, name.getHeight() }, t.ink);
+    }
+
+    // Bottom: what drives it.
+    drawReadout(g, on ? statusText() : juce::String("GLIDE OFF"), { r.getX(), r.getBottom() + 8.0f, r.getWidth(), 14.0f },
+                t.ink.withAlpha(on ? 0.7f : 0.35f));
+}
+
+void ShapeDisplay::paintMoving(juce::Graphics& g)
+{
+    const auto& t = theme();
+    const auto bounds = getLocalBounds().toFloat();
+    const auto r = plotArea();
+    const bool on = proc.state().getRawParameterValue(ids::glideOn)->load() > 0.5f;
+    const auto ink = t.ink.withAlpha(on ? 1.0f : 0.35f);
+    // The dot that shows where the bar is: white on a dark screen, the ink on a light one.
+    const auto dotColour = t.backdrop == Theme::Backdrop::Matte ? juce::Colours::white : t.ink;
+
+    if (editable())
+    {
         // Playhead and where the bar is right now.
         if (on)
         {
             const float px = r.getX() + phase * r.getWidth();
-            g.setColour(colours::display.withAlpha(0.25f));
+            g.setColour(t.ink.withAlpha(0.25f));
             g.drawVerticalLine((int) px, r.getY(), r.getBottom());
-            g.setColour(juce::Colours::white);
+            g.setColour(dotColour);
             g.fillEllipse(juce::Rectangle<float>(6.0f, 6.0f).withCentre({ px, toScreen(0.0f, pushFromCents(cents)).y }));
         }
     }
@@ -272,40 +330,22 @@ void ShapeDisplay::paint(juce::Graphics& g)
             else
                 path.lineTo(pt);
         }
-        g.setColour(ink);
-        g.strokePath(path, juce::PathStrokeType(1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-        g.setColour(juce::Colours::white);
+        strokeGlowing(g, path, ink, 1.6f);
+        g.setColour(dotColour);
         g.fillEllipse(juce::Rectangle<float>(6.0f, 6.0f).withCentre(toScreen(0.999f, pushFromCents(cents))));
     }
 
-    // Top: the shape (with its arrows) and the bar now. Bottom: what drives it.
-    if (editable())
-    {
-        // The shape's name with its arrows right beside it.
-        const auto name = nameArea();
-        const auto label = shapeParam.getCurrentValueAsText().toUpperCase();
-        const float w = matrixTextWidth(label, kTextPitch);
-        const float x = name.getX() + 14.0f, cy = name.getCentreY();
-        g.setColour(colours::display.withAlpha(0.8f));
-        juce::Path left, right;
-        left.addTriangle(name.getX() + 2.0f, cy, name.getX() + 8.0f, cy - 5.0f, name.getX() + 8.0f, cy + 5.0f);
-        right.addTriangle(x + w + 12.0f, cy, x + w + 6.0f, cy - 5.0f, x + w + 6.0f, cy + 5.0f);
-        g.fillPath(left);
-        g.fillPath(right);
-        drawMatrixText(g, label, { x, name.getY(), w + 2.0f, name.getHeight() }, kTextPitch, colours::display);
-    }
-    drawMatrixText(g, on ? (cents > 0.5f ? "+" : "") + juce::String(juce::roundToInt(cents)) + "CT" : juce::String("OFF"),
-                   { bounds.getRight() - 120.0f, 6.0f, 108.0f, 22.0f }, kLargeTextPitch, ink, juce::Justification::right);
-    drawMatrixText(g, on ? statusText() : juce::String("GLIDE OFF"), { r.getX(), r.getBottom() + 8.0f, r.getWidth(), 14.0f },
-                   kTextPitch, colours::display.withAlpha(on ? 0.7f : 0.35f));
+    // The bar now.
+    drawReadout(g, on ? (cents > 0.5f ? "+" : "") + juce::String(juce::roundToInt(cents)) + "CT" : juce::String("OFF"),
+                { bounds.getRight() - 120.0f, 6.0f, 108.0f, 22.0f }, ink, juce::Justification::right, true, true);
 
     // TRIGGER from the pick: flashes on every attack it hears, to set PICK SENS by.
     if (on && (sway::GlideMode) choice(ids::glideMode) == sway::GlideMode::Trigger
         && (TriggerSource) choice(ids::glideTriggerSource) == TriggerSource::Pick)
     {
         const bool flash = juce::Time::getMillisecondCounter() < attackFlashUntil;
-        drawMatrixText(g, "PICK", { r.getX(), r.getBottom() + 8.0f, r.getWidth(), 14.0f }, kTextPitch,
-                       flash ? juce::Colours::white : colours::display.withAlpha(0.25f), juce::Justification::right);
+        drawReadout(g, "PICK", { r.getX(), r.getBottom() + 8.0f, r.getWidth(), 14.0f },
+                    flash ? dotColour : t.ink.withAlpha(0.25f), juce::Justification::right, false, flash);
     }
 }
 

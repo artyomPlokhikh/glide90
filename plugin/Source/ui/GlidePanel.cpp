@@ -8,21 +8,20 @@ namespace glide90::ui
 {
 
 GlidePanel::GlidePanel(Glide90Processor& p)
-    : proc(p), on(p.state(), ids::glideOn, "ON"),
-      mode(p.state(), ids::glideMode, "MODE", { "FREE", "SYNC", "TRIGGER", "MANUAL" }), display(p),
+    : ModulePanel("Glide"), proc(p), on(p.state(), ids::glideOn, "ON"),
+      mode(p.state(), ids::glideMode, "MODE", { "FREE", "SYNC", "TRIGGER", "MANUAL" }, { 0, 1, 2, 3 }),
+      direction(p.state(), ids::glideDirection, "DIRECTION", { "UP", "BOTH", "DOWN" }, { 2, 1, 0 }), display(p),
       period(p.state(), ids::glidePeriod, "RATE", Knob::Size::Large),
       division(p.state(), ids::glideDivision, "RATE", Knob::Size::Large),
       bar(p.state(), ids::glideBar, "BAR", Knob::Size::Large),
       depth(p.state(), ids::glideDepth, "DEPTH", Knob::Size::Large), random(p.state(), ids::glideRandom, "RANDOM"),
       smooth(p.state(), ids::glideSmooth, "SMOOTH"), twinDetune(p.state(), ids::glideTwinDetune, "TWIN"),
-      twinLevel(p.state(), ids::glideTwinLevel, "TWIN LEVEL"), mix(p.state(), ids::glideMix, "MIX"),
-      sensitivity(p.state(), ids::glideSensitivity, "PICK SENS"), dynamics(p.state(), ids::glideDynamics, "DYNAMICS"),
-      direction(p.state(), ids::glideDirection, "DIRECTION", { "UP", "BOTH", "DOWN" }, { 2, 1, 0 }),
-      position(p.state(), ids::glidePosition, "POSITION", { "PRE", "POST" }, { 0, 1 })
+      twinLevel(p.state(), ids::glideTwinLevel, "TWIN LEVEL"), mix(p.state(), ids::glideMix, "GLIDE MIX"),
+      sensitivity(p.state(), ids::glideSensitivity, "PICK SENS"), dynamics(p.state(), ids::glideDynamics, "DYNAMICS")
 {
     for (auto* c : std::initializer_list<juce::Component*> { &on, &mode, &source, &display, &period, &division, &bar,
                                                              &depth, &random, &smooth, &twinDetune, &twinLevel, &mix,
-                                                             &sensitivity, &dynamics, &direction, &position })
+                                                             &sensitivity, &dynamics, &direction })
         addAndMakeVisible(c);
 
     // Short names that fit the window (ten characters); the menu has the full ones.
@@ -69,7 +68,6 @@ GlidePanel::GlidePanel(Glide90Processor& p)
     dynamics.setTooltip("How much a strike's strength sets the depth: 0 = every strike bends the full DEPTH, "
                         "100 = a soft strike bends a little, a hard one all the way (pick attack or MIDI velocity)");
     direction.setTooltip("DOWN: like a Jazzmaster bar. BOTH: around the open pitch. UP: above it");
-    position.setTooltip("PRE: the glide goes into the reverb, so the reverse swell smears the bends. POST: after it");
 
     updateForMode();
     startTimerHz(10);
@@ -107,62 +105,50 @@ void GlidePanel::updateForMode()
     bar.setVisible(manual);
     bar.setEnabled((ManualSource) s == ManualSource::BarKnob);
     random.setEnabled(!manual);
-    source.setEnabled(glideMode == sway::GlideMode::Trigger || manual);
-    sensitivity.setEnabled(glideMode == sway::GlideMode::Trigger && (TriggerSource) t == TriggerSource::Pick);
-    dynamics.setEnabled(glideMode == sway::GlideMode::Trigger);
+    // What the mode listens to: always in its place, dimmed where the mode does not listen.
+    const bool trigger = glideMode == sway::GlideMode::Trigger;
+    source.setEnabled(trigger || manual);
+    sensitivity.setEnabled(trigger && (TriggerSource) t == TriggerSource::Pick);
+    dynamics.setEnabled(trigger);
+    pickGroupActive = trigger || manual;
     repaint();
 }
 
 void GlidePanel::paint(juce::Graphics& g)
 {
-    drawRackUnit(g, getLocalBounds());
-    drawUnitName(g, "GLIDE", getLocalBounds());
-    g.setFont(legendFont(13.0f));
-    g.setColour(source.isEnabled() ? colours::silkscreen : colours::silkscreenDim);
-    g.drawText("SOURCE", source.getBounds().withY(kRow2).withHeight(15), juce::Justification::centred);
+    ModulePanel::paint(g);
+    // SOURCE has no knob to carry its name.
+    g.setFont(legendFont(13.5f));
+    g.setColour(source.isEnabled() ? theme().text : theme().textDim.withMultipliedAlpha(0.6f));
+    g.drawFittedText(themed("SOURCE"), juce::Rectangle<int>(columnX(3), kRow2, Knob::kColumn, 15), juce::Justification::centred, 1);
 
-    // Drive | screen | motion over sound.
-    const float bottom = (float) kRow2 + Knob::kHeight;
-    drawEngravedLine(g, (float) display.getX() - 10.0f, (float) kRow1, bottom);
-    drawEngravedLine(g, (float) display.getRight() + 10.0f, (float) kRow1, bottom);
-    const float ruleY = (float) (kRow1 + Knob::kHeight + kRow2) * 0.5f;
-    drawEngravedRule(g, ruleY, (float) PanelLookAndFeel::kMargin, (float) display.getX() - 20.0f);
-    drawEngravedRule(g, ruleY, (float) display.getRight() + 20.0f, (float) getWidth() - PanelLookAndFeel::kMargin);
+    drawGroupRule(g, "Sound", (float) columnX(0), (float) (3 * Knob::kColumn - 8), (float) kRuleY);
+    drawGroupRule(g, juce::String::fromUTF8("Pick \xc2\xb7 Controller"),(float) columnX(3) + 8.0f, (float) (3 * Knob::kColumn - 8), (float) kRuleY,
+                  !pickGroupActive);
 }
 
 void GlidePanel::resized()
 {
-    const int m = PanelLookAndFeel::kMargin, h = Knob::kHeight;
-    const int lw = Knob::widthFor(Knob::Size::Large), sw = Knob::widthFor(Knob::Size::Small);
+    const int h = Knob::kHeight, w = Knob::kColumn;
+    on.setBounds(onKeyBounds());
+    display.setBounds(columnX(0), kScreenTop, kColumns * w, kScreenHeight);
 
-    // DRIVE: what moves the bar. On, the mode and its RATE above; what the mode listens to below,
-    // spread over the same width.
-    on.setBounds(PanelLookAndFeel::keyBounds({ m, kRow1 + 30, 52, 42 }));
-    mode.setBounds(m + 56, kRow1, 150, h); // just wide enough for FREE and MANUAL
+    // MOTION.
+    mode.setBounds(columnX(0), kRow1, w, h);
     for (auto* k : { &period, &division, &bar })
-        k->setBounds(mode.getRight() + 2, kRow1, lw, h);
-    const int driveRight = period.getRight();
-    const int spare = driveRight - m - 104 - 2 * sw;
-    source.setBounds(m, kRow2 + 28, 104, 28);
-    sensitivity.setBounds(source.getRight() + spare / 2, kRow2, sw, h);
-    dynamics.setBounds(driveRight - sw, kRow2, sw, h);
+        k->setBounds(columnX(1), kRow1, w, h);
+    depth.setBounds(columnX(2), kRow1, w, h);
+    direction.setBounds(columnX(3), kRow1, w, h);
+    random.setBounds(columnX(4), kRow1, w, h);
+    smooth.setBounds(columnX(5), kRow1, w, h);
 
-    // The screen, the full height of both rows.
-    constexpr int column = 72;
-    const int screenLeft = driveRight + 20, screenRight = getWidth() - m - 4 * column - 20;
-    display.setBounds(screenLeft, kRow1, screenRight - screenLeft, kRow2 + h - kRow1);
-
-    // MOTION over SOUND: four columns.
-    const int x0 = getWidth() - m - 4 * column;
-    auto cell = [&](juce::Component& c, int col, int top) { c.setBounds(x0 + col * column, top, column, h); };
-    cell(depth, 0, kRow1);
-    cell(direction, 1, kRow1);
-    cell(random, 2, kRow1);
-    cell(smooth, 3, kRow1);
-    cell(twinDetune, 0, kRow2);
-    cell(twinLevel, 1, kRow2);
-    cell(mix, 2, kRow2);
-    cell(position, 3, kRow2);
+    // SOUND | PICK · CONTROLLER.
+    twinDetune.setBounds(columnX(0), kRow2, w, h);
+    twinLevel.setBounds(columnX(1), kRow2, w, h);
+    mix.setBounds(columnX(2), kRow2, w, h);
+    source.setBounds(juce::Rectangle<int>(Knob::kColumn, 26).withCentre({ columnX(3) + w / 2, kRow2 + 50 }));
+    sensitivity.setBounds(columnX(4), kRow2, w, h);
+    dynamics.setBounds(columnX(5), kRow2, w, h);
 }
 
 } // namespace glide90::ui
