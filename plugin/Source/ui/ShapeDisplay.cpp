@@ -4,6 +4,8 @@
 #include "Parameters.h"
 #include "PluginProcessor.h"
 
+#include <utility>
+
 namespace glide90::ui
 {
 namespace
@@ -19,7 +21,7 @@ ShapeDisplay::ShapeDisplay(Glide90Processor& p) : proc(p), shapeParam(*p.state()
     setTooltip("Drag a point to reshape the cycle; double-click to add or remove one. Arrows at the top step "
                "through the shapes");
     shape = proc.currentShape();
-    startTimerHz(60);
+    startTimerHz(30);
 }
 
 ShapeDisplay::~ShapeDisplay()
@@ -114,19 +116,50 @@ juce::String ShapeDisplay::statusText() const
     }
 }
 
+juce::String ShapeDisplay::settingsKey() const
+{
+    // Everything the screen shows that is not the moving bar.
+    juce::String key;
+    for (const char* id : { ids::glideOn, ids::glideMode, ids::glideDirection, ids::glideDepth, ids::glideShape,
+                            ids::glideTriggerSource, ids::glidePeriod, ids::glideDivision })
+        key << proc.state().getRawParameterValue(id)->load() << ' ';
+    return key << juce::roundToInt(proc.hostBpm());
+}
+
 void ShapeDisplay::timerCallback()
 {
-    shape = proc.currentShape();
-    phase = proc.glidePhase();
-    cents = proc.barCents();
+    // Redrawn only when something on it moved: the screen is the largest thing in the window.
+    auto next = proc.currentShape();
+    bool changed = next.size() != shape.size();
+    for (int i = 0; !changed && i < next.size(); ++i)
+        changed = !juce::exactlyEqual(next.point(i).x, shape.point(i).x) || !juce::exactlyEqual(next.point(i).y, shape.point(i).y);
+    shape = next;
+
+    const float newPhase = proc.glidePhase(), newCents = proc.barCents();
+    changed = changed || std::abs(newPhase - phase) > 1e-4f || std::abs(newCents - cents) > 0.05f;
+    phase = newPhase;
+    cents = newCents;
+
     if (const int attacks = proc.pickAttacks(); attacks != seenAttacks)
     {
         seenAttacks = attacks;
         attackFlashUntil = juce::Time::getMillisecondCounter() + 120;
     }
+    const bool flash = juce::Time::getMillisecondCounter() < attackFlashUntil;
+    changed = changed || flash != shownFlash;
+    shownFlash = flash;
+
+    if (auto key = settingsKey(); key != shownSettings)
+    {
+        shownSettings = key;
+        changed = true;
+    }
+
     trace[(size_t) traceHead] = pushFromCents(cents);
     traceHead = (traceHead + 1) % (int) trace.size();
-    repaint();
+    // MANUAL scrolls its trace all the time.
+    if (changed || !editable())
+        repaint();
 }
 
 void ShapeDisplay::paint(juce::Graphics& g)
@@ -337,8 +370,15 @@ void ShapeDisplay::mouseDown(const juce::MouseEvent& e)
     if (dragIndex >= 0 && e.mods.isPopupMenu() && shape.size() > 2)
     {
         const int i = dragIndex;
+        proc.beginEdit();
         editPoints([i](auto& pts) { pts.erase(pts.begin() + i); });
+        proc.endEdit();
         dragIndex = -1;
+    }
+    else if (dragIndex >= 0 && !editing)
+    {
+        editing = true;
+        proc.beginEdit();
     }
 }
 
@@ -359,6 +399,8 @@ void ShapeDisplay::mouseDrag(const juce::MouseEvent& e)
 void ShapeDisplay::mouseUp(const juce::MouseEvent&)
 {
     dragIndex = -1;
+    if (std::exchange(editing, false))
+        proc.endEdit();
     repaint();
 }
 
@@ -366,6 +408,7 @@ void ShapeDisplay::mouseDoubleClick(const juce::MouseEvent& e)
 {
     if (!editable() || !plotArea().expanded(8.0f).contains(e.position))
         return;
+    proc.beginEdit();
     if (const int i = pointAt(e.position); i >= 0)
     {
         if (shape.size() > 2)
@@ -376,6 +419,7 @@ void ShapeDisplay::mouseDoubleClick(const juce::MouseEvent& e)
         const auto p = fromScreen(e.position);
         editPoints([p](auto& pts) { pts.push_back({ p.x, p.y }); });
     }
+    proc.endEdit();
     dragIndex = -1;
 }
 

@@ -25,11 +25,14 @@ GlidePanel::GlidePanel(Glide90Processor& p)
                                                              &sensitivity, &dynamics, &direction, &position })
         addAndMakeVisible(c);
 
+    // Short names that fit the window (ten characters); the menu has the full ones.
     source.getText = [this] {
+        static const juce::StringArray trigger { "PICK", "MIDI NOTE" };
+        static const juce::StringArray manual { "BAR KNOB", "PITCH BEND", "MOD WHEEL", "EXPR CC11" };
         switch ((sway::GlideMode) choice(ids::glideMode))
         {
-            case sway::GlideMode::Trigger: return proc.state().getParameter(ids::glideTriggerSource)->getCurrentValueAsText();
-            case sway::GlideMode::Manual: return proc.state().getParameter(ids::glideManualSource)->getCurrentValueAsText();
+            case sway::GlideMode::Trigger: return trigger[choice(ids::glideTriggerSource)];
+            case sway::GlideMode::Manual: return manual[choice(ids::glideManualSource)];
             case sway::GlideMode::Free:
             case sway::GlideMode::Sync:
             default: return juce::String("INTERNAL");
@@ -48,7 +51,8 @@ GlidePanel::GlidePanel(Glide90Processor& p)
             });
     };
 
-    on.setTooltip("Glide on/off");
+    on.setTooltip("Glide on/off. Its delay (about 26 ms, compensated by the host) stays either way, so switching "
+                  "does not move the timing");
     mode.setTooltip("FREE: loops at RATE. SYNC: locked to the song tempo. TRIGGER: restarts on each pick attack or "
                     "MIDI note. MANUAL: you move the bar (knob, pitch bend, mod wheel or expression pedal)");
     source.setTooltip("TRIGGER: what restarts the shape. MANUAL: what moves the bar");
@@ -136,7 +140,7 @@ void GlidePanel::resized()
     mode.setBounds(m + 70, kRow1, 216, h);
     for (auto* k : { &period, &division, &bar })
         k->setBounds(m, kRow2, lw, h);
-    source.setBounds(m + lw + 4, kRow2 + 28, 96, 28);
+    source.setBounds(m + lw + 4, kRow2 + 28, 104, 28);
     sensitivity.setBounds(source.getRight() + 4, kRow2, sw, h);
     dynamics.setBounds(sensitivity.getRight(), kRow2, sw, h);
 

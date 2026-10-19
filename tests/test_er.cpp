@@ -102,3 +102,37 @@ TEST_CASE("engine output is the tap sum and stays finite")
     for (float v : l)
         REQUIRE(std::isfinite(v));
 }
+
+TEST_CASE("turning ROOM SIZE while it plays crossfades without steps")
+{
+    // A knob turned (or automated) sends new settings every block, faster than the 20 ms crossfade.
+    // Each must not cut off the tap set that is still fading out.
+    const int block = 42; // about 64 host samples at 48 kHz
+    const int n = 200 * block + 40000;
+    std::vector<float> in((size_t) n);
+    for (int i = 0; i < n; ++i)
+        in[(size_t) i] = 0.25f * (float) std::sin(2.0 * 3.141592653589793 * 200.0 * i / spx::kDspRate);
+
+    auto largestStep = [&](bool turning) {
+        ErEngine e;
+        e.prepare();
+        ErSettings s = spx::romProgram(17).er;
+        std::vector<float> l((size_t) n), r((size_t) n);
+        for (int start = 0; start < n; start += block)
+        {
+            if (turning && start >= 40000)
+                s.roomSize = std::min(20.0f, 3.3f + 0.1f * (float) ((start - 40000) / block));
+            else if (!turning)
+                s.roomSize = start < 40000 ? 3.3f : 20.0f;
+            e.setSettings(s);
+            e.process(in.data() + start, l.data() + start, r.data() + start, std::min(block, n - start));
+        }
+        float worst = 0.0f;
+        for (int i = 40001; i < n; ++i)
+            worst = std::max(worst, std::abs(l[(size_t) i] - l[(size_t) i - 1]));
+        return worst;
+    };
+    const float still = largestStep(false), turning = largestStep(true);
+    MESSAGE("largest sample-to-sample step: one change " << still << ", turning " << turning);
+    CHECK(turning < 1.5f * still);
+}

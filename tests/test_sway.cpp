@@ -376,3 +376,158 @@ TEST_CASE("sway stays finite and bounded with every control at its extreme")
         CHECK(peak < 2.5f);
     }
 }
+
+namespace
+{
+
+// Low-passed noise: no period, so a handover search has nothing but the signal itself to line up on.
+std::vector<float> rumble(double rate, size_t n, uint32_t seed)
+{
+    std::vector<float> v(n);
+    float lp = 0.0f;
+    const float c = (float) (1.0 - std::exp(-2.0 * test::kPi * 2000.0 / rate));
+    for (auto& x : v)
+    {
+        seed = seed * 1664525u + 1013904223u;
+        lp += c * ((float) (seed >> 8) / 8388608.0f - 1.0f - lp);
+        x = 0.5f * lp;
+    }
+    return v;
+}
+
+} // namespace
+
+TEST_CASE("stereo stays aligned through the handovers")
+{
+    // Two channels that differ a little: each choosing its own handover would leave them up to a
+    // period of the search apart.
+    const double rate = 48000.0;
+    const size_t n = (size_t) (4 * rate);
+    auto left = rumble(rate, n, 1);
+    auto right = left;
+    const auto noise = rumble(rate, n, 99);
+    for (size_t i = 0; i < n; ++i)
+        right[i] += 0.3f * noise[i];
+
+    SwaySettings s = steady();
+    s.depthCents = 200.0f;
+    s.cycleSeconds = 0.5;
+    SwayProcessor p;
+    p.prepare(rate);
+    for (size_t i = 0; i < n; i += 256)
+    {
+        float* channels[] { left.data() + i, right.data() + i };
+        p.process(channels, 2, 256, s);
+    }
+    // In every 20 ms window the two outputs are as alike as the inputs were (the noise is ~-10 dB).
+    const size_t win = (size_t) (0.02 * rate);
+    double worst = 1.0;
+    for (size_t i = (size_t) rate; i + win < n; i += win)
+    {
+        double lr = 0.0, ll = 1e-12, rr = 1e-12;
+        for (size_t k = i; k < i + win; ++k)
+        {
+            lr += (double) left[k] * right[k];
+            ll += (double) left[k] * left[k];
+            rr += (double) right[k] * right[k];
+        }
+        worst = std::min(worst, lr / std::sqrt(ll * rr));
+    }
+    CHECK(worst > 0.9);
+}
+
+TEST_CASE("a handover search costs the same few tens of thousands of steps at any sample rate")
+{
+    // It runs inside one sample: at hundreds of thousands of steps it would overrun a small audio buffer.
+    int cost[2] {};
+    int i = 0;
+    for (double rate : { 48000.0, 96000.0 })
+    {
+        sway::DualHeadShifter shifter;
+        shifter.prepare(rate);
+        const auto x = rumble(rate, (size_t) rate, 7);
+        for (float v : x)
+        {
+            shifter.process(v, -200.0f);
+            cost[i] = std::max(cost[i], shifter.lastSearchCost());
+        }
+        ++i;
+    }
+    MESSAGE("search cost at 48 kHz " << cost[0] << ", at 96 kHz " << cost[1]);
+    CHECK(cost[0] > 0);
+    CHECK(cost[0] < 60000);
+    CHECK(cost[1] < 60000);
+}
+
+TEST_CASE("the twin string comes in with the present signal, not an old one")
+{
+    const double rate = 48000.0;
+    SwaySettings s = steady();
+    s.twinLevel = 0.0f;
+    SwayProcessor p;
+    p.prepare(rate);
+    auto loud = test::sine(330.0, rate, 256 * 200, 0.5f);
+    for (size_t i = 0; i < loud.size(); i += 256)
+        p.process(loud.data() + i, 256, s);
+    std::vector<float> quiet(256 * 200, 0.0f);
+    for (size_t i = 0; i < quiet.size(); i += 256)
+        p.process(quiet.data() + i, 256, s);
+
+    s.twinLevel = 1.0f; // turned up in silence: nothing may come out
+    std::vector<float> after(256 * 40, 0.0f);
+    float peak = 0.0f;
+    for (size_t i = 0; i < after.size(); i += 256)
+    {
+        p.process(after.data() + i, 256, s);
+        for (size_t k = i; k < i + 256; ++k)
+            peak = std::max(peak, std::abs(after[k]));
+    }
+    CHECK(peak < 1e-5f);
+}
+
+TEST_CASE("between strikes the bar rests at the open pitch, also when bending both ways")
+{
+    const double rate = 48000.0;
+    for (auto direction : { BendDirection::Down, BendDirection::Both, BendDirection::Up })
+    {
+        CAPTURE((int) direction);
+        SwaySettings s = steady();
+        s.mode = GlideMode::Trigger;
+        s.triggerFromPick = false;
+        s.direction = direction;
+        s.depthCents = 100.0f;
+        const auto shape = sway::makeShape(sway::ShapePreset::RampUp); // starts pushed all the way
+        s.shape = &shape;
+        SwayProcessor p;
+        p.prepare(rate);
+        std::vector<float> block(256, 0.0f);
+        for (int b = 0; b < 40; ++b)
+            p.process(block.data(), 256, s);
+        CHECK(std::abs(p.barCents()) < 0.5f);
+    }
+}
+
+TEST_CASE("after a held bend the wet signal comes back in time with the dry one")
+{
+    // Held down, the head runs far from rest; once the bar is back, it must not stay 10-25 ms early
+    // or late (a comb filter against the dry signal below 100 % MIX) for the minute the creep takes.
+    const double rate = 48000.0;
+    SwaySettings s = steady();
+    s.mode = GlideMode::Manual;
+    s.depthCents = 100.0f;
+    SwayProcessor p;
+    p.prepare(rate);
+    auto x = test::sine(196.0, rate, (size_t) (2 * rate));
+    double held = 0.0;
+    for (size_t i = 0; i < x.size(); i += 256)
+    {
+        s.manual = i < (size_t) (0.7 * rate) ? 1.0f : 0.0f;
+        p.process(x.data() + i, 256, s);
+        if (i < (size_t) (0.7 * rate))
+            held = std::max(held, std::abs(p.mainShifter().offsetFromRest()));
+    }
+    MESSAGE("furthest from rest while held " << held / rate * 1000.0 << " ms, after release "
+                                             << p.mainShifter().offsetFromRest() / rate * 1000.0 << " ms");
+    CHECK(held > 0.01 * rate);
+    CHECK(std::abs(p.mainShifter().offsetFromRest()) < 0.0052 * rate); // within a period of the note
+}

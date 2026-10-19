@@ -1,6 +1,7 @@
 #include "Controls.h"
 
 #include "PanelLookAndFeel.h"
+#include "Parameters.h"
 
 namespace glide90::ui
 {
@@ -32,7 +33,46 @@ void drawLegend(juce::Graphics& g, const juce::String& text, juce::Rectangle<flo
     g.drawText(text, area, j);
 }
 
+float defaultOf(const juce::RangedAudioParameter& p)
+{
+    return p.convertFrom0to1(p.getDefaultValue());
+}
+
+// Calls back when the mouse goes down anywhere outside `inside` (in any of the plugin's windows).
+class OutsideClick : public juce::MouseListener
+{
+public:
+    OutsideClick(juce::Component& c, std::function<void()> callback) : inside(c), onOutside(std::move(callback))
+    {
+        juce::Desktop::getInstance().addGlobalMouseListener(this);
+    }
+
+    ~OutsideClick() override
+    {
+        juce::Desktop::getInstance().removeGlobalMouseListener(this);
+    }
+
+    void mouseDown(const juce::MouseEvent& e) override
+    {
+        if (e.eventComponent != &inside && !inside.isParentOf(e.eventComponent))
+            onOutside();
+    }
+
+private:
+    juce::Component& inside;
+    std::function<void()> onOutside;
+};
+
 } // namespace
+
+bool wantsDefault(const juce::ModifierKeys& mods)
+{
+#if JUCE_MAC
+    return mods.isAltDown() || mods.isCommandDown();
+#else
+    return mods.isAltDown();
+#endif
+}
 
 // --- Knob ---
 
@@ -46,6 +86,23 @@ Knob::Knob(juce::AudioProcessorValueTreeState& state, const char* paramId, const
 {
     attachment.sendInitialUpdate();
     setRepaintsOnMouseActivity(false);
+}
+
+Knob::~Knob()
+{
+    if (editor != nullptr)
+        editor->onFocusLost = nullptr;
+}
+
+juce::String Knob::getTooltip()
+{
+#if JUCE_MAC
+    const juce::String reset = "Alt- or Cmd-click: default";
+#else
+    const juce::String reset = "Alt-click: default";
+#endif
+    const auto own = SettableTooltipClient::getTooltip();
+    return (own.isEmpty() ? juce::String() : own + "\n") + "Double-click: type a value. " + reset;
 }
 
 void Knob::setLabel(const juce::String& text)
@@ -111,9 +168,9 @@ void Knob::mouseDown(const juce::MouseEvent& e)
 {
     if (!isEnabled())
         return;
-    if (e.mods.isPopupMenu())
+    if (e.mods.isPopupMenu() || wantsDefault(e.mods))
     {
-        attachment.setValueAsCompleteGesture(param.convertFrom0to1(param.getDefaultValue()));
+        attachment.setValueAsCompleteGesture(defaultOf(param));
         touch();
         return;
     }
@@ -164,8 +221,10 @@ void Knob::mouseDoubleClick(const juce::MouseEvent&)
 {
     if (!isEnabled())
         return;
-    // Type a value: "25", "12.5 ms", "THRU", "1/4 D".
+    // Type a value: "25", "50 %", "1.2 s", "2.5k", "THRU", "1/4 D".
+    outsideClick.reset();
     editor = std::make_unique<juce::TextEditor>();
+    closingEditor = false;
     editor->setFont(legendFont(14.0f));
     editor->setJustification(juce::Justification::centred);
     editor->setText(param.getCurrentValueAsText(), false);
@@ -173,36 +232,48 @@ void Knob::mouseDoubleClick(const juce::MouseEvent&)
     editor->setBounds(valueArea().withSizeKeepingCentre(juce::jmax(60, getWidth() - 6), 18));
     addAndMakeVisible(*editor);
     editor->grabKeyboardFocus();
-    auto close = [this](bool apply) {
-        // Return and the focus loss that follows both land here: act once.
-        if (editor == nullptr || editor->getProperties()["closing"])
-            return;
-        editor->getProperties().set("closing", true);
-        const auto text = editor->getText().trim();
-        juce::MessageManager::callAsync([safe = juce::Component::SafePointer<Knob>(this)] {
-            if (safe != nullptr)
-            {
-                safe->editor.reset();
-                safe->repaint();
-            }
-        });
-        if (apply && text.isNotEmpty())
-        {
-            attachment.setValueAsCompleteGesture(snapped(param.getValueForText(text)));
-            touch();
-        }
-    };
-    editor->onReturnKey = [close] { close(true); };
-    editor->onEscapeKey = [close] { close(false); };
-    editor->onFocusLost = [close] { close(true); };
+    editor->onReturnKey = [this] { closeEditor(true); };
+    editor->onEscapeKey = [this] { closeEditor(false); };
+    editor->onFocusLost = [this] { closeEditor(true); };
+    // A click anywhere else applies the value, as in a host's own fields: clicks on the panel or on
+    // another knob do not take the keyboard focus, so focus loss alone would leave the editor open.
+    outsideClick = std::make_unique<OutsideClick>(*editor, [this] { closeEditor(true); });
     repaint();
+}
+
+void Knob::closeEditor(bool apply)
+{
+    // Return, a click outside and the focus loss that follows can all land here: act once.
+    if (editor == nullptr || closingEditor)
+        return;
+    closingEditor = true;
+    const auto text = editor->getText();
+    // The editor or the click watcher may be the caller: delete them once it has returned.
+    juce::MessageManager::callAsync([safe = juce::Component::SafePointer<Knob>(this)] {
+        if (safe != nullptr)
+        {
+            safe->outsideClick.reset();
+            safe->editor.reset();
+            safe->repaint();
+        }
+    });
+    if (!apply)
+        return;
+    // Text that names no value ("", "abc") leaves the parameter as it is.
+    if (const auto typed = parseParameterText(param, text))
+    {
+        const auto& range = param.getNormalisableRange();
+        attachment.setValueAsCompleteGesture(range.snapToLegalValue(juce::jlimit(range.start, range.end, *typed)));
+        touch();
+    }
 }
 
 // --- SelectorSwitch ---
 
 SelectorSwitch::SelectorSwitch(juce::AudioProcessorValueTreeState& state, const char* paramId, const juce::String& text,
                                const juce::StringArray& names)
-    : attachment(parameter(state, paramId), [this](float v) {
+    : param(parameter(state, paramId)),
+      attachment(param, [this](float v) {
           selected = juce::roundToInt(v);
           repaint();
       }),
@@ -269,6 +340,8 @@ void SelectorSwitch::mouseDown(const juce::MouseEvent& e)
 {
     if (!isEnabled())
         return;
+    if (wantsDefault(e.mods))
+        return select(juce::roundToInt(defaultOf(param)));
     for (int i = 0; i < positions.size(); ++i)
         if (labelArea(i).expanded(2.0f).contains(e.position))
             return select(i);
@@ -286,7 +359,8 @@ void SelectorSwitch::mouseWheelMove(const juce::MouseEvent&, const juce::MouseWh
 
 ToggleSwitch::ToggleSwitch(juce::AudioProcessorValueTreeState& state, const char* paramId, const juce::String& text,
                            const juce::StringArray& names, const juce::Array<int>& paramValues)
-    : attachment(parameter(state, paramId), [this](float v) {
+    : param(parameter(state, paramId)),
+      attachment(param, [this](float v) {
           const int i = values.indexOf(juce::roundToInt(v));
           selected = juce::jmax(0, i);
           repaint();
@@ -365,6 +439,11 @@ void ToggleSwitch::mouseDown(const juce::MouseEvent& e)
 {
     if (!isEnabled())
         return;
+    if (wantsDefault(e.mods))
+    {
+        attachment.setValueAsCompleteGesture(defaultOf(param));
+        return;
+    }
     // Click a position (or its label) to throw the lever there; click the lever to step.
     int target = -1;
     for (int i = 0; i < labels.size(); ++i)
@@ -380,13 +459,19 @@ void ToggleSwitch::mouseDown(const juce::MouseEvent& e)
 
 ToggleKey::ToggleKey(juce::AudioProcessorValueTreeState& state, const char* paramId, const juce::String& legend)
     : juce::TextButton(legend),
-      attachment(parameter(state, paramId), [this](float v) {
+      param(parameter(state, paramId)),
+      attachment(param, [this](float v) {
           setToggleState(v > 0.5f, juce::dontSendNotification);
           repaint();
       })
 {
     getProperties().set(PanelLookAndFeel::kLed, true);
-    onClick = [this] { attachment.setValueAsCompleteGesture(getToggleState() ? 0.0f : 1.0f); };
+    onClick = [this] {
+        if (wantsDefault(juce::ModifierKeys::currentModifiers))
+            attachment.setValueAsCompleteGesture(defaultOf(param));
+        else
+            attachment.setValueAsCompleteGesture(getToggleState() ? 0.0f : 1.0f);
+    };
     attachment.sendInitialUpdate();
 }
 
@@ -394,7 +479,8 @@ ToggleKey::ToggleKey(juce::AudioProcessorValueTreeState& state, const char* para
 
 SlideSwitch::SlideSwitch(juce::AudioProcessorValueTreeState& state, const char* paramId, const juce::String& text,
                          const juce::StringArray& names)
-    : attachment(parameter(state, paramId), [this](float v) {
+    : param(parameter(state, paramId)),
+      attachment(param, [this](float v) {
           selected = juce::roundToInt(v);
           repaint();
       }),
@@ -447,6 +533,11 @@ void SlideSwitch::paint(juce::Graphics& g)
 
 void SlideSwitch::mouseDown(const juce::MouseEvent& e)
 {
+    if (wantsDefault(e.mods))
+    {
+        attachment.setValueAsCompleteGesture(defaultOf(param));
+        return;
+    }
     const auto s = slot();
     const int n = positions.size();
     if (e.position.x < s.getX() - 10.0f)

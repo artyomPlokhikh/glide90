@@ -19,6 +19,7 @@ namespace glide90
 // inputs are summed), stereo out, like the unit.
 class Glide90Processor : public juce::AudioProcessor,
                          private juce::AudioProcessorValueTreeState::Listener,
+                         private juce::AudioProcessorParameter::Listener,
                          private juce::AsyncUpdater
 {
 public:
@@ -27,6 +28,9 @@ public:
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
+    // Clears every delay line (the reverb's two seconds, the glide's heads): hosts call this on stop
+    // and on jumps, and it runs when the host's bypass is released.
+    void reset() override;
     bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
     void processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
@@ -59,7 +63,8 @@ public:
     // Bumped whenever a memory is stored or the bank is restored, so lists can refresh.
     int memoriesRevision() const { return bankRevision.load(); }
     // Loads a memory into the edit buffer, as the RECALL key does. Empty user memories change nothing.
-    void recallMemory(int number);
+    // False, and nothing changes, for a factory program that is not emulated yet.
+    bool recallMemory(int number);
     // Stores the edit buffer, as the STORE key does. False for the read-only memories 1-30.
     bool storeMemory(int number, const juce::String& title);
     int loadedMemory() const { return loaded.load(); }
@@ -78,15 +83,22 @@ public:
     juce::StringArray factoryPresetNames() const;
     void loadFactoryPreset(int index);
     static juce::File userPresetDirectory();
+    static juce::String presetExtension();
     juce::Array<juce::File> userPresetFiles() const;
     bool saveUserPreset(const juce::String& name);
     bool loadUserPreset(const juce::File& file);
     juce::String currentPresetName() const { return presetName; }
+    // True when the current preset is a user preset file (whatever its name), false for a factory one.
+    bool currentPresetIsUser() const { return presetIsUser; }
     // True once anything (but the rig's input gain) differs from the preset as loaded.
     bool isPresetModified() const;
 
     // --- Editing (message thread) ---
+    // Undo steps are what the editor does: each knob gesture, preset load or recall, and each
+    // beginEdit()/endEdit() pair (drawing the shape). Host automation is not an edit.
     juce::UndoManager& undoManager() { return undo; }
+    void beginEdit();
+    void endEdit();
     // A/B: two working copies of the whole setting; switching keeps the one you leave.
     int abSlot() const { return abIndex; }
     void selectAB(int slot);
@@ -104,22 +116,35 @@ public:
     double hostBpm() const { return lastBpm.load(); }
 
 private:
+    struct Batch;
+    class SnapshotAction;
+
     void parameterChanged(const juce::String& id, float value) override;
+    void parameterValueChanged(int, float) override {}
+    void parameterGestureChanged(int, bool starting) override;
+    void commitEdit(const juce::ValueTree& before);
+    juce::ValueTree editState(); // presetState() with the rig's settings
     void handleAsyncUpdate() override;
-    void loadMemory(int number);
+    bool loadMemory(int number);
+    void processInternal(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi);
+    // The input, delayed by the latency, into `dryOut` (the host-bypass path, kept current always).
+    void delayDry(const juce::AudioBuffer<float>& buffer, int numSamples);
     Memory editBuffer() const;
     void setParameter(const char* id, float plainValue);
     void resetForPreset();
     juce::ValueTree shapeToTree() const;
     void shapeFromTree(const juce::ValueTree& tree);
-    void setParametersExactly(const juce::ValueTree& paramsTree, bool missingToDefault);
-    juce::ValueTree presetState();
+    void setParametersExactly(const juce::ValueTree& paramsTree, bool missingToDefault, bool gestures = true);
+    juce::ValueTree presetState(bool withRig = false);
     void applyPresetState(const juce::ValueTree& preset);
     void captureBaseline();
     void processChunk(juce::AudioBuffer<float>& buffer, int start, int num, const spx::SpxSettings& spxSettings,
                       sway::SwaySettings glide, int midiNoteAt);
 
-    juce::UndoManager undo; // before apvts, which records into it
+    juce::UndoManager undo;
+    int openEdits = 0;  // gestures (or beginEdit) under way
+    int quietEdits = 0; // inside a Batch: single parameter gestures are not steps of their own
+    juce::ValueTree editBefore;
     juce::AudioProcessorValueTreeState apvts;
     MemoryBank bank;
     std::atomic<int> bankRevision { 0 };
@@ -127,7 +152,9 @@ private:
     std::atomic<int> currentAlgorithm { 17 };
     int currentFactoryPreset = 0;
     juce::String presetName { "Init" };
+    bool presetIsUser = false;
     std::vector<float> baseline; // normalised parameter values of the preset as loaded
+    juce::ValueTree baselineShape;
     std::array<juce::ValueTree, 2> abStates;
     int abIndex = 0;
     float scale = 1.0f;
@@ -145,9 +172,14 @@ private:
     int maxBlock = 0;
     double currentRate = 48000.0;
 
-    // Host bypass keeps the latency.
-    juce::AudioBuffer<float> bypassDelay;
+    // Host bypass keeps the latency, and crossfades: into the delayed input when it starts, back once
+    // the cleared engines have caught up when it ends.
+    juce::AudioBuffer<float> bypassDelay, dryOut;
     int bypassPos = 0;
+    bool wasBypassed = false;
+    int fadeLength = 1;
+    int bypassFadeLeft = 0; // still processing while fading into the bypass
+    int resumeLeft = 0;     // the latency and then a fade, after the bypass
 
     float pitchBend = 0.0f;  // -1 .. 1
     float modWheel = 0.0f;   // 0 .. 1

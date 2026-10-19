@@ -7,8 +7,12 @@
 namespace glide90::ui
 {
 
+// Alt-click (and Cmd-click on macOS) puts a control back to its default, as in most hosts.
+bool wantsDefault(const juce::ModifierKeys& mods);
+
 // A knob for one parameter: its name above, its value below in the display's dot matrix.
-// Drag up/down (Shift: fine), mouse wheel, double-click to type a value, right-click to reset.
+// Drag up/down (Shift: fine), mouse wheel, double-click to type a value (Return or a click elsewhere
+// applies it, Escape cancels), Alt-click or right-click to reset.
 class Knob : public juce::Component, public juce::SettableTooltipClient
 {
 public:
@@ -19,6 +23,7 @@ public:
     };
 
     Knob(juce::AudioProcessorValueTreeState& state, const char* paramId, const juce::String& label, Size size = Size::Small);
+    ~Knob() override;
 
     void setLabel(const juce::String& text);
     // Called when the knob is grabbed, turned or typed into.
@@ -36,12 +41,14 @@ public:
     void mouseUp(const juce::MouseEvent&) override;
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     void mouseDoubleClick(const juce::MouseEvent&) override;
+    juce::String getTooltip() override;
 
 private:
     juce::Rectangle<float> knobArea() const;
     juce::Rectangle<int> valueArea() const;
     float snapped(float normalised) const;
     void touch();
+    void closeEditor(bool apply);
 
     juce::RangedAudioParameter& param;
     juce::ParameterAttachment attachment;
@@ -52,6 +59,8 @@ private:
     juce::Point<float> lastDrag;
     bool hover = false, dragging = false;
     std::unique_ptr<juce::TextEditor> editor;
+    std::unique_ptr<juce::MouseListener> outsideClick; // after `editor`: goes first
+    bool closingEditor = false;
 };
 
 // A rotary selector switch: a small knob pointing at one of its printed positions. Click a
@@ -73,6 +82,7 @@ private:
     juce::Rectangle<float> labelArea(int position) const;
     void select(int position);
 
+    juce::RangedAudioParameter& param;
     juce::ParameterAttachment attachment;
     juce::String label;
     juce::StringArray positions;
@@ -94,6 +104,7 @@ private:
     float positionY(int position) const;
     juce::Point<float> pivot() const;
 
+    juce::RangedAudioParameter& param;
     juce::ParameterAttachment attachment;
     juce::String label;
     juce::StringArray labels;
@@ -108,6 +119,7 @@ public:
     ToggleKey(juce::AudioProcessorValueTreeState& state, const char* paramId, const juce::String& label);
 
 private:
+    juce::RangedAudioParameter& param;
     juce::ParameterAttachment attachment;
 };
 
@@ -128,6 +140,7 @@ private:
     juce::Rectangle<float> slot() const;
     float legendWidth() const;
 
+    juce::RangedAudioParameter& param;
     juce::ParameterAttachment attachment;
     juce::String label;
     juce::StringArray positions;

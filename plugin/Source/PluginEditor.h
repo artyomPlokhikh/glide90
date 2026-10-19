@@ -11,7 +11,7 @@
 namespace glide90
 {
 
-class Glide90Editor : public juce::AudioProcessorEditor, private juce::Timer
+class Glide90Editor : public juce::AudioProcessorEditor
 {
 public:
     static constexpr int kWidth = 1000;
@@ -24,7 +24,6 @@ public:
     void resized() override;
 
 private:
-    void timerCallback() override;
     void setZoom(float scale);
 
     Glide90Processor& proc;

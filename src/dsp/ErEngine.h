@@ -34,7 +34,8 @@ public:
     void prepare();
     void reset();
 
-    // Takes effect with a short crossfade from the previous tap set.
+    // Takes effect with a short crossfade from the previous tap set. Settings that arrive during a
+    // crossfade (a knob being turned) wait for it to finish; only the latest of them is kept.
     void setSettings(const ErSettings& s);
 
     void process(const float* in, float* outL, float* outR, int numSamples);
@@ -53,11 +54,13 @@ public:
     static void buildTaps(const ErSettings& s, int channel, std::vector<Tap>& out);
 
 private:
+    void apply(const ErSettings& s);
+
     std::vector<float> memory;
     int writePos = 0;
 
-    ErSettings settings;
-    bool hasSettings = false;
+    ErSettings settings, pending;
+    bool hasSettings = false, hasPending = false;
     std::vector<Tap> current[2], previous[2];
     int fadeLeft = 0;
 

@@ -29,12 +29,15 @@ private:
     void refreshUserFiles();
     void stepPreset(int delta);
     void askToSave();
+    void savePreset(const juce::String& name);
+    // Shows a dialog inside the plugin window (it gets the panel's look and closes with the window).
+    void showDialog(std::unique_ptr<juce::AlertWindow> window, std::function<void(int)> onResult);
 
     Glide90Processor& proc;
     GlassSelector presets { true, true }, zoom { false };
     juce::TextButton save { "SAVE" }, a { "A" }, b { "B" }, undoKey { "UNDO" }, redoKey { "REDO" };
     juce::Array<juce::File> userFiles;
-    std::unique_ptr<juce::AlertWindow> saveDialog;
+    std::unique_ptr<juce::AlertWindow> dialog;
 };
 
 } // namespace glide90::ui

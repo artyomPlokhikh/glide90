@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include <optional>
 #include <vector>
 
 namespace glide90
@@ -102,5 +103,12 @@ std::vector<juce::String> balancePages();
 
 // One LCD line for a parameter, e.g. "ROOM SIZE=3.3" or "LPF=THRU".
 juce::String lcdText(const juce::RangedAudioParameter& p);
+
+// A value typed by the user, as a plain value of `p`: "50" on a percentage is 50 %, "1.2 s" is 1200 ms,
+// "2.5" on the LPF is 2.5 kHz, "thru", "1/4d". Nothing when the text names no value.
+std::optional<float> parseParameterText(const juce::RangedAudioParameter& p, const juce::String& text);
+
+// The LPF choice nearest to `hz`; THRU for 0 or less.
+int lpfIndex(float hz);
 
 } // namespace glide90

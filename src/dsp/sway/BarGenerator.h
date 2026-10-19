@@ -72,7 +72,7 @@ public:
 private:
     float uniform();
     void startCycle(bool freeTiming, float random);
-    bool detectAttack(float input, float sensitivity);
+    bool detectAttack(float input);
     float strikeStrength(float peak);
 
     static constexpr float kTypicalStrike = 0.85f; // depth of a strike at the player's usual level
@@ -80,12 +80,19 @@ private:
     double rate = 48000.0;
     double cyclePhase = 0.0;
     bool resting = true; // TRIGGER: the shape has played out and waits for the next attack
-    float depthScale = 1.0f, rateScale = 1.0f, velocityScale = 1.0f;
+    float depthScale = 1.0f, rateScale = 1.0f;
+    float velocityScale = 1.0f, velocityTarget = 1.0f; // the scale glides to its target once a strike is measured
     float drift = 0.0f, driftTarget = 0.0f;
     int driftCountdown = 0;
     float envFast = 0.0f;
     float highPassLow = 0.0f, highPassLow2 = 0.0f, highPassCoeff = 0.3f;
-    std::vector<float> levelHistory; // the top-end level over the last 10 ms, in dB
+    std::vector<float> levelHistory; // the top-end level over the last 10 ms
+    float jumpRatio = 1.88f;         // level rise that counts as an attack
+
+    // Coefficients: fixed ones from prepare(), the rest once per block from the settings.
+    float attackCoeff = 0.0f, releaseCoeff = 0.0f, velocityCoeff = 0.0f;
+    double blockCycles = 0.33; // seconds per cycle
+    float driftCoeff = 0.0f, smoothCoeff = 1.0f;
     int historyPos = 0;
     int refractory = 0;
     int triggers = 0;

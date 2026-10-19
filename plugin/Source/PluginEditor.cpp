@@ -15,7 +15,6 @@ Glide90Editor::Glide90Editor(Glide90Processor& p)
     spx.onTouch = [this](const juce::RangedAudioParameter& param) { strip.showParameter(param); };
     header.onZoom = [this](float s) { setZoom(s); };
     setZoom(proc.uiScale());
-    startTimerHz(3);
 }
 
 Glide90Editor::~Glide90Editor()
@@ -28,13 +27,6 @@ void Glide90Editor::setZoom(float scale)
     proc.setUiScale(scale);
     content.setTransform(juce::AffineTransform::scale(proc.uiScale()));
     setSize(juce::roundToInt(kWidth * proc.uiScale()), juce::roundToInt(kHeight * proc.uiScale()));
-}
-
-void Glide90Editor::timerCallback()
-{
-    // Group edits into undo steps: everything between two pauses with the mouse released.
-    if (!juce::ModifierKeys::currentModifiers.isAnyMouseButtonDown())
-        proc.undoManager().beginNewTransaction();
 }
 
 void Glide90Editor::resized()

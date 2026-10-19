@@ -4,6 +4,7 @@
 #include "RomPrograms.h"
 
 #include <cmath>
+#include <utility>
 
 namespace glide90
 {
@@ -16,6 +17,8 @@ const juce::Identifier kAlgorithmProp { "algorithm" }, kLoadedProp { "loadedMemo
 constexpr int kStateVersion = 2;
 const juce::Identifier kShapeTree { "SHAPE" }, kPointTree { "POINT" }, kXProp { "x" }, kYProp { "y" };
 const juce::Identifier kPresetFileTree { "GLIDE90_PRESET" };
+const juce::Identifier kPresetIsUserProp { "presetIsUser" };
+const juce::Identifier kAbTree { "AB" }, kAbSlotProp { "slot" }, kAbIndexProp { "selected" };
 constexpr const char* kPresetExtension = ".glide90";
 
 // Parameters a preset leaves alone: the gain staging of the user's own rig.
@@ -86,24 +89,6 @@ const std::vector<FactoryPreset>& factoryPresets()
     return presets;
 }
 
-int lpfIndex(float hz)
-{
-    int best = (int) spx::kLpfValuesHz.size() - 1; // THRU
-    if (hz <= 0.0f)
-        return best;
-    float bestErr = 1e9f;
-    for (int i = 0; i + 1 < (int) spx::kLpfValuesHz.size(); ++i)
-    {
-        const float err = std::abs(std::log(spx::kLpfValuesHz[(size_t) i] / hz));
-        if (err < bestErr)
-        {
-            bestErr = err;
-            best = i;
-        }
-    }
-    return best;
-}
-
 void raiseTo(std::atomic<float>& a, float v)
 {
     float cur = a.load();
@@ -119,11 +104,68 @@ int choice(const std::atomic<float>* p)
 
 } // namespace
 
+// Several parameter changes made as one: one undo step when `record`, none otherwise. The gestures
+// of the single parameters inside it are not steps of their own.
+struct Glide90Processor::Batch
+{
+    Batch(Glide90Processor& p, bool recordIt) : proc(p), record(recordIt)
+    {
+        if (record && proc.quietEdits == 0 && proc.openEdits == 0)
+            before = proc.editState();
+        ++proc.quietEdits;
+    }
+
+    ~Batch()
+    {
+        if (--proc.quietEdits == 0 && before.isValid())
+            proc.commitEdit(before);
+    }
+
+    Glide90Processor& proc;
+    bool record;
+    juce::ValueTree before;
+};
+
+// One undo step: the whole setting before and after it.
+class Glide90Processor::SnapshotAction : public juce::UndoableAction
+{
+public:
+    SnapshotAction(Glide90Processor& p, juce::ValueTree from, juce::ValueTree to)
+        : proc(p), before(std::move(from)), after(std::move(to))
+    {
+    }
+
+    bool perform() override
+    {
+        if (std::exchange(alreadyDone, false)) // recorded after the edit happened
+            return true;
+        restore(after);
+        return true;
+    }
+
+    bool undo() override
+    {
+        restore(before);
+        return true;
+    }
+
+private:
+    void restore(const juce::ValueTree& state)
+    {
+        const Batch quiet(proc, false);
+        proc.applyPresetState(state);
+    }
+
+    Glide90Processor& proc;
+    juce::ValueTree before, after;
+    bool alreadyDone = true;
+};
+
 Glide90Processor::Glide90Processor()
     : AudioProcessor(BusesProperties()
                          .withInput("Input", juce::AudioChannelSet::stereo(), true)
                          .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
-      apvts(*this, &undo, "GLIDE90", createParameterLayout())
+      apvts(*this, nullptr, "GLIDE90", createParameterLayout())
 {
     auto p = [this](const char* id) { return apvts.getRawParameterValue(id); };
     raw = { p(ids::erType),           p(ids::erRoomSize),        p(ids::erLiveness),     p(ids::erDelay),
@@ -138,11 +180,15 @@ Glide90Processor::Glide90Processor()
         presetShapes[i] = sway::makeShape((sway::ShapePreset) i);
     customShape = audioCustomShape = presetShapes[0];
     apvts.addParameterListener(ids::memory, this);
+    for (auto* param : getParameters())
+        param->addListener(this);
     captureBaseline();
 }
 
 Glide90Processor::~Glide90Processor()
 {
+    for (auto* param : getParameters())
+        param->removeListener(this);
     apvts.removeParameterListener(ids::memory, this);
     cancelPendingUpdate();
 }
@@ -164,13 +210,77 @@ void Glide90Processor::prepareToPlay(double sampleRate, int samplesPerBlock)
     const int latency = spxEngine.latencySamples() + glideProcessor.latencySamples();
     setLatencySamples(latency);
     bypassDelay.setSize(2, latency + 1);
+    dryOut.setSize(2, maxBlock);
+    fadeLength = juce::jmax(1, juce::roundToInt(0.01 * sampleRate));
+    reset();
+}
+
+void Glide90Processor::reset()
+{
+    spxEngine.reset();
+    glideProcessor.reset();
     bypassDelay.clear();
     bypassPos = 0;
+    wasBypassed = false;
+    bypassFadeLeft = resumeLeft = 0;
+}
+
+void Glide90Processor::delayDry(const juce::AudioBuffer<float>& buffer, int numSamples)
+{
+    if (dryOut.getNumSamples() < numSamples)
+        dryOut.setSize(2, numSamples, false, false, true); // only if the host sends more than it announced
+    const int size = bypassDelay.getNumSamples();
+    const int numIn = juce::jmin(getTotalNumInputChannels(), buffer.getNumChannels());
+    int pos = bypassPos;
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        const float* in = numIn > 0 ? buffer.getReadPointer(juce::jmin(ch, numIn - 1)) : nullptr;
+        float* out = dryOut.getWritePointer(ch);
+        float* line = bypassDelay.getWritePointer(ch);
+        pos = bypassPos;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            line[pos] = in != nullptr ? in[i] : 0.0f;
+            pos = (pos + 1) % size;
+            out[i] = line[pos];
+        }
+    }
+    bypassPos = pos;
 }
 
 void Glide90Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
+    const int n = buffer.getNumSamples();
+    delayDry(buffer, n);
+    if (wasBypassed)
+    {
+        // The engines still hold what played before the bypass (two seconds of it in the reverb):
+        // start them clean, and play the delayed input until their own output, one latency later,
+        // can take over.
+        spxEngine.reset();
+        glideProcessor.reset();
+        wasBypassed = false;
+        bypassFadeLeft = 0;
+        resumeLeft = getLatencySamples() + fadeLength;
+    }
+    processInternal(buffer, midi);
+
+    const int latency = getLatencySamples();
+    for (int i = 0; i < n && resumeLeft > 0; ++i, --resumeLeft)
+    {
+        const int pos = latency + fadeLength - resumeLeft;
+        const float w = pos < latency ? 0.0f : (float) (pos - latency) / (float) fadeLength;
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            const float d = dryOut.getSample(ch, i);
+            buffer.setSample(ch, i, d + w * (buffer.getSample(ch, i) - d));
+        }
+    }
+}
+
+void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+{
     const int n = buffer.getNumSamples();
 
     int noteAt = -1;
@@ -312,7 +422,8 @@ void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start,
     if (post)
     {
         float* channels[] = { l, r };
-        glideProcessor.process(channels, 2, num, w);
+        // The pick detector listens to the guitar, not to the reverse swell coming out of the reverb.
+        glideProcessor.process(channels, 2, num, w, m);
     }
 
     switch ((OutputMode) choice(raw.outputMode))
@@ -327,28 +438,37 @@ void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start,
     }
 }
 
-void Glide90Processor::processBlockBypassed(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+void Glide90Processor::processBlockBypassed(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     // Pass the input through, delayed by the reported latency so the host's compensation still holds.
+    juce::ScopedNoDenormals noDenormals;
     const int n = buffer.getNumSamples();
-    const int size = bypassDelay.getNumSamples();
-    const int numIn = getTotalNumInputChannels();
-    int pos = bypassPos;
-    for (int ch = 0; ch < juce::jmin(2, buffer.getNumChannels()); ++ch)
+    delayDry(buffer, n);
+    if (!wasBypassed)
     {
-        const float* in = buffer.getReadPointer(juce::jmin(ch, juce::jmax(0, numIn - 1)));
-        float* out = buffer.getWritePointer(ch);
-        float* line = bypassDelay.getWritePointer(ch);
-        pos = bypassPos;
+        wasBypassed = true;
+        bypassFadeLeft = fadeLength;
+        resumeLeft = 0;
+    }
+    if (bypassFadeLeft > 0)
+    {
+        // Keep processing for a short fade into the delayed input, then let the engines rest.
+        processInternal(buffer, midi);
         for (int i = 0; i < n; ++i)
         {
-            const float x = numIn > 0 ? in[i] : 0.0f;
-            line[pos] = x;
-            pos = (pos + 1) % size;
-            out[i] = line[pos];
+            const float w = (float) bypassFadeLeft / (float) fadeLength;
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                const float d = dryOut.getSample(ch, i);
+                buffer.setSample(ch, i, d + w * (buffer.getSample(ch, i) - d));
+            }
+            if (bypassFadeLeft > 0)
+                --bypassFadeLeft;
         }
     }
-    bypassPos = pos;
+    else
+        for (int ch = 0; ch < 2; ++ch)
+            buffer.copyFrom(ch, 0, dryOut, ch, 0, n);
     for (int ch = 2; ch < buffer.getNumChannels(); ++ch)
         buffer.clear(ch, 0, n);
 }
@@ -451,12 +571,14 @@ void Glide90Processor::loadFactoryPreset(int index)
     if (!juce::isPositiveAndBelow(index, getNumPrograms()))
         return;
     const auto& p = factoryPresets()[(size_t) index];
+    const Batch edit(*this, true);
     currentFactoryPreset = index;
     resetForPreset();
     recallMemory(p.program);
     for (const auto& [id, value] : p.values)
         setParameter(id, value);
     presetName = p.name;
+    presetIsUser = false;
     captureBaseline();
 }
 
@@ -467,6 +589,11 @@ juce::File Glide90Processor::userPresetDirectory()
         .getChildFile("Presets");
 }
 
+juce::String Glide90Processor::presetExtension()
+{
+    return kPresetExtension;
+}
+
 juce::Array<juce::File> Glide90Processor::userPresetFiles() const
 {
     auto files = userPresetDirectory().findChildFiles(juce::File::findFiles, false, juce::String("*") + kPresetExtension);
@@ -474,12 +601,12 @@ juce::Array<juce::File> Glide90Processor::userPresetFiles() const
     return files;
 }
 
-juce::ValueTree Glide90Processor::presetState()
+juce::ValueTree Glide90Processor::presetState(bool withRig)
 {
     juce::ValueTree preset(kPresetFileTree);
     auto params = apvts.copyState();
     for (int i = params.getNumChildren(); --i >= 0;)
-        if (rigParameters().contains(params.getChild(i).getProperty("id").toString()))
+        if (!withRig && rigParameters().contains(params.getChild(i).getProperty("id").toString()))
             params.removeChild(i, nullptr);
     preset.appendChild(params, nullptr);
     preset.appendChild(shapeToTree(), nullptr);
@@ -509,6 +636,7 @@ bool Glide90Processor::saveUserPreset(const juce::String& name)
     if (xml == nullptr || !xml->writeTo(dir.getChildFile(clean + kPresetExtension)))
         return false;
     presetName = clean;
+    presetIsUser = true;
     captureBaseline();
     return true;
 }
@@ -521,8 +649,10 @@ bool Glide90Processor::loadUserPreset(const juce::File& file)
     const auto preset = juce::ValueTree::fromXml(*xml);
     if (!preset.hasType(kPresetFileTree))
         return false;
+    const Batch edit(*this, true);
     applyPresetState(preset);
     presetName = file.getFileNameWithoutExtension();
+    presetIsUser = true;
     captureBaseline();
     return true;
 }
@@ -532,6 +662,7 @@ void Glide90Processor::captureBaseline()
     baseline.clear();
     for (auto* p : getParameters())
         baseline.push_back(p->getValue());
+    baselineShape = shapeToTree();
 }
 
 bool Glide90Processor::isPresetModified() const
@@ -543,7 +674,45 @@ bool Glide90Processor::isPresetModified() const
         if (auto* p = dynamic_cast<juce::RangedAudioParameter*>(params[i]))
             if (!rigParameters().contains(p->getParameterID()) && std::abs(p->getValue() - baseline[(size_t) i]) > 1e-4f)
                 return true;
-    return false;
+    // A redrawn custom shape is a change too (while it is the one that plays).
+    return choice(raw.glideShape) == (int) presetShapes.size() && !shapeToTree().isEquivalentTo(baselineShape);
+}
+
+juce::ValueTree Glide90Processor::editState()
+{
+    return presetState(true);
+}
+
+void Glide90Processor::beginEdit()
+{
+    if (openEdits++ == 0 && quietEdits == 0)
+        editBefore = editState();
+}
+
+void Glide90Processor::endEdit()
+{
+    if (openEdits > 0 && --openEdits == 0 && quietEdits == 0 && editBefore.isValid())
+        commitEdit(std::exchange(editBefore, {}));
+}
+
+void Glide90Processor::parameterGestureChanged(int, bool starting)
+{
+    // The editor's gestures; anything else (a host thread) is not an edit made here.
+    if (quietEdits > 0 || !juce::MessageManager::existsAndIsCurrentThread())
+        return;
+    if (starting)
+        beginEdit();
+    else
+        endEdit();
+}
+
+void Glide90Processor::commitEdit(const juce::ValueTree& before)
+{
+    auto after = editState();
+    if (after.isEquivalentTo(before))
+        return;
+    undo.beginNewTransaction();
+    undo.perform(new SnapshotAction(*this, before, std::move(after)));
 }
 
 void Glide90Processor::selectAB(int slot)
@@ -551,6 +720,7 @@ void Glide90Processor::selectAB(int slot)
     slot = juce::jlimit(0, 1, slot);
     if (slot == abIndex)
         return;
+    const Batch quiet(*this, false); // a comparison, not an edit
     abStates[(size_t) abIndex] = presetState();
     abIndex = slot;
     if (abStates[(size_t) slot].isValid())
@@ -559,7 +729,7 @@ void Glide90Processor::selectAB(int slot)
         abStates[(size_t) slot] = presetState(); // B starts as a copy of A
 }
 
-void Glide90Processor::setParametersExactly(const juce::ValueTree& paramsTree, bool missingToDefault)
+void Glide90Processor::setParametersExactly(const juce::ValueTree& paramsTree, bool missingToDefault, bool gestures)
 {
     for (auto* param : getParameters())
         if (auto* p = dynamic_cast<juce::RangedAudioParameter*>(param))
@@ -567,10 +737,14 @@ void Glide90Processor::setParametersExactly(const juce::ValueTree& paramsTree, b
             const auto child = paramsTree.getChildWithProperty("id", p->getParameterID());
             if (!child.isValid() && !missingToDefault)
                 continue;
-            p->beginChangeGesture();
+            // Restoring a project is not an edit: without gestures a host in touch or latch mode does
+            // not take it as something to record.
+            if (gestures)
+                p->beginChangeGesture();
             p->setValueNotifyingHost(child.isValid() ? p->convertTo0to1((float) child.getProperty("value"))
                                                      : p->getDefaultValue());
-            p->endChangeGesture();
+            if (gestures)
+                p->endChangeGesture();
         }
 }
 
@@ -586,17 +760,10 @@ void Glide90Processor::setParameter(const char* id, float plainValue)
 
 void Glide90Processor::parameterChanged(const juce::String& id, float value)
 {
+    juce::ignoreUnused(value);
     if (id != ids::memory)
         return;
-    if (undo.isPerformingUndoRedo())
-    {
-        // Undo restores the edit buffer's values along with the number: do not recall over them.
-        const int n = juce::jlimit(1, MemoryBank::kCount, juce::roundToInt(value));
-        loaded.store(n);
-        if (const auto m = bank.get(n); m.used)
-            currentAlgorithm.store(m.algorithm);
-        return;
-    }
+    // Undo and presets set `loaded` before the number arrives, so the update finds nothing to do.
     triggerAsyncUpdate(); // may come from the audio thread (automation)
 }
 
@@ -604,22 +771,32 @@ void Glide90Processor::handleAsyncUpdate()
 {
     const int n = juce::roundToInt(apvts.getRawParameterValue(ids::memory)->load());
     if (n != loaded.load())
+    {
+        const Batch quiet(*this, false); // automation, not an edit
         loadMemory(n);
+    }
 }
 
-void Glide90Processor::recallMemory(int number)
+bool Glide90Processor::recallMemory(int number)
 {
     number = juce::jlimit(1, MemoryBank::kCount, number);
-    loadMemory(number); // sets `loaded` first, so the listener's async update has nothing left to do
+    const Batch edit(*this, true);
+    if (!loadMemory(number)) // sets `loaded` first, so the listener's async update has nothing left to do
+        return false;
     setParameter(ids::memory, (float) number);
+    return true;
 }
 
-void Glide90Processor::loadMemory(int number)
+bool Glide90Processor::loadMemory(int number)
 {
-    loaded.store(number);
     const Memory m = bank.get(number);
+    // A program that is not emulated yet would play the dry signal with every reverb control dead:
+    // keep playing what plays.
+    if (m.used && parameterPages(m.algorithm).empty())
+        return false;
+    loaded.store(number);
     if (!m.used)
-        return;
+        return true;
     currentAlgorithm.store(m.algorithm);
     setParameter(ids::erType, (float) m.er.type);
     setParameter(ids::erRoomSize, m.er.roomSize);
@@ -628,6 +805,7 @@ void Glide90Processor::loadMemory(int number)
     setParameter(ids::erLpf, (float) lpfIndex(m.er.lpfHz));
     setParameter(ids::balance, m.balance);
     setParameter(ids::outLevel, m.outLevel);
+    return true;
 }
 
 Memory Glide90Processor::editBuffer() const
@@ -648,6 +826,7 @@ Memory Glide90Processor::editBuffer() const
 
 bool Glide90Processor::storeMemory(int number, const juce::String& title)
 {
+    const Batch quiet(*this, false); // the memory number moves along; nothing to undo
     Memory m = editBuffer();
     m.title = title;
     if (!bank.store(number, m))
@@ -671,8 +850,17 @@ void Glide90Processor::getStateInformation(juce::MemoryBlock& destData)
     st.setProperty(kLoadedProp, loaded.load(), nullptr);
     st.setProperty(kPresetProp, currentFactoryPreset, nullptr);
     st.setProperty(kPresetNameProp, presetName, nullptr);
+    st.setProperty(kPresetIsUserProp, presetIsUser, nullptr);
     st.setProperty(kVersionProp, kStateVersion, nullptr);
     st.setProperty(kScaleProp, scale, nullptr);
+    // Both compare slots, so B is still there after the project is reopened.
+    juce::ValueTree ab(kAbTree);
+    ab.setProperty(kAbIndexProp, abIndex, nullptr);
+    for (int i = 0; i < (int) abStates.size(); ++i)
+        if (abStates[(size_t) i].isValid())
+            ab.appendChild(abStates[(size_t) i].createCopy().setProperty(kAbSlotProp, i, nullptr), nullptr);
+    st.removeChild(st.getChildWithName(kAbTree), nullptr);
+    st.appendChild(ab, nullptr);
     if (auto xml = st.createXml())
         copyXmlToBinary(*xml, destData);
 }
@@ -689,11 +877,21 @@ void Glide90Processor::setStateInformation(const void* data, int sizeInBytes)
     bank.fromTree(st.getChildWithName(MemoryBank::treeType()));
     ++bankRevision;
     shapeFromTree(st.getChildWithName(kShapeTree));
-    for (const auto& type : { MemoryBank::treeType(), kShapeTree })
+    abStates = {};
+    abIndex = 0;
+    if (const auto ab = st.getChildWithName(kAbTree); ab.isValid())
+    {
+        abIndex = juce::jlimit(0, 1, (int) ab.getProperty(kAbIndexProp, 0));
+        for (const auto& slot : ab)
+            if (slot.hasType(kPresetFileTree))
+                abStates[(size_t) juce::jlimit(0, 1, (int) slot.getProperty(kAbSlotProp, 0))] = slot.createCopy();
+    }
+    for (const auto& type : { MemoryBank::treeType(), kShapeTree, kAbTree })
         st.removeChild(st.getChildWithName(type), nullptr);
     currentAlgorithm.store(juce::jlimit(1, 30, (int) st.getProperty(kAlgorithmProp, 17)));
     currentFactoryPreset = juce::jlimit(0, getNumPrograms() - 1, (int) st.getProperty(kPresetProp, 0));
     presetName = st.getProperty(kPresetNameProp, "Init").toString();
+    presetIsUser = (bool) st.getProperty(kPresetIsUserProp, false);
     setUiScale((float) st.getProperty(kScaleProp, 1.0f));
     // Set before the parameters arrive, so restoring the memory number does not recall it over the
     // restored (possibly edited) values.
@@ -708,7 +906,7 @@ void Glide90Processor::setStateInformation(const void* data, int sizeInBytes)
     // replaceState skips parameters whose stored value already maps to the current one (a bool left
     // at a raw 0.57 stays there instead of the stored 1), and leaves parameters missing from older
     // states at whatever they were. Set every value exactly, missing ones to their default.
-    setParametersExactly(saved, true);
+    setParametersExactly(saved, true, false);
     captureBaseline();
     undo.clearUndoHistory();
 }

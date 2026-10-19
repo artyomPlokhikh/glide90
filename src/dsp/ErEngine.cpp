@@ -115,14 +115,30 @@ void ErEngine::reset()
     writePos = 0;
     fadeLeft = 0;
     hasSettings = false; // nothing is playing yet, so the next settings apply without a crossfade
+    hasPending = false;
     lpfState[0] = lpfState[1] = 0.0f;
 }
 
 void ErEngine::setSettings(const ErSettings& s)
 {
     if (hasSettings && s == settings)
+    {
+        hasPending = false; // back where the running crossfade is heading
         return;
+    }
+    // Starting a new crossfade now would drop the tap set still fading out at its current weight:
+    // a step in the output on every block while a knob turns.
+    if (fadeLeft > 0)
+    {
+        pending = s;
+        hasPending = true;
+        return;
+    }
+    apply(s);
+}
 
+void ErEngine::apply(const ErSettings& s)
+{
     const bool first = !hasSettings;
     settings = s;
     hasSettings = true;
@@ -164,9 +180,12 @@ void ErEngine::process(const float* in, float* outL, float* outR, int numSamples
             out[ch][n] = lpfState[ch];
         }
 
-        if (fadeLeft > 0)
-            --fadeLeft;
         writePos = (writePos + 1) & mask;
+        if (fadeLeft > 0 && --fadeLeft == 0 && hasPending)
+        {
+            hasPending = false;
+            apply(pending);
+        }
     }
 }
 

@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include "PluginProcessor.h"
+#include "ui/Controls.h"
 
 #include <juce_events/juce_events.h>
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -274,6 +275,73 @@ TEST_CASE("the editor builds and lays out; GLIDE90_SNAPSHOT=<file.png> saves a p
     }
 }
 
+TEST_CASE("a knob's value field: a click elsewhere applies it; Alt-click resets the knob")
+{
+    auto p = make();
+    std::unique_ptr<juce::AudioProcessorEditor> editor(p->createEditor());
+    editor->setVisible(true);
+    editor->addToDesktop(0);
+    auto* peer = editor->getPeer();
+    REQUIRE(peer != nullptr);
+
+    // The reverb's MIX knob (BALANCE).
+    glide90::ui::Knob* knob = nullptr;
+    std::function<void(juce::Component&)> find = [&](juce::Component& c) {
+        if (auto* k = dynamic_cast<glide90::ui::Knob*>(&c); k != nullptr && k->getTooltip().startsWith("BALANCE"))
+            knob = k;
+        for (auto* child : c.getChildren())
+            find(*child);
+    };
+    find(*editor);
+    REQUIRE(knob != nullptr);
+    set(*p, ids::balance, 1.0f);
+
+    auto event = [&](juce::ModifierKeys mods, int clicks) {
+        const auto now = juce::Time::getCurrentTime();
+        const auto centre = knob->getLocalBounds().getCentre().toFloat();
+        return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), centre, mods, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                knob, knob, now, centre, now, clicks, false);
+    };
+    auto fieldOf = [&]() -> juce::TextEditor* {
+        for (auto* child : knob->getChildren())
+            if (auto* t = dynamic_cast<juce::TextEditor*>(child))
+                return t;
+        return nullptr;
+    };
+
+    knob->mouseDoubleClick(event(juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), 2));
+    REQUIRE(fieldOf() != nullptr);
+    fieldOf()->setText("50", false);
+
+    // A real click (through the window, as the mouse would) on the bare panel left of the header's name.
+    const auto spot = editor->localPointToGlobal(juce::Point<int>(4, 4)).toFloat() - peer->getBounds().getPosition().toFloat();
+    const auto t = juce::Time::currentTimeMillis();
+    peer->handleMouseEvent(juce::MouseInputSource::InputSourceType::mouse, spot,
+                           juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), 1.0f, 0.0f, t);
+    peer->handleMouseEvent(juce::MouseInputSource::InputSourceType::mouse, spot, juce::ModifierKeys(), 1.0f, 0.0f, t + 20);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(100);
+    CHECK(fieldOf() == nullptr);
+    CHECK(plain(*p, ids::balance) == doctest::Approx(0.5f));
+
+    // Text that names no value leaves it alone; Escape-like cancel is the same path without applying.
+    knob->mouseDoubleClick(event(juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), 2));
+    REQUIRE(fieldOf() != nullptr);
+    fieldOf()->setText("abc", false);
+    peer->handleMouseEvent(juce::MouseInputSource::InputSourceType::mouse, spot,
+                           juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), 1.0f, 0.0f, t + 1000);
+    peer->handleMouseEvent(juce::MouseInputSource::InputSourceType::mouse, spot, juce::ModifierKeys(), 1.0f, 0.0f, t + 1020);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(100);
+    CHECK(fieldOf() == nullptr);
+    CHECK(plain(*p, ids::balance) == doctest::Approx(0.5f));
+
+    // Alt-click: back to the default (100 %).
+    knob->mouseDown(event(juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::altModifier), 1));
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+    CHECK(plain(*p, ids::balance) == doctest::Approx(1.0f));
+
+    editor->removeFromDesktop();
+}
+
 TEST_CASE("output mode: left only copies the left output, mono sums them")
 {
     auto p = make();
@@ -315,4 +383,314 @@ int main(int argc, char** argv)
     juce::ScopedJuceInitialiser_GUI juce;
     doctest::Context context(argc, argv);
     return context.run();
+}
+
+TEST_CASE("typed values are read the way they are shown")
+{
+    auto p = make();
+    auto typed = [&](const char* id, const char* text) {
+        return glide90::parseParameterText(*p->state().getParameter(id), juce::String::fromUTF8(text));
+    };
+    auto value = [&](const char* id, const char* text) { return typed(id, text).value_or(-999.0f); };
+
+    // Percentages: shown as "50%", typed as percentages.
+    for (const char* id : { ids::balance, ids::outLevel, ids::glideMix, ids::glideDynamics, ids::glideBar })
+    {
+        CAPTURE(id);
+        CHECK(value(id, "50") == doctest::Approx(0.5f));
+        CHECK(value(id, "50%") == doctest::Approx(0.5f));
+        CHECK(value(id, "50 %") == doctest::Approx(0.5f));
+        CHECK(value(id, "100%") == doctest::Approx(1.0f));
+        CHECK(value(id, "12,5") == doctest::Approx(0.125f));
+    }
+    // What the host's own field sends goes through the same reading.
+    auto* mix = p->state().getParameter(ids::balance);
+    CHECK(mix->convertFrom0to1(mix->getValueForText("50")) == doctest::Approx(0.5f));
+
+    // Text that names no value changes nothing.
+    for (const char* id : { ids::balance, ids::erRoomSize, ids::erLiveness, ids::erLpf, ids::glideDivision })
+    {
+        CAPTURE(id);
+        CHECK_FALSE(typed(id, "").has_value());
+        CHECK_FALSE(typed(id, "abc").has_value());
+    }
+
+    // Plain numbers, with or without the shown unit; seconds and semitones when said so.
+    CHECK(value(ids::erRoomSize, "3.3") == doctest::Approx(3.3f));
+    CHECK(value(ids::erDelay, "25.0ms") == doctest::Approx(25.0f));
+    CHECK(value(ids::erDelay, "0.2 s") == doctest::Approx(200.0f));
+    CHECK(value(ids::glidePeriod, "333 ms") == doctest::Approx(333.0f));
+    CHECK(value(ids::glidePeriod, "1.2s") == doctest::Approx(1200.0f));
+    CHECK(value(ids::glidePeriod, "1,2 сек") == doctest::Approx(1200.0f));
+    CHECK(value(ids::glideDepth, "30 ct") == doctest::Approx(30.0f));
+    CHECK(value(ids::glideDepth, "2 st") == doctest::Approx(200.0f));
+    CHECK(value(ids::erLiveness, "7") == doctest::Approx(7.0f));
+
+    // LPF: kHz, Hz, the shown label in any case, THRU.
+    auto lpf = [&](const char* text) {
+        return p->state().getParameter(ids::erLpf)->getText(
+            p->state().getParameter(ids::erLpf)->convertTo0to1(value(ids::erLpf, text)), 16);
+    };
+    CHECK(lpf("2.5") == "2.5kHz");
+    CHECK(lpf("2.5k") == "2.5kHz");
+    CHECK(lpf("2500") == "2.5kHz");
+    CHECK(lpf("2.5KHZ") == "2.5kHz");
+    CHECK(lpf("6300 Hz") == "6.3kHz");
+    CHECK(lpf("11 kHz") == "11kHz");
+    CHECK(lpf("thru") == "THRU");
+    CHECK(lpf("OFF") == "THRU");
+
+    // Note values without caring for case or spaces.
+    auto division = [&](const char* text) { return glide90::kDivisions[(size_t) value(ids::glideDivision, text)].label; };
+    CHECK(juce::String(division("1/4 D")) == "1/4 D");
+    CHECK(juce::String(division("1/4d")) == "1/4 D");
+    CHECK(juce::String(division("1/8 t")) == "1/8 T");
+    CHECK(juce::String(division("1/16 dotted")) == "1/16 D");
+    CHECK(juce::String(division("2 bar")) == "2 BARS");
+    CHECK(juce::String(division("1 bar")) == "1 BAR");
+
+    // Other choices by name, in any case.
+    CHECK(value(ids::glideMode, "trigger") == doctest::Approx(2.0f));
+    CHECK(value(ids::glideShape, "ramp down") == doctest::Approx(4.0f));
+}
+
+namespace
+{
+
+// Peak of the output while silence goes in, `blocks` blocks long.
+float silencePeak(Glide90Processor& p, int blocks)
+{
+    juce::AudioBuffer<float> buffer(2, kBlock);
+    juce::MidiBuffer midi;
+    float peak = 0.0f;
+    for (int b = 0; b < blocks; ++b)
+    {
+        buffer.clear();
+        p.processBlock(buffer, midi);
+        peak = std::max(peak, buffer.getMagnitude(0, kBlock));
+    }
+    return peak;
+}
+
+void playLoud(Glide90Processor& p, int blocks, bool hostBypass = false)
+{
+    juce::AudioBuffer<float> buffer(2, kBlock);
+    juce::MidiBuffer midi;
+    for (int b = 0; b < blocks; ++b)
+    {
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < kBlock; ++i)
+                buffer.setSample(ch, i, 0.5f * (float) std::sin(0.05 * (b * kBlock + i)));
+        if (hostBypass)
+            p.processBlockBypassed(buffer, midi);
+        else
+            p.processBlock(buffer, midi);
+    }
+}
+
+} // namespace
+
+TEST_CASE("after the host's bypass or a reset, nothing of what played before comes back")
+{
+    // The reverse gate holds two seconds: released from a bypass, it must not play out a swell of
+    // the audio from before it.
+    auto p = make();
+    playLoud(*p, 100); // half a second into the reverb
+    juce::AudioBuffer<float> buffer(2, kBlock);
+    juce::MidiBuffer midi;
+    for (int b = 0; b < 20; ++b) // bypassed, silence
+    {
+        buffer.clear();
+        p->processBlockBypassed(buffer, midi);
+    }
+    CHECK(silencePeak(*p, 200) < 1e-4f);
+
+    playLoud(*p, 100);
+    p->reset(); // a host stopping or jumping
+    CHECK(silencePeak(*p, 200) < 1e-4f);
+}
+
+TEST_CASE("the host's bypass fades in and out instead of switching")
+{
+    auto p = make();
+    set(*p, ids::glideOn, 0.0f); // the effect alone (BALANCE 100 %): the two paths differ completely
+    juce::AudioBuffer<float> buffer(2, kBlock);
+    juce::MidiBuffer midi;
+    float previous = 0.0f, worst = 0.0f;
+    for (int b = 0; b < 400; ++b)
+    {
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < kBlock; ++i)
+                buffer.setSample(ch, i, 0.5f * (float) std::sin(2.0 * 3.14159265 * 220.0 * (b * kBlock + i) / kRate));
+        if (b >= 100 && b < 200)
+            p->processBlockBypassed(buffer, midi);
+        else
+            p->processBlock(buffer, midi);
+        if (b > 20)
+            for (int i = 0; i < kBlock; ++i)
+            {
+                worst = std::max(worst, std::abs(buffer.getSample(0, i) - previous));
+                previous = buffer.getSample(0, i);
+            }
+        else
+            previous = buffer.getSample(0, kBlock - 1);
+    }
+    // A 220 Hz sine at 0.5 moves at most 0.0144 per sample, the reverb's output a few times that;
+    // switching between them would jump by up to 1.
+    MESSAGE("largest step " << worst);
+    CHECK(worst < 0.08f);
+}
+
+TEST_CASE("programs that are not emulated yet do not replace the one that plays")
+{
+    auto p = make();
+    CHECK_FALSE(p->recallMemory(1)); // REV 1 HALL
+    CHECK(p->algorithm() == 17);
+    CHECK(p->loadedMemory() == 17);
+    set(*p, ids::memory, 18.0f); // automation to ADR NOISE GATE
+    p->flushPendingRecall();
+    CHECK(p->algorithm() == 17);
+    CHECK(p->recallMemory(16));
+    CHECK(p->algorithm() == 16);
+}
+
+TEST_CASE("restoring a project is not reported to the host as an edit, and keeps both A/B slots")
+{
+    auto a = make();
+    set(*a, ids::glideDepth, 50.0f);
+    a->selectAB(1);
+    set(*a, ids::glideDepth, 120.0f);
+    set(*a, ids::glideDynamics, 0.4f);
+    const auto state = saveState(*a);
+
+    struct GestureCounter : juce::AudioProcessorListener
+    {
+        int gestures = 0;
+        void audioProcessorParameterChanged(juce::AudioProcessor*, int, float) override {}
+        void audioProcessorChanged(juce::AudioProcessor*, const ChangeDetails&) override {}
+        void audioProcessorParameterChangeGestureBegin(juce::AudioProcessor*, int) override { ++gestures; }
+    } counter;
+    auto b = make();
+    b->addListener(&counter);
+    b->setStateInformation(state.getData(), (int) state.getSize());
+    b->removeListener(&counter);
+    CHECK(counter.gestures == 0);
+
+    CHECK(b->abSlot() == 1);
+    CHECK(plain(*b, ids::glideDepth) == doctest::Approx(120.0f));
+    CHECK(plain(*b, ids::glideDynamics) == doctest::Approx(0.4f));
+    b->selectAB(0);
+    CHECK(plain(*b, ids::glideDepth) == doctest::Approx(50.0f));
+}
+
+TEST_CASE("the Loveless roadie preset bends with the strength of each strike")
+{
+    auto p = make();
+    const int index = p->factoryPresetNames().indexOf("MBV Loveless roadie");
+    REQUIRE(index >= 0);
+    p->setCurrentProgram(index);
+    CHECK(plain(*p, ids::glideDynamics) == doctest::Approx(0.6f));
+    CHECK(juce::roundToInt(plain(*p, ids::glideMode)) == (int) sway::GlideMode::Trigger);
+}
+
+TEST_CASE("undo takes the editor's edits back, one gesture at a time, and never the host's automation")
+{
+    auto p = make();
+    auto& undo = p->undoManager();
+    auto gesture = [&](const char* id, float value) {
+        auto* param = p->state().getParameter(id);
+        param->beginChangeGesture();
+        param->setValueNotifyingHost(param->convertTo0to1(value * 0.5f)); // a drag passes through values
+        param->setValueNotifyingHost(param->convertTo0to1(value));
+        param->endChangeGesture();
+    };
+
+    for (int i = 0; i < 50; ++i)
+        set(*p, ids::glideDepth, 10.0f + (float) i); // automation: no gestures
+    CHECK_FALSE(undo.canUndo());
+
+    gesture(ids::erRoomSize, 12.0f);
+    gesture(ids::glideDepth, 200.0f);
+    REQUIRE(undo.canUndo());
+    undo.undo();
+    CHECK(plain(*p, ids::glideDepth) == doctest::Approx(59.0f));
+    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(12.0f));
+    undo.undo();
+    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(3.3f));
+    undo.redo();
+    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(12.0f));
+
+    // A preset load is one step.
+    p->setCurrentProgram(1);
+    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(20.0f));
+    undo.undo();
+    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(12.0f));
+    CHECK(p->algorithm() == 17);
+
+    // Redrawing the custom shape: marks the preset changed, and comes back with undo.
+    p->setCurrentProgram(0);
+    CHECK_FALSE(p->isPresetModified());
+    const sway::ShapePoint first[] { { 0.0f, 0.0f }, { 0.4f, 1.0f } };
+    const sway::ShapePoint second[] { { 0.0f, 0.0f }, { 0.2f, 0.7f }, { 0.6f, 0.3f } };
+    sway::Shape shape;
+    shape.setPoints(first, 2);
+    p->beginEdit();
+    p->setCustomShape(shape);
+    p->endEdit();
+    p->setCurrentProgram(0); // the custom shape stays custom...
+    set(*p, ids::glideShape, (float) sway::kShapePresetNames.size());
+    juce::MemoryBlock keep;
+    p->getStateInformation(keep);
+    p->setStateInformation(keep.getData(), (int) keep.getSize()); // ...and is now the baseline
+    CHECK_FALSE(p->isPresetModified());
+    shape.setPoints(second, 3);
+    p->beginEdit();
+    p->setCustomShape(shape);
+    p->endEdit();
+    CHECK(p->isPresetModified());
+    undo.undo();
+    CHECK(p->currentShape().size() == 2);
+    CHECK_FALSE(p->isPresetModified());
+}
+
+TEST_CASE("the save dialog opens inside the plugin window, and closing the window with it open is safe")
+{
+    auto p = make();
+    std::unique_ptr<juce::AudioProcessorEditor> editor(p->createEditor());
+    editor->setVisible(true);
+    editor->addToDesktop(0);
+    juce::TextButton* saveKey = nullptr;
+    std::function<void(juce::Component&)> find = [&](juce::Component& c) {
+        if (auto* b = dynamic_cast<juce::TextButton*>(&c); b != nullptr && b->getButtonText() == "SAVE")
+            saveKey = b;
+        for (auto* child : c.getChildren())
+            find(*child);
+    };
+    find(*editor);
+    REQUIRE(saveKey != nullptr);
+    saveKey->onClick();
+
+    juce::AlertWindow* dialog = nullptr;
+    std::function<void(juce::Component&)> findDialog = [&](juce::Component& c) {
+        if (auto* d = dynamic_cast<juce::AlertWindow*>(&c))
+            dialog = d;
+        for (auto* child : c.getChildren())
+            findDialog(*child);
+    };
+    findDialog(*editor);
+    REQUIRE(dialog != nullptr); // a child of the editor, not a window of its own
+    CHECK(dialog->isCurrentlyModal());
+    if (const auto path = juce::SystemStats::getEnvironmentVariable("GLIDE90_SNAPSHOT", {}); path.isNotEmpty())
+    {
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(200);
+        const auto image = editor->createComponentSnapshot(editor->getLocalBounds(), true, 1.0f);
+        juce::File file(juce::File(path).getSiblingFile(juce::File(path).getFileNameWithoutExtension() + "-save.png"));
+        file.deleteFile();
+        juce::FileOutputStream out(file);
+        REQUIRE(juce::PNGImageFormat().writeImageToStream(image, out));
+    }
+
+    editor.reset(); // the host closes the window
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(100); // the dialog's callback arrives now
+    CHECK(p->currentPresetName() == "Init");
 }

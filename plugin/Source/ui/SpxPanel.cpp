@@ -78,7 +78,11 @@ SpxPanel::SpxPanel(Glide90Processor& p)
         refresh();
     };
     recallKey.onClick = [this] {
-        proc.recallMemory(pendingMemory);
+        if (!proc.recallMemory(pendingMemory))
+        {
+            showMessage("NOT EMULATED YET");
+            return;
+        }
         lastLoaded = pendingMemory;
         balanceMode = false;
         pageIndex = 0;

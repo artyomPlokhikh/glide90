@@ -18,13 +18,14 @@ HeaderBar::HeaderBar(Glide90Processor& p) : proc(p)
         refreshUserFiles();
         menu.addSectionHeader("Factory");
         const auto factory = proc.factoryPresetNames();
+        const bool user = proc.currentPresetIsUser();
         for (int i = 0; i < factory.size(); ++i)
-            menu.addItem(factory[i], true, factory[i] == proc.currentPresetName(), [this, i] { proc.loadFactoryPreset(i); });
+            menu.addItem(factory[i], true, !user && i == proc.getCurrentProgram(), [this, i] { proc.loadFactoryPreset(i); });
         menu.addSectionHeader("User");
         if (userFiles.isEmpty())
             menu.addItem("Empty", false, false, nullptr);
         for (const auto& f : userFiles)
-            menu.addItem(f.getFileNameWithoutExtension(), true, f.getFileNameWithoutExtension() == proc.currentPresetName(),
+            menu.addItem(f.getFileNameWithoutExtension(), true, user && f.getFileNameWithoutExtension() == proc.currentPresetName(),
                          [this, f] { proc.loadUserPreset(f); });
     };
 
@@ -68,32 +69,78 @@ void HeaderBar::refreshUserFiles()
 
 void HeaderBar::stepPreset(int delta)
 {
-    // One list: the factory presets, then the user presets.
+    // One list: the factory presets, then the user presets. Where we are is the factory index or the
+    // user file, not the name, which a user preset may share with a factory one.
     refreshUserFiles();
     const auto factory = proc.factoryPresetNames();
-    juce::StringArray names(factory);
+    juce::StringArray userNames;
     for (const auto& f : userFiles)
-        names.add(f.getFileNameWithoutExtension());
-    const int current = names.indexOf(proc.currentPresetName());
-    const int next = current < 0 ? 0 : (current + delta + names.size()) % names.size();
+        userNames.add(f.getFileNameWithoutExtension());
+    const int count = factory.size() + userNames.size();
+    int current = proc.getCurrentProgram();
+    if (proc.currentPresetIsUser())
+    {
+        const int i = userNames.indexOf(proc.currentPresetName());
+        current = i >= 0 ? factory.size() + i : (delta > 0 ? factory.size() - 1 : factory.size()); // file gone: step from where it was
+    }
+    const int next = (current + delta + count) % count;
     if (next < factory.size())
         proc.loadFactoryPreset(next);
     else
         proc.loadUserPreset(userFiles[next - factory.size()]);
 }
 
+void HeaderBar::showDialog(std::unique_ptr<juce::AlertWindow> window, std::function<void(int)> onResult)
+{
+    dialog = std::move(window);
+    if (auto* parent = getParentComponent())
+    {
+        parent->addAndMakeVisible(*dialog);
+        dialog->setCentrePosition(parent->getLocalBounds().getCentre());
+    }
+    // The callback comes after the dialog is gone, possibly after this panel is gone too (the plugin
+    // window closed with the dialog open): it must not touch either then.
+    dialog->enterModalState(true, juce::ModalCallbackFunction::create(
+                                      [safe = juce::Component::SafePointer<HeaderBar>(this), onResult](int result) {
+                                          if (safe != nullptr)
+                                              onResult(result);
+                                      }));
+}
+
 void HeaderBar::askToSave()
 {
-    saveDialog = std::make_unique<juce::AlertWindow>("Save preset", "Name:", juce::MessageBoxIconType::NoIcon, this);
-    saveDialog->addTextEditor("name", proc.currentPresetName());
-    saveDialog->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
-    saveDialog->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
-    saveDialog->enterModalState(true, juce::ModalCallbackFunction::create([this](int result) {
-        const auto name = saveDialog != nullptr ? saveDialog->getTextEditorContents("name") : juce::String();
-        saveDialog.reset();
-        if (result == 1 && proc.saveUserPreset(name))
-            refreshUserFiles();
-    }));
+    auto window = std::make_unique<juce::AlertWindow>("Save preset", "Name:", juce::MessageBoxIconType::NoIcon);
+    window->addTextEditor("name", proc.currentPresetName());
+    window->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    showDialog(std::move(window), [this](int result) {
+        const auto name = dialog != nullptr ? dialog->getTextEditorContents("name").trim() : juce::String();
+        dialog.reset();
+        if (result != 1 || name.isEmpty())
+            return;
+        // Saving over another preset than the one being edited asks first.
+        const auto file = Glide90Processor::userPresetDirectory().getChildFile(juce::File::createLegalFileName(name)
+                                                                                + Glide90Processor::presetExtension());
+        const bool same = proc.currentPresetIsUser() && file.getFileNameWithoutExtension() == proc.currentPresetName();
+        if (!file.existsAsFile() || same)
+            return savePreset(name);
+        auto confirm = std::make_unique<juce::AlertWindow>("Replace preset?",
+                                                           "\"" + file.getFileNameWithoutExtension() + "\" already exists.",
+                                                           juce::MessageBoxIconType::NoIcon);
+        confirm->addButton("Replace", 1, juce::KeyPress(juce::KeyPress::returnKey));
+        confirm->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+        showDialog(std::move(confirm), [this, name](int answer) {
+            dialog.reset();
+            if (answer == 1)
+                savePreset(name);
+        });
+    });
+}
+
+void HeaderBar::savePreset(const juce::String& name)
+{
+    if (proc.saveUserPreset(name))
+        refreshUserFiles();
 }
 
 void HeaderBar::timerCallback()

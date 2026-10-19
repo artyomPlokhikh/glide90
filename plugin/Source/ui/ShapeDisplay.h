@@ -42,6 +42,7 @@ private:
     bool editable() const;
     float pushFromCents(float cents) const;
     juce::String statusText() const;
+    juce::String settingsKey() const;
     void stepShape(int delta);
     void editPoints(const std::function<void(std::vector<sway::ShapePoint>&)>& edit);
 
@@ -50,10 +51,13 @@ private:
     sway::Shape shape;
     float phase = 0.0f, cents = 0.0f;
     int dragIndex = -1, hoverIndex = -1;
+    bool editing = false; // a drag under way: one undo step
     std::array<float, 240> trace {};
     int traceHead = 0;
     int seenAttacks = 0;
     juce::uint32 attackFlashUntil = 0;
+    juce::String shownSettings;
+    bool shownFlash = false;
 };
 
 } // namespace glide90::ui
