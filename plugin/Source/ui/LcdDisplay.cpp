@@ -89,6 +89,8 @@ void LcdDisplay::mouseDrag(const juce::MouseEvent& e)
 
 void SevenSegment::setValue(int v, bool blink)
 {
+    v = juce::jlimit(0, 99, v); // two digits
+
     if (blink != blinking)
     {
         blinking = blink;

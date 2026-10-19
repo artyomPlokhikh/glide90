@@ -355,8 +355,15 @@ void Glide90Processor::setStateInformation(const void* data, int sizeInBytes)
     currentPreset = juce::jlimit(0, getNumPrograms() - 1, (int) st.getProperty(kPresetProp, 0));
     // Set before the parameters arrive, so restoring the memory number does not recall it over the
     // restored (possibly edited) values.
-    loaded.store((int) st.getProperty(kLoadedProp, 17));
+    loaded.store(juce::jlimit(1, MemoryBank::kCount, (int) st.getProperty(kLoadedProp, 17)));
     apvts.replaceState(st);
+
+    // replaceState skips parameters whose stored value already maps to the current one, so a bool
+    // left at a raw 0.57 stays at 0.57 instead of the stored 1. Set every value exactly.
+    for (auto* param : getParameters())
+        if (auto* p = dynamic_cast<juce::RangedAudioParameter*>(param))
+            if (const auto child = st.getChildWithProperty("id", p->getParameterID()); child.isValid())
+                p->setValueNotifyingHost(p->convertTo0to1((float) child.getProperty("value")));
 }
 
 } // namespace glide90

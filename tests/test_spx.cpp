@@ -217,7 +217,9 @@ TEST_CASE("irregular host block sizes give the same output as fixed ones")
         double worst = 0.0;
         for (size_t i = 0; i < in.size(); ++i)
             worst = std::max(worst, (double) std::abs(l[i] - ref[0][i]));
-        CHECK(worst < 1e-5);
+        // Block splits round the resampler clock slightly differently, which can flip a 16-bit step
+        // (1 LSB = 3e-5) here and there; a time slip would be orders of magnitude larger.
+        CHECK(worst < 1e-4);
     }
 }
 
