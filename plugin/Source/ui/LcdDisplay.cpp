@@ -22,8 +22,8 @@ void LcdDisplay::paint(juce::Graphics& g)
     g.setColour(juce::Colour(0xff0b0b0c));
     g.fillRoundedRectangle(r, 5.0f);
     auto glass = r.reduced(6.0f);
-    g.setGradientFill(juce::ColourGradient(juce::Colour(0xffb4d046), glass.getX(), glass.getY(),
-                                           juce::Colour(0xff93b334), glass.getX(), glass.getBottom(), false));
+    g.setGradientFill(juce::ColourGradient(juce::Colour(0xff17241d), glass.getX(), glass.getY(),
+                                           juce::Colour(0xff0c140f), glass.getX(), glass.getBottom(), false));
     g.fillRoundedRectangle(glass, 3.0f);
 
     // 16 characters of 5 dots plus a 1-dot gap; two rows of 7 dots with a 3-dot gap between them.
@@ -32,7 +32,7 @@ void LcdDisplay::paint(juce::Graphics& g)
     const float dot = pitch * 0.86f;
     const float x0 = glass.getCentreX() - pitch * dotsW * 0.5f;
     const float y0 = glass.getCentreY() - pitch * dotsH * 0.5f;
-    const auto lit = juce::Colour(0xff1f2a12), unlit = juce::Colour(0x1a1f2a12);
+    const auto lit = juce::Colour(0xff9df2c0), unlit = juce::Colour(0xff15241b);
 
     for (int row = 0; row < 2; ++row)
     {
@@ -46,14 +46,20 @@ void LcdDisplay::paint(juce::Graphics& g)
                 for (int x = 0; x < 5; ++x)
                 {
                     const bool on = (glyph[y] >> (4 - x)) & 1;
+                    const float px = x0 + (float) (col * 6 + x) * pitch, py = y0 + (float) (row * 10 + y) * pitch;
+                    if (on)
+                    {
+                        g.setColour(lit.withAlpha(0.18f)); // glow
+                        g.fillRect(px - pitch * 0.3f, py - pitch * 0.3f, dot + pitch * 0.6f, dot + pitch * 0.6f);
+                    }
                     g.setColour(on ? lit : unlit);
-                    g.fillRect(x0 + (float) (col * 6 + x) * pitch, y0 + (float) (row * 10 + y) * pitch, dot, dot);
+                    g.fillRect(px, py, dot, dot);
                 }
         }
     }
 
     // Glare.
-    g.setGradientFill(juce::ColourGradient(juce::Colours::white.withAlpha(0.10f), glass.getX(), glass.getY(),
+    g.setGradientFill(juce::ColourGradient(juce::Colours::white.withAlpha(0.05f), glass.getX(), glass.getY(),
                                            juce::Colours::transparentWhite, glass.getX(), glass.getCentreY(), false));
     g.fillRoundedRectangle(glass.withHeight(glass.getHeight() * 0.5f), 3.0f);
 }
@@ -187,20 +193,20 @@ void LevelMeter::setLevelDb(float db)
 
 void LevelMeter::paint(juce::Graphics& g)
 {
+    // A column of seven LEDs, loudest at the top, with their thresholds on the left.
     const auto r = getLocalBounds().toFloat();
-    const float cell = r.getWidth() / 7.0f;
-    const float d = juce::jmin(cell * 0.5f, r.getHeight() * 0.45f);
-    g.setFont(panelFont(9.5f));
-    static const char* labels[7] { "-36", "-24", "-15", "-9", "-5", "-2", "CLIP" };
+    const float cell = r.getHeight() / 7.0f;
+    const float d = juce::jmin(cell * 0.62f, 8.0f);
+    g.setFont(panelFont(8.5f));
+    static const char* labels[7] { "-36", "-24", "-15", "-9", "-5", "-2", "0" };
     for (int i = 0; i < 7; ++i)
     {
         const auto colour = i == 6 ? colours::ledRed : (i == 5 ? colours::ledYellow : colours::ledGreen);
-        const float cx = r.getX() + cell * ((float) i + 0.5f);
-        drawLed(g, juce::Rectangle<float>(d, d).withCentre({ cx, r.getBottom() - d * 0.5f - 2.0f }), colour,
-                levelDb >= kPointsDb[i]);
+        const float cy = r.getBottom() - cell * ((float) i + 0.5f);
+        drawLed(g, juce::Rectangle<float>(d * 1.6f, d).withCentre({ r.getRight() - d, cy }), colour, levelDb >= kPointsDb[i]);
         g.setColour(colours::legendDim);
-        g.drawText(labels[i], juce::Rectangle<float>(cell + 6.0f, 12.0f).withCentre({ cx, r.getY() + 6.0f }),
-                   juce::Justification::centred);
+        g.drawText(labels[i], juce::Rectangle<float>(r.getX(), cy - 5.0f, r.getWidth() - d * 2.2f, 10.0f),
+                   juce::Justification::centredRight);
     }
 }
 

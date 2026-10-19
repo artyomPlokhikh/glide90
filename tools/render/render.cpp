@@ -2,7 +2,8 @@
 //
 //   glide90_render in=guitar.wav out=wet.wav program=17 rs=20 liv=4 delay=25 balance=1
 //   glide90_render in=impulse rate=44100 seconds=2 out=ir.wav program=17
-//   sway=1 depth=25 swayrate=3 shape=0.4 strum=0.3 asym=0 twin=0 twinlevel=0
+//   sway=1 depth=30 period=333 shape=0 random=0.15 smooth=0.2 direction=0 twin=0 twinlevel=0
+//   (shape: index into sway::kShapePresetNames; direction: 0 down, 1 both, 2 up)
 
 #include "RomPrograms.h"
 #include "SpxEngine.h"
@@ -65,12 +66,14 @@ int main(int argc, char** argv)
     s.inputKnob = (float) num("input", 8.0);
 
     sway::SwaySettings w;
+    const auto shape = sway::makeShape((sway::ShapePreset) (int) num("shape", 0));
     w.enabled = num("sway", 0.0) != 0.0;
+    w.shape = &shape;
     w.depthCents = (float) num("depth", w.depthCents);
-    w.rateHz = (float) num("swayrate", w.rateHz);
-    w.shape = (float) num("shape", w.shape);
-    w.strumSync = (float) num("strum", w.strumSync);
-    w.asymmetry = (float) num("asym", w.asymmetry);
+    w.cycleSeconds = num("period", w.cycleSeconds * 1000.0) / 1000.0;
+    w.random = (float) num("random", w.random);
+    w.smooth = (float) num("smooth", w.smooth);
+    w.direction = (sway::BendDirection) (int) num("direction", 0);
     w.twinDetuneCents = (float) num("twin", w.twinDetuneCents);
     w.twinLevel = (float) num("twinlevel", w.twinLevel);
 

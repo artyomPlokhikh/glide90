@@ -199,6 +199,7 @@ void SwayProcessor::process(float* const* channels, int numChannels, int numSamp
     // The twin string responds a little differently to the same bar movement.
     constexpr float kTwinBarScale = 0.85f;
 
+    bar.beginBlock(s);
     for (int n = 0; n < numSamples; ++n)
     {
         float sum = 0.0f;
@@ -206,7 +207,7 @@ void SwayProcessor::process(float* const* channels, int numChannels, int numSamp
             sum += channels[ch][n];
 
         enabledMix += std::clamp(targetMix - enabledMix, -mixStep, mixStep);
-        const float cents = bar.next(sum / (float) numChannels, s);
+        const float cents = bar.next(sum / (float) numChannels, n, s);
         lastCents = cents;
         const bool off = enabledMix <= 0.0f && targetMix <= 0.0f;
 

@@ -35,9 +35,13 @@ set(GLIDE90_PLUGIN_SOURCES
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/ui/PanelLookAndFeel.cpp
+    Source/ui/Widgets.cpp
     Source/ui/LcdDisplay.cpp
+    Source/ui/HeaderBar.cpp
     Source/ui/SpxPanel.cpp
-    Source/ui/SwayPanel.cpp)
+    Source/ui/SpxControls.cpp
+    Source/ui/ShapeDisplay.cpp
+    Source/ui/GlidePanel.cpp)
 set(GLIDE90_JUCE_DEFINITIONS
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0

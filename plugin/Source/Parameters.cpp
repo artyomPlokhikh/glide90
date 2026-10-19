@@ -1,6 +1,7 @@
 #include "Parameters.h"
 
 #include "RomPrograms.h"
+#include "Shape.h"
 
 namespace glide90
 {
@@ -13,7 +14,6 @@ using juce::AudioParameterChoice;
 using juce::AudioParameterFloat;
 using juce::AudioParameterFloatAttributes;
 using juce::AudioParameterInt;
-using juce::AudioParameterIntAttributes;
 using juce::NormalisableRange;
 using juce::ParameterID;
 
@@ -93,35 +93,48 @@ Layout createParameterLayout()
                                                       juce::StringArray { "+4 dBm", "-20 dBm" }, 0));
     layout.add(std::make_unique<AudioParameterBool>(ParameterID { ids::bypass, kVersion }, "SPX Bypass", false));
 
-    layout.add(std::make_unique<AudioParameterBool>(ParameterID { ids::swayOn, kVersion }, "Sway On", true));
-    layout.add(std::make_unique<AudioParameterFloat>(ParameterID { ids::swayDepth, kVersion }, "Sway Depth",
-                                                     NormalisableRange<float>(0.0f, 100.0f, 0.1f), 25.0f,
-                                                     withText([](float v) { return juce::String(v, 1) + " ct"; }, "ct")));
-    layout.add(std::make_unique<AudioParameterFloat>(ParameterID { ids::swayRate, kVersion }, "Sway Rate",
-                                                     steppedRange(0.3f, 8.0f, 0.01f, 2.5f), 3.0f,
-                                                     withText([](float v) { return juce::String(v, 2) + " Hz"; }, "Hz")));
-    layout.add(std::make_unique<AudioParameterFloat>(ParameterID { ids::swayShape, kVersion }, "Sway Shape",
-                                                     NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.4f, percent()));
-    layout.add(std::make_unique<AudioParameterFloat>(ParameterID { ids::swayStrum, kVersion }, "Sway Strum Sync",
-                                                     NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.3f, percent()));
-    layout.add(std::make_unique<AudioParameterFloat>(ParameterID { ids::swaySensitivity, kVersion }, "Sway Sensitivity",
+    layout.add(std::make_unique<AudioParameterBool>(ParameterID { ids::glideOn, kVersion }, "Glide On", true));
+    layout.add(std::make_unique<AudioParameterChoice>(ParameterID { ids::glideMode, kVersion }, "Glide Mode",
+                                                      juce::StringArray { "FREE", "SYNC", "TRIGGER", "MANUAL" }, 0));
+    layout.add(std::make_unique<AudioParameterFloat>(ParameterID { ids::glidePeriod, kVersion }, "Glide Rate",
+                                                     steppedRange(30.0f, 4000.0f, 1.0f, 400.0f), 333.0f,
+                                                     withText([](float v) { return juce::String(juce::roundToInt(v)) + " ms"; }, "ms")));
+    juce::StringArray divisions;
+    for (const auto& d : kDivisions)
+        divisions.add(d.label);
+    layout.add(std::make_unique<AudioParameterChoice>(ParameterID { ids::glideDivision, kVersion }, "Glide Sync Rate",
+                                                      divisions, kDefaultDivision));
+    layout.add(std::make_unique<AudioParameterFloat>(ParameterID { ids::glideDepth, kVersion }, "Glide Depth",
+                                                     steppedRange(0.0f, 300.0f, 0.1f, 60.0f), 30.0f,
+                                                     withText([](float v) { return juce::String(v, v < 10.0f ? 1 : 0) + " ct"; }, "ct")));
+    layout.add(std::make_unique<AudioParameterChoice>(ParameterID { ids::glideDirection, kVersion }, "Glide Direction",
+                                                      juce::StringArray { "DOWN", "BOTH", "UP" }, 0));
+    layout.add(std::make_unique<AudioParameterFloat>(ParameterID { ids::glideRandom, kVersion }, "Glide Random",
+                                                     NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.15f, percent()));
+    layout.add(std::make_unique<AudioParameterFloat>(ParameterID { ids::glideSmooth, kVersion }, "Glide Smooth",
+                                                     NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.2f, percent()));
+    juce::StringArray shapes;
+    for (auto name : sway::kShapePresetNames)
+        shapes.add(juce::String(name.data(), name.size()));
+    shapes.add(kCustomShapeName);
+    layout.add(std::make_unique<AudioParameterChoice>(ParameterID { ids::glideShape, kVersion }, "Glide Shape", shapes, 0));
+    layout.add(std::make_unique<AudioParameterChoice>(ParameterID { ids::glideTriggerSource, kVersion },
+                                                      "Glide Trigger", juce::StringArray { "PICK ATTACK", "MIDI NOTE" }, 0));
+    layout.add(std::make_unique<AudioParameterFloat>(ParameterID { ids::glideSensitivity, kVersion }, "Glide Sensitivity",
                                                      NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.5f, percent()));
-    layout.add(std::make_unique<AudioParameterFloat>(ParameterID { ids::swayAsymmetry, kVersion }, "Sway Asymmetry",
-                                                     NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.0f, percent()));
-    layout.add(std::make_unique<AudioParameterFloat>(ParameterID { ids::swayBar, kVersion }, "Sway Bar",
-                                                     NormalisableRange<float>(-200.0f, 0.0f, 0.1f), 0.0f,
-                                                     withText([](float v) { return juce::String(v, 1) + " ct"; }, "ct")));
-    layout.add(std::make_unique<AudioParameterChoice>(ParameterID { ids::swayBarSource, kVersion }, "Sway Bar Source",
-                                                      juce::StringArray { "Knob", "Pitch bend", "Mod wheel" }, 0));
-    layout.add(std::make_unique<AudioParameterFloat>(ParameterID { ids::swayTwinDetune, kVersion }, "Sway Twin Detune",
+    layout.add(std::make_unique<AudioParameterChoice>(ParameterID { ids::glideManualSource, kVersion }, "Glide Manual Source",
+                                                      juce::StringArray { "BAR KNOB", "PITCH BEND", "MOD WHEEL", "EXPRESSION (CC11)" }, 0));
+    layout.add(std::make_unique<AudioParameterFloat>(ParameterID { ids::glideBar, kVersion }, "Glide Bar",
+                                                     NormalisableRange<float>(0.0f, 1.0f, 0.001f), 0.0f, percent()));
+    layout.add(std::make_unique<AudioParameterFloat>(ParameterID { ids::glideTwinDetune, kVersion }, "Glide Twin Detune",
                                                      NormalisableRange<float>(0.0f, 30.0f, 0.1f), 8.0f,
                                                      withText([](float v) { return juce::String(v, 1) + " ct"; }, "ct")));
-    layout.add(std::make_unique<AudioParameterFloat>(ParameterID { ids::swayTwinLevel, kVersion }, "Sway Twin Level",
+    layout.add(std::make_unique<AudioParameterFloat>(ParameterID { ids::glideTwinLevel, kVersion }, "Glide Twin Level",
                                                      NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.0f, percent()));
-    layout.add(std::make_unique<AudioParameterChoice>(ParameterID { ids::swayPosition, kVersion }, "Sway Position",
-                                                      juce::StringArray { "Pre", "Post" }, 0));
-    layout.add(std::make_unique<AudioParameterFloat>(ParameterID { ids::swayMix, kVersion }, "Sway Mix",
+    layout.add(std::make_unique<AudioParameterFloat>(ParameterID { ids::glideMix, kVersion }, "Glide Mix",
                                                      NormalisableRange<float>(0.0f, 1.0f, 0.01f), 1.0f, percent()));
+    layout.add(std::make_unique<AudioParameterChoice>(ParameterID { ids::glidePosition, kVersion }, "Glide Position",
+                                                      juce::StringArray { "PRE", "POST" }, 0));
     return layout;
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "LcdDisplay.h"
+#include "Widgets.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -12,9 +13,10 @@ class Glide90Processor;
 namespace glide90::ui
 {
 
-// The SPX90-style front panel. Works like the unit: MEMORY up/down picks a memory number (it blinks
-// until RECALL loads it), PARAMETER steps through the program's parameters, BALANCE through
-// BALANCE / OUT LVL, and the -1 / +1 keys (or the mouse wheel over the LCD) change the value shown.
+// The SPX90-style front panel strip. Works like the unit: MEMORY up/down picks a memory number
+// (it blinks until RECALL loads it), PARAMETER steps through the program's parameters, BALANCE
+// through BALANCE / OUT LVL, and the data keys (or the mouse wheel over the LCD) change the value
+// shown. Everything here is also on the knobs below.
 class SpxPanel : public juce::Component, private juce::Timer
 {
 public:
@@ -37,14 +39,12 @@ private:
     LcdDisplay lcd;
     SevenSegment memoryLed;
     LevelMeter meter;
-    juce::Slider inputKnob { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
-    juce::AudioProcessorValueTreeState::SliderAttachment inputAttachment;
 
-    juce::TextButton parameterKey { "PARAMETER" }, balanceKey { "BALANCE" }, decKey { "-1" }, incKey { "+1" };
-    juce::TextButton memDownKey { juce::String::fromUTF8("\xe2\x96\xbc") }, memUpKey { juce::String::fromUTF8("\xe2\x96\xb2") };
-    juce::TextButton storeKey { "STORE" }, recallKey { "RECALL" }, bypassKey { "BYPASS" };
-    juce::TextButton inSwitch { "-20 dBm" }, outSwitch { "-20 dBm" };
-    std::unique_ptr<juce::ParameterAttachment> bypassAttachment, inSwitchAttachment, outSwitchAttachment;
+    juce::TextButton parameterKey { "PARAM" }, balanceKey { "BALANCE" };
+    juce::TextButton incKey { juce::String::fromUTF8("\xe2\x96\xb2") }, decKey { juce::String::fromUTF8("\xe2\x96\xbc") };
+    juce::TextButton storeKey { "STORE" }, recallKey { "RECALL" };
+    juce::TextButton memUpKey { juce::String::fromUTF8("\xe2\x96\xb2") }, memDownKey { juce::String::fromUTF8("\xe2\x96\xbc") };
+    ToggleKey bypassKey;
 
     bool balanceMode = false;
     int pageIndex = 0;

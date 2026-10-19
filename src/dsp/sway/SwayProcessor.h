@@ -64,8 +64,10 @@ public:
     // Constant delay of the dry path; the wet path is centred on it.
     int latencySamples() const { return latency; }
 
-    // Bar position at the end of the last block, in cents (for display).
+    // Bar position (cents) and position in the shape's cycle (0 - 1) at the end of the last block,
+    // for display.
     float barCents() const { return lastCents; }
+    float phase() const { return bar.phase(); }
 
 private:
     BarGenerator bar;

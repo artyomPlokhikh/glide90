@@ -10,28 +10,64 @@ namespace glide90
 namespace
 {
 
-const juce::Identifier kAlgorithmProp { "algorithm" }, kLoadedProp { "loadedMemory" }, kPresetProp { "preset" };
+const juce::Identifier kAlgorithmProp { "algorithm" }, kLoadedProp { "loadedMemory" }, kPresetProp { "preset" },
+    kPresetNameProp { "presetName" }, kVersionProp { "version" };
+// 2: the Glide parameters. Older states had a different bar (Sway) and no glide_* values worth keeping.
+constexpr int kStateVersion = 2;
+const juce::Identifier kShapeTree { "SHAPE" }, kPointTree { "POINT" }, kXProp { "x" }, kYProp { "y" };
+const juce::Identifier kPresetFileTree { "GLIDE90_PRESET" };
+constexpr const char* kPresetExtension = ".glide90";
 
-// Host presets: a memory plus a Sway setting. The Sway values are starting points by ear, not
-// documented settings.
-struct Preset
+// Parameters a preset leaves alone: the gain staging of the user's own rig.
+const juce::StringArray& rigParameters()
+{
+    static const juce::StringArray ids { ids::input, ids::inputSwitch, ids::outputSwitch };
+    return ids;
+}
+
+// Factory presets: a memory plus Glide settings on top of the defaults. The Glide values are
+// starting points by ear, not documented settings.
+struct FactoryPreset
 {
     const char* name;
     int memory;
-    bool sway;
-    float depth, rate, shape, strum, twinDetune, twinLevel;
+    std::vector<std::pair<const char*, float>> values;
 };
 
-constexpr Preset kPresets[] {
-    { "Init: Reverse Gate + Sway", 17, true, 25.0f, 3.0f, 0.4f, 0.3f, 8.0f, 0.0f },
-    { "Loveless RG (roadie)", 31, true, 25.0f, 3.0f, 0.5f, 0.4f, 8.0f, 0.0f },
-    { "Loveless RG A", 32, true, 30.0f, 2.5f, 0.5f, 0.4f, 10.0f, 0.5f },
-    { "Loveless RG B", 33, true, 20.0f, 3.5f, 0.6f, 0.4f, 6.0f, 0.35f },
-    { "Reverse Gate (no Sway)", 17, false, 25.0f, 3.0f, 0.4f, 0.3f, 8.0f, 0.0f },
-    { "Gate Reverb", 16, false, 25.0f, 3.0f, 0.4f, 0.3f, 8.0f, 0.0f },
-    { "Early Ref 1", 5, false, 25.0f, 3.0f, 0.4f, 0.3f, 8.0f, 0.0f },
-    { "Early Ref 2", 6, false, 25.0f, 3.0f, 0.4f, 0.3f, 8.0f, 0.0f },
-};
+const std::vector<FactoryPreset>& factoryPresets()
+{
+    using sway::ShapePreset;
+    auto shape = [](ShapePreset p) { return (float) p; };
+    static const std::vector<FactoryPreset> presets {
+        { "Init: Reverse Gate + Glide", 17, {} },
+        { "Loveless RG (roadie)", 31,
+          { { ids::glidePeriod, 420.0f }, { ids::glideDepth, 35.0f }, { ids::glideShape, shape(ShapePreset::Shimmy) },
+            { ids::glideRandom, 0.45f }, { ids::glideSmooth, 0.3f } } },
+        { "Loveless RG A (synced dive)", 32,
+          { { ids::glideMode, 1.0f }, { ids::glideDivision, (float) kDefaultDivision }, { ids::glideDepth, 40.0f },
+            { ids::glideShape, shape(ShapePreset::Dive) }, { ids::glideRandom, 0.25f }, { ids::glideTwinDetune, 9.0f },
+            { ids::glideTwinLevel, 0.45f } } },
+        { "Loveless RG B (dive on each pick)", 33,
+          { { ids::glideMode, 2.0f }, { ids::glidePeriod, 650.0f }, { ids::glideDepth, 55.0f },
+            { ids::glideShape, shape(ShapePreset::Dive) }, { ids::glideRandom, 0.2f }, { ids::glideSmooth, 0.25f },
+            { ids::glideSensitivity, 0.55f } } },
+        { "Whammy on pitch bend", 17,
+          { { ids::glideMode, 3.0f }, { ids::glideManualSource, (float) ManualSource::PitchBend },
+            { ids::glideDepth, 200.0f }, { ids::glideDirection, 1.0f }, { ids::glideSmooth, 0.15f } } },
+        { "Glide pedal (expression CC11)", 31,
+          { { ids::glideMode, 3.0f }, { ids::glideManualSource, (float) ManualSource::Expression },
+            { ids::glideDepth, 100.0f }, { ids::glideSmooth, 0.3f } } },
+        { "Seasick twin strings", 17,
+          { { ids::glideMode, 1.0f }, { ids::glideDivision, 3.0f }, { ids::glideShape, shape(ShapePreset::Sine) },
+            { ids::glideDepth, 15.0f }, { ids::glideDirection, 1.0f }, { ids::glideRandom, 0.3f },
+            { ids::glideTwinDetune, 12.0f }, { ids::glideTwinLevel, 0.5f } } },
+        { "Reverse Gate, no glide", 17, { { ids::glideOn, 0.0f } } },
+        { "Gate Reverb", 16, { { ids::glideOn, 0.0f } } },
+        { "Early Ref 1", 5, { { ids::glideOn, 0.0f } } },
+        { "Early Ref 2", 6, { { ids::glideOn, 0.0f } } },
+    };
+    return presets;
+}
 
 int lpfIndex(float hz)
 {
@@ -59,6 +95,11 @@ void raiseTo(std::atomic<float>& a, float v)
     }
 }
 
+int choice(const std::atomic<float>* p)
+{
+    return juce::roundToInt(p->load());
+}
+
 } // namespace
 
 Glide90Processor::Glide90Processor()
@@ -68,12 +109,16 @@ Glide90Processor::Glide90Processor()
       apvts(*this, nullptr, "GLIDE90", createParameterLayout())
 {
     auto p = [this](const char* id) { return apvts.getRawParameterValue(id); };
-    raw = { p(ids::erType),       p(ids::erRoomSize),     p(ids::erLiveness),      p(ids::erDelay),
-            p(ids::erLpf),        p(ids::balance),        p(ids::outLevel),        p(ids::input),
-            p(ids::inputSwitch),  p(ids::outputSwitch),   p(ids::bypass),          p(ids::swayOn),
-            p(ids::swayDepth),    p(ids::swayRate),       p(ids::swayShape),       p(ids::swayStrum),
-            p(ids::swaySensitivity), p(ids::swayAsymmetry), p(ids::swayBar),       p(ids::swayBarSource),
-            p(ids::swayTwinDetune), p(ids::swayTwinLevel), p(ids::swayPosition),   p(ids::swayMix) };
+    raw = { p(ids::erType),           p(ids::erRoomSize),        p(ids::erLiveness),     p(ids::erDelay),
+            p(ids::erLpf),            p(ids::balance),           p(ids::outLevel),       p(ids::input),
+            p(ids::inputSwitch),      p(ids::outputSwitch),      p(ids::bypass),         p(ids::glideOn),
+            p(ids::glideMode),        p(ids::glidePeriod),       p(ids::glideDivision),  p(ids::glideDepth),
+            p(ids::glideDirection),   p(ids::glideRandom),       p(ids::glideSmooth),    p(ids::glideShape),
+            p(ids::glideTriggerSource), p(ids::glideSensitivity), p(ids::glideManualSource), p(ids::glideBar),
+            p(ids::glideTwinDetune),  p(ids::glideTwinLevel),    p(ids::glideMix),       p(ids::glidePosition) };
+    for (size_t i = 0; i < presetShapes.size(); ++i)
+        presetShapes[i] = sway::makeShape((sway::ShapePreset) i);
+    customShape = audioCustomShape = presetShapes[0];
     apvts.addParameterListener(ids::memory, this);
 }
 
@@ -92,11 +137,12 @@ bool Glide90Processor::isBusesLayoutSupported(const BusesLayout& layouts) const
 
 void Glide90Processor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
+    currentRate = sampleRate;
     maxBlock = juce::jmax(1, samplesPerBlock);
     spxEngine.prepare(sampleRate, maxBlock);
-    swayProcessor.prepare(sampleRate);
+    glideProcessor.prepare(sampleRate);
     mono.setSize(2, maxBlock); // channel 1 stands in for a missing right output
-    const int latency = spxEngine.latencySamples() + swayProcessor.latencySamples();
+    const int latency = spxEngine.latencySamples() + glideProcessor.latencySamples();
     setLatencySamples(latency);
     bypassDelay.setSize(2, latency + 1);
     bypassDelay.clear();
@@ -106,25 +152,34 @@ void Glide90Processor::prepareToPlay(double sampleRate, int samplesPerBlock)
 void Glide90Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
+    const int n = buffer.getNumSamples();
 
+    int noteAt = -1;
+    float noteVelocity = 1.0f;
     for (const auto meta : midi)
     {
         const auto m = meta.getMessage();
         if (m.isPitchWheel())
             pitchBend = (float) (m.getPitchWheelValue() - 8192) / 8192.0f;
-        else if (m.isController() && m.getControllerNumber() == 1)
+        else if (m.isControllerOfType(1))
             modWheel = (float) m.getControllerValue() / 127.0f;
+        else if (m.isControllerOfType(11))
+            expression = (float) m.getControllerValue() / 127.0f;
+        else if (m.isNoteOn() && noteAt < 0)
+        {
+            noteAt = meta.samplePosition;
+            noteVelocity = m.getFloatVelocity();
+        }
     }
 
     spx::SpxSettings s;
     s.program = currentAlgorithm.load();
     s.er = spx::romProgram(s.program).er; // keeps the program's density
-    s.er.type = (spx::ErType) juce::roundToInt(raw.erType->load());
+    s.er.type = (spx::ErType) choice(raw.erType);
     s.er.roomSize = (float) juce::roundToInt(raw.erRoomSize->load() * 10.0f) / 10.0f;
-    s.er.liveness = juce::roundToInt(raw.erLiveness->load());
+    s.er.liveness = choice(raw.erLiveness);
     s.er.delayMs = (float) juce::roundToInt(raw.erDelay->load() * 10.0f) / 10.0f;
-    s.er.lpfHz = spx::kLpfValuesHz[(size_t) juce::jlimit(0, (int) spx::kLpfValuesHz.size() - 1,
-                                                         juce::roundToInt(raw.erLpf->load()))];
+    s.er.lpfHz = spx::kLpfValuesHz[(size_t) juce::jlimit(0, (int) spx::kLpfValuesHz.size() - 1, choice(raw.erLpf))];
     s.balance = raw.balance->load();
     s.outLevel = raw.outLevel->load();
     s.inputKnob = raw.input->load();
@@ -132,35 +187,81 @@ void Glide90Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
     s.outputMinus20 = raw.outputSwitch->load() > 0.5f;
     s.bypass = raw.bypass->load() > 0.5f;
 
-    sway::SwaySettings w;
-    w.enabled = raw.swayOn->load() > 0.5f;
-    w.depthCents = raw.swayDepth->load();
-    w.rateHz = raw.swayRate->load();
-    w.shape = raw.swayShape->load();
-    w.strumSync = raw.swayStrum->load();
-    w.sensitivity = raw.swaySensitivity->load();
-    w.asymmetry = raw.swayAsymmetry->load();
-    switch ((BarSource) juce::roundToInt(raw.swayBarSource->load()))
-    {
-        case BarSource::Knob: w.barCents = raw.swayBar->load(); break;
-        case BarSource::PitchBend: w.barCents = 200.0f * pitchBend; break;
-        case BarSource::ModWheel: w.barCents = -200.0f * modWheel; break;
-    }
-    w.twinDetuneCents = raw.swayTwinDetune->load();
-    w.twinLevel = raw.swayTwinLevel->load();
-    w.mix = raw.swayMix->load();
+    // Host tempo and position for SYNC.
+    double bpm = 120.0, hostBeats = -1.0;
+    if (auto* head = getPlayHead())
+        if (const auto pos = head->getPosition())
+        {
+            if (const auto b = pos->getBpm())
+                bpm = *b;
+            if (const auto ppq = pos->getPpqPosition(); ppq && pos->getIsPlaying())
+                hostBeats = *ppq;
+        }
+    lastBpm.store(bpm);
 
-    const int n = buffer.getNumSamples();
+    sway::SwaySettings w;
+    w.enabled = raw.glideOn->load() > 0.5f;
+    w.mode = (sway::GlideMode) choice(raw.glideMode);
+    w.cycleSeconds = raw.glidePeriod->load() / 1000.0;
+    w.syncBeats = kDivisions[juce::jlimit(0, (int) std::size(kDivisions) - 1, choice(raw.glideDivision))].beats;
+    w.bpm = bpm;
+    w.hostBeats = hostBeats;
+    w.depthCents = raw.glideDepth->load();
+    w.direction = (sway::BendDirection) choice(raw.glideDirection);
+    w.random = raw.glideRandom->load();
+    w.smooth = raw.glideSmooth->load();
+    w.triggerFromPick = (TriggerSource) choice(raw.glideTriggerSource) == TriggerSource::Pick;
+    w.sensitivity = raw.glideSensitivity->load();
+    w.midiTriggerVelocity = noteVelocity;
+    w.twinDetuneCents = raw.glideTwinDetune->load();
+    w.twinLevel = raw.glideTwinLevel->load();
+    w.mix = raw.glideMix->load();
+
+    // MANUAL: where the bar is. Pitch bend is bipolar; the others push from rest, or sweep across
+    // the open pitch when the direction is BOTH.
+    if ((ManualSource) choice(raw.glideManualSource) == ManualSource::PitchBend)
+        w.manual = -pitchBend; // wheel down pushes the bar
+    else
+    {
+        float v = raw.glideBar->load();
+        if ((ManualSource) choice(raw.glideManualSource) == ManualSource::ModWheel)
+            v = modWheel;
+        else if ((ManualSource) choice(raw.glideManualSource) == ManualSource::Expression)
+            v = expression;
+        w.manual = w.direction == sway::BendDirection::Both ? 2.0f * v - 1.0f : v;
+    }
+
+    const int shapeIndex = choice(raw.glideShape);
+    if (shapeIndex >= (int) presetShapes.size())
+    {
+        const juce::SpinLock::ScopedTryLockType lock(shapeLock);
+        // When the editor holds the lock, keep last block's copy.
+        if (lock.isLocked())
+            audioCustomShape = customShape;
+        w.shape = &audioCustomShape;
+    }
+    else
+        w.shape = &presetShapes[(size_t) juce::jmax(0, shapeIndex)];
+
+    const double beatsPerSample = bpm / 60.0 / currentRate;
     for (int start = 0; start < n; start += maxBlock)
-        processChunk(buffer, start, juce::jmin(maxBlock, n - start), s, w);
+    {
+        const int num = juce::jmin(maxBlock, n - start);
+        sway::SwaySettings chunk = w;
+        if (hostBeats >= 0.0)
+            chunk.hostBeats = hostBeats + start * beatsPerSample;
+        processChunk(buffer, start, num, s, chunk, noteAt >= start && noteAt < start + num ? noteAt - start : -1);
+    }
     for (int ch = 2; ch < buffer.getNumChannels(); ++ch)
         buffer.clear(ch, 0, n);
-    lastBarCents.store(swayProcessor.barCents());
+    lastBarCents.store(glideProcessor.barCents());
+    lastGlidePhase.store(glideProcessor.phase());
 }
 
 void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start, int num, const spx::SpxSettings& s,
-                                    const sway::SwaySettings& w)
+                                    sway::SwaySettings w, int midiNoteAt)
 {
+    w.midiTriggerAt = midiNoteAt;
     const int numIn = juce::jmin(getTotalNumInputChannels(), buffer.getNumChannels());
     float* m = mono.getWritePointer(0);
     if (numIn >= 2)
@@ -175,9 +276,9 @@ void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start,
     else
         juce::FloatVectorOperations::clear(m, num);
 
-    const bool post = juce::roundToInt(raw.swayPosition->load()) == (int) SwayPosition::Post;
+    const bool post = (GlidePosition) choice(raw.glidePosition) == GlidePosition::Post;
     if (!post)
-        swayProcessor.process(&m, 1, num, w);
+        glideProcessor.process(&m, 1, num, w);
 
     const float gain = spx::SpxEngine::inputGain(s.inputKnob, s.inputMinus20);
     raiseTo(inputPeak, juce::FloatVectorOperations::findMaximum(m, num) * gain);
@@ -190,7 +291,7 @@ void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start,
     if (post)
     {
         float* channels[] = { l, r };
-        swayProcessor.process(channels, 2, num, w);
+        glideProcessor.process(channels, 2, num, w);
     }
 }
 
@@ -225,36 +326,180 @@ juce::AudioProcessorEditor* Glide90Processor::createEditor()
     return new Glide90Editor(*this);
 }
 
+// --- Glide shape ---
+
+sway::Shape Glide90Processor::currentShape() const
+{
+    const int index = choice(raw.glideShape);
+    if (index >= 0 && index < (int) presetShapes.size())
+        return presetShapes[(size_t) index];
+    const juce::SpinLock::ScopedLockType lock(shapeLock);
+    return customShape;
+}
+
+void Glide90Processor::setCustomShape(const sway::Shape& shape)
+{
+    {
+        const juce::SpinLock::ScopedLockType lock(shapeLock);
+        customShape = shape;
+    }
+    if (choice(raw.glideShape) != (int) presetShapes.size())
+        setParameter(ids::glideShape, (float) presetShapes.size());
+}
+
+juce::ValueTree Glide90Processor::shapeToTree() const
+{
+    juce::ValueTree tree(kShapeTree);
+    const juce::SpinLock::ScopedLockType lock(shapeLock);
+    for (int i = 0; i < customShape.size(); ++i)
+    {
+        juce::ValueTree p(kPointTree);
+        p.setProperty(kXProp, customShape.point(i).x, nullptr).setProperty(kYProp, customShape.point(i).y, nullptr);
+        tree.appendChild(p, nullptr);
+    }
+    return tree;
+}
+
+void Glide90Processor::shapeFromTree(const juce::ValueTree& tree)
+{
+    if (!tree.isValid())
+        return;
+    std::vector<sway::ShapePoint> points;
+    for (const auto& p : tree)
+        if (p.hasType(kPointTree) && (int) points.size() < sway::Shape::kMaxPoints)
+            points.push_back({ (float) p.getProperty(kXProp, 0.0f), (float) p.getProperty(kYProp, 0.0f) });
+    if (points.size() < 2)
+        return;
+    sway::Shape shape;
+    shape.setPoints(points.data(), (int) points.size());
+    const juce::SpinLock::ScopedLockType lock(shapeLock);
+    customShape = shape;
+}
+
+// --- Presets ---
+
 int Glide90Processor::getNumPrograms()
 {
-    return (int) std::size(kPresets);
+    return (int) factoryPresets().size();
 }
 
 const juce::String Glide90Processor::getProgramName(int index)
 {
-    return juce::isPositiveAndBelow(index, getNumPrograms()) ? kPresets[index].name : "";
+    return juce::isPositiveAndBelow(index, getNumPrograms()) ? factoryPresets()[(size_t) index].name : "";
 }
 
 void Glide90Processor::setCurrentProgram(int index)
 {
+    loadFactoryPreset(index);
+}
+
+juce::StringArray Glide90Processor::factoryPresetNames() const
+{
+    juce::StringArray names;
+    for (const auto& p : factoryPresets())
+        names.add(p.name);
+    return names;
+}
+
+void Glide90Processor::resetForPreset()
+{
+    // Everything but the rig's gain staging back to its default.
+    for (auto* param : getParameters())
+        if (auto* p = dynamic_cast<juce::RangedAudioParameter*>(param))
+            if (!rigParameters().contains(p->getParameterID()) && p->getParameterID() != ids::memory)
+            {
+                p->beginChangeGesture();
+                p->setValueNotifyingHost(p->getDefaultValue());
+                p->endChangeGesture();
+            }
+}
+
+void Glide90Processor::loadFactoryPreset(int index)
+{
     if (!juce::isPositiveAndBelow(index, getNumPrograms()))
         return;
-    currentPreset = index;
-    const auto& p = kPresets[index];
+    const auto& p = factoryPresets()[(size_t) index];
+    currentFactoryPreset = index;
+    resetForPreset();
     recallMemory(p.memory);
-    setParameter(ids::swayOn, p.sway ? 1.0f : 0.0f);
-    setParameter(ids::swayDepth, p.depth);
-    setParameter(ids::swayRate, p.rate);
-    setParameter(ids::swayShape, p.shape);
-    setParameter(ids::swayStrum, p.strum);
-    setParameter(ids::swaySensitivity, 0.5f);
-    setParameter(ids::swayAsymmetry, 0.0f);
-    setParameter(ids::swayBar, 0.0f);
-    setParameter(ids::swayTwinDetune, p.twinDetune);
-    setParameter(ids::swayTwinLevel, p.twinLevel);
-    setParameter(ids::swayPosition, (float) SwayPosition::Pre);
-    setParameter(ids::swayMix, 1.0f);
+    for (const auto& [id, value] : p.values)
+        setParameter(id, value);
+    presetName = p.name;
 }
+
+juce::File Glide90Processor::userPresetDirectory()
+{
+    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+        .getChildFile("Glide90")
+        .getChildFile("Presets");
+}
+
+juce::Array<juce::File> Glide90Processor::userPresetFiles() const
+{
+    auto files = userPresetDirectory().findChildFiles(juce::File::findFiles, false, juce::String("*") + kPresetExtension);
+    files.sort();
+    return files;
+}
+
+bool Glide90Processor::saveUserPreset(const juce::String& name)
+{
+    const auto clean = juce::File::createLegalFileName(name.trim());
+    if (clean.isEmpty())
+        return false;
+    juce::ValueTree preset(kPresetFileTree);
+    auto params = apvts.copyState();
+    for (int i = params.getNumChildren(); --i >= 0;)
+        if (rigParameters().contains(params.getChild(i).getProperty("id").toString()))
+            params.removeChild(i, nullptr);
+    preset.appendChild(params, nullptr);
+    preset.appendChild(shapeToTree(), nullptr);
+    preset.setProperty(kAlgorithmProp, currentAlgorithm.load(), nullptr);
+    preset.setProperty(kLoadedProp, loaded.load(), nullptr);
+
+    const auto dir = userPresetDirectory();
+    if (!dir.createDirectory())
+        return false;
+    auto xml = preset.createXml();
+    if (xml == nullptr || !xml->writeTo(dir.getChildFile(clean + kPresetExtension)))
+        return false;
+    presetName = clean;
+    return true;
+}
+
+bool Glide90Processor::loadUserPreset(const juce::File& file)
+{
+    auto xml = juce::XmlDocument::parse(file);
+    if (xml == nullptr)
+        return false;
+    const auto preset = juce::ValueTree::fromXml(*xml);
+    if (!preset.hasType(kPresetFileTree))
+        return false;
+
+    shapeFromTree(preset.getChildWithName(kShapeTree));
+    currentAlgorithm.store(juce::jlimit(1, 30, (int) preset.getProperty(kAlgorithmProp, 17)));
+    // Set before the memory number arrives, so it does not recall that memory over the preset.
+    loaded.store(juce::jlimit(1, MemoryBank::kCount, (int) preset.getProperty(kLoadedProp, 17)));
+    setParametersExactly(preset.getChildWithName(apvts.state.getType()), false);
+    presetName = file.getFileNameWithoutExtension();
+    return true;
+}
+
+void Glide90Processor::setParametersExactly(const juce::ValueTree& paramsTree, bool missingToDefault)
+{
+    for (auto* param : getParameters())
+        if (auto* p = dynamic_cast<juce::RangedAudioParameter*>(param))
+        {
+            const auto child = paramsTree.getChildWithProperty("id", p->getParameterID());
+            if (!child.isValid() && !missingToDefault)
+                continue;
+            p->beginChangeGesture();
+            p->setValueNotifyingHost(child.isValid() ? p->convertTo0to1((float) child.getProperty("value"))
+                                                     : p->getDefaultValue());
+            p->endChangeGesture();
+        }
+}
+
+// --- SPX90 memories ---
 
 void Glide90Processor::setParameter(const char* id, float plainValue)
 {
@@ -306,12 +551,11 @@ Memory Glide90Processor::editBuffer() const
     m.used = true;
     m.algorithm = currentAlgorithm.load();
     m.er = spx::romProgram(m.algorithm).er;
-    m.er.type = (spx::ErType) juce::roundToInt(raw.erType->load());
+    m.er.type = (spx::ErType) choice(raw.erType);
     m.er.roomSize = raw.erRoomSize->load();
-    m.er.liveness = juce::roundToInt(raw.erLiveness->load());
+    m.er.liveness = choice(raw.erLiveness);
     m.er.delayMs = raw.erDelay->load();
-    m.er.lpfHz = spx::kLpfValuesHz[(size_t) juce::jlimit(0, (int) spx::kLpfValuesHz.size() - 1,
-                                                         juce::roundToInt(raw.erLpf->load()))];
+    m.er.lpfHz = spx::kLpfValuesHz[(size_t) juce::jlimit(0, (int) spx::kLpfValuesHz.size() - 1, choice(raw.erLpf))];
     m.balance = raw.balance->load();
     m.outLevel = raw.outLevel->load();
     return m;
@@ -323,19 +567,26 @@ bool Glide90Processor::storeMemory(int number, const juce::String& title)
     m.title = title;
     if (!bank.store(number, m))
         return false;
+    ++bankRevision;
     loaded.store(number);
     setParameter(ids::memory, (float) number);
     return true;
 }
 
+// --- State ---
+
 void Glide90Processor::getStateInformation(juce::MemoryBlock& destData)
 {
     auto st = apvts.copyState();
-    st.removeChild(st.getChildWithName(MemoryBank::treeType()), nullptr);
+    for (const auto& type : { MemoryBank::treeType(), kShapeTree })
+        st.removeChild(st.getChildWithName(type), nullptr);
     st.appendChild(bank.toTree(), nullptr);
+    st.appendChild(shapeToTree(), nullptr);
     st.setProperty(kAlgorithmProp, currentAlgorithm.load(), nullptr);
     st.setProperty(kLoadedProp, loaded.load(), nullptr);
-    st.setProperty(kPresetProp, currentPreset, nullptr);
+    st.setProperty(kPresetProp, currentFactoryPreset, nullptr);
+    st.setProperty(kPresetNameProp, presetName, nullptr);
+    st.setProperty(kVersionProp, kStateVersion, nullptr);
     if (auto xml = st.createXml())
         copyXmlToBinary(*xml, destData);
 }
@@ -350,20 +601,27 @@ void Glide90Processor::setStateInformation(const void* data, int sizeInBytes)
         return;
 
     bank.fromTree(st.getChildWithName(MemoryBank::treeType()));
-    st.removeChild(st.getChildWithName(MemoryBank::treeType()), nullptr);
+    ++bankRevision;
+    shapeFromTree(st.getChildWithName(kShapeTree));
+    for (const auto& type : { MemoryBank::treeType(), kShapeTree })
+        st.removeChild(st.getChildWithName(type), nullptr);
     currentAlgorithm.store(juce::jlimit(1, 30, (int) st.getProperty(kAlgorithmProp, 17)));
-    currentPreset = juce::jlimit(0, getNumPrograms() - 1, (int) st.getProperty(kPresetProp, 0));
+    currentFactoryPreset = juce::jlimit(0, getNumPrograms() - 1, (int) st.getProperty(kPresetProp, 0));
+    presetName = st.getProperty(kPresetNameProp, "Init").toString();
     // Set before the parameters arrive, so restoring the memory number does not recall it over the
     // restored (possibly edited) values.
     loaded.store(juce::jlimit(1, MemoryBank::kCount, (int) st.getProperty(kLoadedProp, 17)));
+    if ((int) st.getProperty(kVersionProp, 1) < kStateVersion)
+        for (int i = st.getNumChildren(); --i >= 0;)
+            if (st.getChild(i).getProperty("id").toString().startsWith("glide_"))
+                st.removeChild(i, nullptr);
+    const auto saved = st.createCopy(); // replaceState shares `st` and adds the missing parameters to it
     apvts.replaceState(st);
 
-    // replaceState skips parameters whose stored value already maps to the current one, so a bool
-    // left at a raw 0.57 stays at 0.57 instead of the stored 1. Set every value exactly.
-    for (auto* param : getParameters())
-        if (auto* p = dynamic_cast<juce::RangedAudioParameter*>(param))
-            if (const auto child = st.getChildWithProperty("id", p->getParameterID()); child.isValid())
-                p->setValueNotifyingHost(p->convertTo0to1((float) child.getProperty("value")));
+    // replaceState skips parameters whose stored value already maps to the current one (a bool left
+    // at a raw 0.57 stays there instead of the stored 1), and leaves parameters missing from older
+    // states at whatever they were. Set every value exactly, missing ones to their default.
+    setParametersExactly(saved, true);
 }
 
 } // namespace glide90

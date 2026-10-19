@@ -7,18 +7,21 @@ namespace glide90::ui
 
 namespace colours
 {
-inline const juce::Colour panelTop { 0xff34363a }, panelBottom { 0xff222326 };
-inline const juce::Colour swayTop { 0xff2a2f36 }, swayBottom { 0xff1b1f24 };
-inline const juce::Colour legend { 0xffd9d9cf }, legendDim { 0xff8d8f8a };
-inline const juce::Colour accent { 0xffe8a33a };
-inline const juce::Colour keyTop { 0xff55585d }, keyBottom { 0xff3a3c40 };
+inline const juce::Colour header { 0xff121314 };
+inline const juce::Colour stripTop { 0xff1d1d1f }, stripBottom { 0xff0e0e0f };
+inline const juce::Colour spxTop { 0xff223042 }, spxBottom { 0xff161f2b };
+inline const juce::Colour glideTop { 0xff17332f }, glideBottom { 0xff0e221f };
+inline const juce::Colour legend { 0xffefe6d2 }, legendDim { 0xff9a9888 };
+inline const juce::Colour spxAccent { 0xfff2a23a }, glideAccent { 0xffff8a3d };
+inline const juce::Colour keyTop { 0xff3a3b3e }, keyBottom { 0xff252628 };
 inline const juce::Colour ledGreen { 0xff46f05a }, ledYellow { 0xffffcf3a }, ledRed { 0xffff3b2a };
 inline const juce::Colour ledOff { 0xff2a2b2c };
+inline const juce::Colour screen { 0xff07090a };
 } // namespace colours
 
 juce::Font panelFont(float height, bool bold = false);
 
-// Rubber keys, black knobs with a white pointer, LED toggles.
+// Cream knobs with a coloured value arc, rubber keys, LED toggles.
 class PanelLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
@@ -30,12 +33,15 @@ public:
                               bool down) override;
     void drawButtonText(juce::Graphics&, juce::TextButton&, bool highlighted, bool down) override;
     void drawToggleButton(juce::Graphics&, juce::ToggleButton&, bool highlighted, bool down) override;
-    juce::Font getComboBoxFont(juce::ComboBox&) override { return panelFont(13.0f); }
+    juce::Font getComboBoxFont(juce::ComboBox&) override { return panelFont(13.0f, true); }
     juce::Font getPopupMenuFont() override { return panelFont(14.0f); }
-    juce::Font getLabelFont(juce::Label&) override { return panelFont(12.0f); }
+    juce::Font getLabelFont(juce::Label&) override { return panelFont(12.5f, true); }
+    juce::Label* createSliderTextBox(juce::Slider&) override;
 
-    // Slider property: draw an arc from the start of the range to the value.
-    static constexpr const char* kArc = "arc";
+    // Slider properties: the arc colour ("accent", a Colour as int64) and whether the arc starts
+    // from the centre ("bipolar").
+    static constexpr const char* kAccent = "accent";
+    static constexpr const char* kBipolar = "bipolar";
 };
 
 // A round LED.

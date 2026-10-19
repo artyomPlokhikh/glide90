@@ -8,11 +8,15 @@ namespace sway
 namespace
 {
 
-constexpr double kTwoPi = 6.283185307179586;
-
 float coeffForSeconds(double seconds, double rate)
 {
     return (float) (1.0 - std::exp(-1.0 / (std::max(seconds, 1e-4) * rate)));
+}
+
+const Shape& defaultShape()
+{
+    static const Shape sine;
+    return sine;
 }
 
 } // namespace
@@ -25,85 +29,127 @@ void BarGenerator::prepare(double sampleRate)
 
 void BarGenerator::reset()
 {
-    phase = 0.0;
-    jitter = jitterTarget = 0.0f;
-    jitterCountdown = 0;
-    randTarget = randA = randB = 0.0f;
-    randCountdown = 0;
+    cyclePhase = 0.0;
+    depthScale = rateScale = velocityScale = 1.0f;
+    drift = driftTarget = 0.0f;
+    driftCountdown = 0;
     envFast = envSlow = 0.0f;
     refractory = 0;
-    push = 0.0f;
-    pushRising = false;
     smoothed = 0.0f;
 }
 
 float BarGenerator::uniform()
 {
     seed = seed * 1664525u + 1013904223u;
-    return (float) (seed >> 8) / (float) (1u << 24) * 2.0f - 1.0f;
+    return (float) (seed >> 8) / (float) (1u << 24); // 0 - 1
 }
 
-float BarGenerator::next(float input, const SwaySettings& s)
+void BarGenerator::startCycle(bool freeTiming, float random)
 {
-    const double hz = std::clamp((double) s.rateHz, 0.05, 20.0);
+    // A hand never repeats itself exactly: each cycle goes a little less deep and a little faster or
+    // slower. Synced cycles keep their timing so they stay on the beat.
+    depthScale = 1.0f - 0.6f * random * uniform();
+    rateScale = freeTiming ? 1.0f + 0.35f * random * (2.0f * uniform() - 1.0f) : 1.0f;
+}
 
-    // A hand never keeps a steady tempo: the LFO rate wanders by up to +-20 %.
-    if (--jitterCountdown <= 0)
-    {
-        jitterTarget = 0.2f * uniform() * s.shape;
-        jitterCountdown = (int) (rate * 0.7 / hz);
-    }
-    jitter += coeffForSeconds(0.5 / hz, rate) * (jitterTarget - jitter);
-    phase += hz * (1.0 + jitter) / rate;
-    phase -= std::floor(phase);
-    const float lfo = (float) std::sin(kTwoPi * phase);
-
-    // Irregular movement: random targets at roughly the wobble rate, smoothed twice.
-    if (--randCountdown <= 0)
-    {
-        randTarget = uniform();
-        randCountdown = (int) (rate / hz * (0.6 + 0.4 * (uniform() + 1.0f)));
-    }
-    const float rc = coeffForSeconds(0.25 / hz, rate);
-    randA += rc * (randTarget - randA);
-    randB += rc * (randA - randB);
-    const float random = std::clamp(randB * 1.6f, -1.0f, 1.0f);
-
-    // Picking attacks: a fast envelope jumping well above a slow one. Each attack pushes the bar.
+bool BarGenerator::detectAttack(float input, float sensitivity)
+{
+    // A fast envelope jumping well above a slow one.
     const float level = std::abs(input);
     envFast += (level > envFast ? coeffForSeconds(0.001, rate) : coeffForSeconds(0.03, rate)) * (level - envFast);
     envSlow += (level > envSlow ? coeffForSeconds(0.05, rate) : coeffForSeconds(0.3, rate)) * (level - envSlow);
-    const float ratio = 1.3f + 3.0f * (1.0f - s.sensitivity);
     if (refractory > 0)
+    {
         --refractory;
-    else if (envFast > envSlow * ratio && envFast > 0.003f)
-    {
-        pushRising = true;
-        refractory = (int) (rate * 0.08);
+        return false;
     }
-    if (pushRising)
+    const float ratio = 1.3f + 3.0f * (1.0f - std::clamp(sensitivity, 0.0f, 1.0f));
+    if (envFast > envSlow * ratio && envFast > 0.003f)
     {
-        push += coeffForSeconds(0.04, rate) * (1.05f - push);
-        if (push >= 1.0f)
-        {
-            push = 1.0f;
-            pushRising = false;
-        }
+        refractory = (int) (rate * 0.08);
+        return true;
+    }
+    return false;
+}
+
+void BarGenerator::beginBlock(const SwaySettings& s)
+{
+    if (s.mode == GlideMode::Sync && s.hostBeats >= 0.0)
+    {
+        const double beats = std::max(s.syncBeats, 1e-3);
+        const double locked = s.hostBeats / beats - std::floor(s.hostBeats / beats);
+        if (locked < cyclePhase - 0.5)
+            startCycle(false, s.random); // the host wrapped into a new cycle
+        cyclePhase = locked;
+    }
+}
+
+float BarGenerator::next(float input, int index, const SwaySettings& s)
+{
+    const float random = std::clamp(s.random, 0.0f, 1.0f);
+    const float depth = std::clamp(s.depthCents, 0.0f, 300.0f);
+    float y; // bar push, 0 - 1 (or -1 - 1 for Manual)
+
+    if (s.mode == GlideMode::Manual)
+    {
+        y = std::clamp(s.manual, -1.0f, 1.0f);
     }
     else
-        push += coeffForSeconds(0.6 / hz, rate) * (0.0f - push);
+    {
+        bool restart = false;
+        if (s.mode == GlideMode::Trigger)
+        {
+            const bool attack = detectAttack(input, s.sensitivity);
+            if (s.triggerFromPick ? attack : index == s.midiTriggerAt)
+            {
+                restart = true;
+                velocityScale = s.triggerFromPick ? 1.0f : std::clamp(s.midiTriggerVelocity, 0.0f, 1.0f);
+            }
+        }
+        else
+            velocityScale = 1.0f;
 
-    // Mix the movement sources into one bar excursion x in [-1, 1], +1 = pushed fully.
-    const float osc = (1.0f - s.shape) * lfo + s.shape * random;
-    const float x = (1.0f - s.strumSync) * osc + s.strumSync * (2.0f * push - 1.0f);
+        const double cycles = s.mode == GlideMode::Sync ? std::max(s.syncBeats, 1e-3) * 60.0 / std::max(s.bpm, 1.0)
+                                                        : std::max(s.cycleSeconds, 1e-3);
+        if (restart)
+        {
+            cyclePhase = 0.0;
+            startCycle(true, random);
+        }
+        else
+        {
+            cyclePhase += rateScale / (cycles * rate);
+            if (cyclePhase >= 1.0)
+            {
+                cyclePhase -= std::floor(cyclePhase);
+                startCycle(s.mode != GlideMode::Sync, random);
+            }
+        }
 
-    // A Jazzmaster bar mostly lowers the pitch: map [-1, 1] to [0, -1] ("down only") or keep it
-    // symmetric, and blend between the two.
-    const float down = -(x + 1.0f) * 0.5f;
-    const float y = down + s.asymmetry * (-x - down);
+        // Slow random drift of the hand on top of the shape.
+        if (--driftCountdown <= 0)
+        {
+            driftTarget = 2.0f * uniform() - 1.0f;
+            driftCountdown = (int) (rate * cycles * (0.5 + uniform()));
+        }
+        drift += coeffForSeconds(0.5 * cycles, rate) * (driftTarget - drift);
 
-    const float target = s.depthCents * y + s.barCents;
-    smoothed += coeffForSeconds(0.004, rate) * (target - smoothed);
+        const Shape& shape = s.shape != nullptr ? *s.shape : defaultShape();
+        y = shape.at((float) cyclePhase) * depthScale * velocityScale + 0.2f * random * drift;
+        y = std::clamp(y, 0.0f, 1.0f);
+        if (s.direction == BendDirection::Both)
+            y = 2.0f * y - 1.0f; // centred on the open pitch
+    }
+
+    float cents;
+    switch (s.direction)
+    {
+        case BendDirection::Down: cents = -depth * std::max(y, 0.0f); break;
+        case BendDirection::Up: cents = depth * std::max(y, 0.0f); break;
+        case BendDirection::Both: default: cents = -depth * y; break;
+    }
+
+    smoothed += coeffForSeconds(0.002 + 0.15 * std::clamp(s.smooth, 0.0f, 1.0f), rate) * (cents - smoothed);
     return smoothed;
 }
 

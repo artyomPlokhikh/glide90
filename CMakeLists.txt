@@ -20,6 +20,7 @@ add_library(glide90_dsp STATIC
     src/dsp/SincResampler.cpp
     src/dsp/ErEngine.cpp
     src/dsp/SpxEngine.cpp
+    src/dsp/sway/Shape.cpp
     src/dsp/sway/BarGenerator.cpp
     src/dsp/sway/SwayProcessor.cpp)
 target_include_directories(glide90_dsp PUBLIC src/dsp src/dsp/sway)

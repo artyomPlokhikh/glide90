@@ -3,12 +3,12 @@
 namespace glide90
 {
 
-Glide90Editor::Glide90Editor(Glide90Processor& p) : AudioProcessorEditor(p), spx(p), sway(p)
+Glide90Editor::Glide90Editor(Glide90Processor& p) : AudioProcessorEditor(p), header(p), strip(p), spx(p), glide(p)
 {
     setLookAndFeel(&lookAndFeel);
-    addAndMakeVisible(spx);
-    addAndMakeVisible(sway);
-    setSize(kWidth, kSpxHeight + kSwayHeight);
+    for (auto* c : std::initializer_list<juce::Component*> { &header, &strip, &spx, &glide })
+        addAndMakeVisible(c);
+    setSize(kWidth, kHeaderHeight + kStripHeight + kSpxHeight + kGlideHeight);
 }
 
 Glide90Editor::~Glide90Editor()
@@ -19,8 +19,10 @@ Glide90Editor::~Glide90Editor()
 void Glide90Editor::resized()
 {
     auto r = getLocalBounds();
+    header.setBounds(r.removeFromTop(kHeaderHeight));
+    strip.setBounds(r.removeFromTop(kStripHeight));
     spx.setBounds(r.removeFromTop(kSpxHeight));
-    sway.setBounds(r);
+    glide.setBounds(r);
 }
 
 } // namespace glide90
