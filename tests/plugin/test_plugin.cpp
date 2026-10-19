@@ -411,9 +411,16 @@ int main(int argc, char** argv)
     // On a bare X server (CI's Xvfb, no window manager) the window manager's atoms do not exist, and
     // JUCE fails with BadAtom when it sets them on a new window. Create them before JUCE looks them
     // up, on a connection kept open: the server forgets its atoms when its last client leaves.
+    // These are the ones JUCE looks up only if they exist (juce_XWindowSystem_linux.cpp).
     if (auto* x11 = juce::X11Symbols::getInstance(); x11->loadAllSymbols())
         if (auto* display = x11->xOpenDisplay(nullptr)) // closed when the tests exit
-            for (const char* name : { "WM_PROTOCOLS", "WM_TAKE_FOCUS", "WM_DELETE_WINDOW", "_NET_WM_PING", "WM_CHANGE_STATE", "WM_STATE" })
+            for (const char* name :
+                 { "WM_PROTOCOLS", "WM_TAKE_FOCUS", "WM_DELETE_WINDOW", "WM_CHANGE_STATE", "WM_STATE", "_NET_WM_PING",
+                   "_NET_WM_STATE", "_NET_WM_STATE_HIDDEN", "_NET_WM_STATE_MAXIMIZED_HORZ", "_NET_WM_STATE_MAXIMIZED_VERT",
+                   "_NET_WM_STATE_FULLSCREEN", "_NET_WM_STATE_ABOVE", "_NET_WM_STATE_SKIP_TASKBAR", "_NET_WM_WINDOW_TYPE",
+                   "_NET_WM_WINDOW_TYPE_NORMAL", "_NET_WM_WINDOW_TYPE_COMBO", "_NET_WM_ALLOWED_ACTIONS",
+                   "_NET_WM_ACTION_CLOSE", "_NET_WM_ACTION_MINIMIZE", "_NET_WM_ACTION_RESIZE", "_NET_WM_ACTION_FULLSCREEN",
+                   "_NET_WM_MOVERESIZE", "_NET_FRAME_EXTENTS", "_NET_WORKAREA", "_MOTIF_WM_HINTS" })
                 x11->xInternAtom(display, name, False);
    #endif
     juce::ScopedJuceInitialiser_GUI juce;
