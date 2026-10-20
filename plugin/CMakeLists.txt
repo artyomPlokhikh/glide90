@@ -73,8 +73,14 @@ target_link_libraries(Glide90
         juce::juce_audio_utils
     PUBLIC
         juce::juce_recommended_config_flags
-        juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
+if(GLIDE90_LTO)
+    target_link_libraries(Glide90 PUBLIC juce::juce_recommended_lto_flags)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        # GCC's link-time step on all cores, not one.
+        target_link_options(Glide90 PUBLIC $<$<CONFIG:Release>:-flto=auto>)
+    endif()
+endif()
 
 if(GLIDE90_BUILD_TESTS)
     # Processor-level tests (memories, state, latency): the plugin's sources in a console app, since

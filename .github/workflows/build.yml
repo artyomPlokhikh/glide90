@@ -1,16 +1,68 @@
 name: build
 
+# main, pull requests and release tags (vX.Y.Z) build on all three systems. A tag also publishes a
+# GitHub release with one zip per system. Run by hand (workflow_dispatch) on any branch to try the
+# workflow itself; with "draft release" on, it also makes a draft release to check, then delete.
 on:
   push:
+    branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      draft_release:
+        description: Build as a release and publish it as a draft (to try the release step)
+        type: boolean
+        default: false
+
+# A newer push to the same branch cancels the run still going; tags always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+# Read-only by default; only the release job may write (to publish the release). Third-party actions
+# are pinned to commits.
+permissions:
+  contents: read
 
 env:
   PLUGINVAL_VERSION: v1.0.4
 
 jobs:
+  # main and a tag pushed together (git push --atomic origin main vX.Y.Z) would build the same
+  # commit twice: the tag's run builds it, main's run stops here.
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      release: ${{ steps.plan.outputs.release }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        shell: bash
+        run: |
+          build=true release=false
+          version=$(sed -n 's/^set(GLIDE90_VERSION "\([^"]*\)".*/\1/p' CMakeLists.txt)
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            release=true
+            version=${GITHUB_REF_NAME#v}
+            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-.+)?$ ]]; then
+              echo "::error::Tag $GITHUB_REF_NAME is not vX.Y.Z"; exit 1
+            fi
+          elif [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "${{ inputs.draft_release }}" == true ]]; then
+            release=true
+          elif [[ "$GITHUB_EVENT_NAME" == push ]] && git ls-remote --tags origin | grep -q "^$GITHUB_SHA[[:space:]]refs/tags/v"; then
+            echo "This commit has a release tag: its own run builds it."
+            build=false
+          fi
+          echo "build=$build release=$release version=$version"
+          { echo "build=$build"; echo "release=$release"; echo "version=$version"; } >> "$GITHUB_OUTPUT"
+
   build:
     name: ${{ matrix.name }}
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -25,6 +77,11 @@ jobs:
           - name: macOS
             os: macos-14
             pluginval: pluginval_macOS.zip
+    env:
+      # Compiled files are kept in GitHub's cache: a run compiles only what changed.
+      SCCACHE_GHA_ENABLED: 'true'
+      RELEASE: ${{ needs.plan.outputs.release }}
+      VERSION: ${{ needs.plan.outputs.version }}
 
     steps:
       - uses: actions/checkout@v4
@@ -33,37 +90,60 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build xvfb libasound2-dev libfreetype-dev libfontconfig1-dev \
+          sudo apt-get install -y xvfb libasound2-dev libfreetype-dev libfontconfig1-dev \
             libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev libgl1-mesa-dev
 
+      - uses: seanmiddleditch/gha-setup-ninja@96bed6edff20d1dd61ecff9b75cc519d516e6401 # v5
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        if: runner.os == 'Windows'
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+
+      # JUCE and doctest, cloned once per version and kept: FetchContent then downloads nothing.
+      - name: Dependency versions
+        id: deps
+        shell: bash
+        run: |
+          echo "juce=$(sed -n 's/.*GIT_TAG \(.*\)/\1/p' plugin/CMakeLists.txt)" >> "$GITHUB_OUTPUT"
+          echo "doctest=$(sed -n 's/.*GIT_TAG \(.*\)/\1/p' CMakeLists.txt)" >> "$GITHUB_OUTPUT"
       - name: Cache JUCE and doctest
+        id: deps-cache
         uses: actions/cache@v4
         with:
-          path: build/_deps/*-src
-          key: deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'plugin/CMakeLists.txt') }}
+          path: .deps
+          key: deps-${{ runner.os }}-juce-${{ steps.deps.outputs.juce }}-doctest-${{ steps.deps.outputs.doctest }}
+      - name: Get JUCE and doctest
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          git clone -q --depth 1 --branch "${{ steps.deps.outputs.juce }}" https://github.com/juce-framework/JUCE.git .deps/juce
+          git clone -q --depth 1 --branch "${{ steps.deps.outputs.doctest }}" https://github.com/doctest/doctest.git .deps/doctest
 
       - name: Configure
         shell: bash
         run: |
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            extra='-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0'
+          args=(-G Ninja -DCMAKE_BUILD_TYPE=Release
+                -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+                -DFETCHCONTENT_SOURCE_DIR_JUCE="$PWD/.deps/juce"
+                -DFETCHCONTENT_SOURCE_DIR_DOCTEST="$PWD/.deps/doctest"
+                -DGLIDE90_VERSION="${VERSION%%-*}")
+          # Link-time optimisation only for what is released: it is the slow part of the link.
+          if [ "$RELEASE" = true ]; then args+=(-DGLIDE90_LTO=ON); else args+=(-DGLIDE90_LTO=OFF); fi
+          if [ "$RUNNER_OS" = macOS ]; then
+            args+=("-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0)
           fi
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            extra='-G Ninja'
-          fi
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release $extra
+          cmake -S . -B build "${args[@]}"
 
       - name: Build
-        run: cmake --build build --config Release --parallel 4
+        run: cmake --build build
 
       # The IR comparison test skips itself: the reference captures are not in the repository.
       - name: Test
         shell: bash
         run: |
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            xvfb-run -a ctest --test-dir build -C Release --output-on-failure
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a ctest --test-dir build --output-on-failure
           else
-            ctest --test-dir build -C Release --output-on-failure
+            ctest --test-dir build --output-on-failure
           fi
 
       - name: Get pluginval
@@ -91,13 +171,100 @@ jobs:
           killall -9 AudioComponentRegistrar || true
           auval -v aumf G90s Gl9d
 
-      - name: Upload plugins
+      - name: Package
+        shell: bash
+        run: |
+          sccache --show-stats || true
+          out=build/plugin/Glide90_artefacts/Release
+          if [ "$RELEASE" = true ]; then name="Glide90-$VERSION-${{ matrix.name }}"; else name="Glide90-${GITHUB_SHA::7}-${{ matrix.name }}"; fi
+          dir="dist/$name"
+          mkdir -p "$dir"
+          cp -R "$out/VST3/GLIDE90.vst3" "$dir/"
+          case "$RUNNER_OS" in
+            Linux)
+              cp -R "$out/LV2/GLIDE90.lv2" "$dir/"
+              cp "$out/Standalone/GLIDE90" "$dir/"
+              printf '%s\n' "GLIDE90 $VERSION for Linux (x86_64)" "" \
+                "VST3: copy GLIDE90.vst3 to ~/.vst3/" \
+                "LV2: copy GLIDE90.lv2 to ~/.lv2/" \
+                "Standalone: run ./GLIDE90" > "$dir/INSTALL.txt" ;;
+            Windows)
+              cp "$out/Standalone/GLIDE90.exe" "$dir/"
+              printf '%s\r\n' "GLIDE90 $VERSION for Windows (64-bit)" "" \
+                "VST3: copy the GLIDE90.vst3 folder to C:\\Program Files\\Common Files\\VST3\\" \
+                "Standalone: run GLIDE90.exe" > "$dir/INSTALL.txt" ;;
+            macOS)
+              cp -R "$out/AU/GLIDE90.component" "$dir/"
+              cp -R "$out/Standalone/GLIDE90.app" "$dir/"
+              printf '%s\n' "GLIDE90 $VERSION for macOS 11+ (Apple Silicon and Intel)" "" \
+                "VST3: copy GLIDE90.vst3 to ~/Library/Audio/Plug-Ins/VST3/" \
+                "AU: copy GLIDE90.component to ~/Library/Audio/Plug-Ins/Components/" \
+                "Standalone: copy GLIDE90.app to Applications" "" \
+                "The plugin is not signed by Apple. If macOS refuses to open it, run in Terminal:" \
+                "  xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/GLIDE90.vst3 \\" \
+                "    ~/Library/Audio/Plug-Ins/Components/GLIDE90.component /Applications/GLIDE90.app" > "$dir/INSTALL.txt" ;;
+          esac
+          cd dist
+          case "$RUNNER_OS" in
+            macOS)   ditto -c -k --keepParent "$name" "$name.zip" ;;
+            Windows) 7z a -tzip -bso0 "$name.zip" "$name" ;;
+            Linux)   zip -qry "$name.zip" "$name" ;;
+          esac
+          echo "PACKAGE=dist/$name.zip" >> "$GITHUB_ENV"
+
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: Glide90-${{ matrix.name }}
-          path: |
-            build/plugin/Glide90_artefacts/Release/VST3
-            build/plugin/Glide90_artefacts/Release/AU
-            build/plugin/Glide90_artefacts/Release/LV2
-            build/plugin/Glide90_artefacts/Release/Standalone
-          if-no-files-found: ignore
+          path: ${{ env.PACKAGE }}
+          compression-level: 0 # a zip already
+          if-no-files-found: error
+
+  release:
+    needs: [plan, build]
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Glide90-*
+          merge-multiple: true
+          path: dist
+      - name: Publish
+        shell: bash
+        run: |
+          ls -l dist
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag=$GITHUB_REF_NAME
+            flags=(--verify-tag)
+            [[ "$tag" == *-* ]] && flags+=(--prerelease)
+          else
+            # Tried by hand: a draft (its tag is only made when published), to delete after.
+            tag="ci-test-$GITHUB_RUN_NUMBER"
+            flags=(--draft --target "$GITHUB_SHA")
+          fi
+          previous=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_SHA^" 2>/dev/null || true)
+          {
+            echo "## Download"
+            echo
+            echo "One zip per system, each with an INSTALL.txt:"
+            echo
+            echo "- **Windows** (64-bit): VST3 and the standalone GLIDE90.exe"
+            echo "- **macOS** 11+ (Apple Silicon and Intel): VST3, AU and the standalone app. Not signed by Apple: see INSTALL.txt if macOS refuses to open it"
+            echo "- **Linux** (x86_64): VST3, LV2 and the standalone app"
+            echo
+            if [ -n "$previous" ]; then
+              echo "## Changes since $previous"
+              echo
+              git log --no-merges --pretty='- %s' "$previous..$GITHUB_SHA"
+            fi
+          } > notes.md
+          gh release create "$tag" dist/*.zip --title "Glide90 $VERSION" --notes-file notes.md "${flags[@]}"

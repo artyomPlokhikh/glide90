@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
-project(Glide90 VERSION 0.1.0 LANGUAGES C CXX)
+# Release builds take the version from the tag (CI passes -DGLIDE90_VERSION=x.y.z).
+set(GLIDE90_VERSION "0.1.0" CACHE STRING "Plugin version, x.y.z")
+project(Glide90 VERSION ${GLIDE90_VERSION} LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -12,6 +14,7 @@ endif()
 
 option(GLIDE90_BUILD_PLUGIN "Build the JUCE plugin (needs JUCE's system dependencies)" ON)
 option(GLIDE90_BUILD_TESTS "Build the DSP tests" ON)
+option(GLIDE90_LTO "Link-time optimisation of the plugin (slow links; CI uses it for releases only)" ON)
 
 include(FetchContent)
 
