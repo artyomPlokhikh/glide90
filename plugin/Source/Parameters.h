@@ -49,7 +49,6 @@ inline constexpr const char* glidePosition = "glide_position";
 inline constexpr const char* holdOn = "hold_on";
 inline constexpr const char* holdMode = "hold_mode";
 inline constexpr const char* holdLatch = "hold_latch";
-inline constexpr const char* holdSensitivity = "hold_sensitivity";
 inline constexpr const char* holdFollow = "hold_follow";
 inline constexpr const char* holdSize = "hold_size";
 inline constexpr const char* holdDensity = "hold_density";

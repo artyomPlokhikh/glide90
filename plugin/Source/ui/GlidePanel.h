@@ -38,7 +38,7 @@ private:
     GlassSelector source { false };
     ShapeDisplay display;
     Knob period, division, bar, depth, random, smooth, twinDetune, twinLevel, mix, sensitivity, dynamics;
-    int shownMode = -1, shownTrigger = -1, shownManual = -1;
+    int shownMode = -1, shownTrigger = -1, shownManual = -1, shownHold = -1;
     bool pickGroupActive = false;
 };
 

@@ -12,9 +12,9 @@
 namespace glide90
 {
 
-// The signal's way, left to right: IN, the two modules in the order they play, OUT; HOLD under the
-// two, across their width, as it plays beside them. Dragging GLIDE or GATE by its title bar to the
-// other place turns their order round; HOLD stays where it is.
+// The signal's way, left to right: IN, the two modules in the order they play, OUT; under them the
+// HOLD strip across the window, as it plays beside them (folded to its title bar, the window is
+// shorter). Dragging GLIDE or GATE by its title bar to the other place turns their order round.
 class Glide90Editor : public juce::AudioProcessorEditor
 {
 public:
@@ -24,7 +24,13 @@ public:
     static constexpr int kWidth = 2 * ui::PanelLookAndFeel::kMargin + 2 * ui::IoColumn::kWidth + 2 * kGap + kModulesWidth;
     static constexpr int kHeaderHeight = 56, kBodyTop = 64;
     static constexpr int kHoldTop = kBodyTop + ui::ModulePanel::kHeight + kGap;
-    static constexpr int kHeight = kHoldTop + ui::ModulePanel::kHeight + ui::PanelLookAndFeel::kMargin;
+    static constexpr int heightFor(bool holdFolded)
+    {
+        return kHoldTop + (holdFolded ? ui::HoldPanel::kFoldedHeight : ui::HoldPanel::kOpenHeight)
+               + ui::PanelLookAndFeel::kMargin;
+    }
+    // The height at 100 %, with HOLD open or folded.
+    int contentHeight() const { return heightFor(holdPanel.isFolded()); }
 
     explicit Glide90Editor(Glide90Processor&);
     ~Glide90Editor() override;

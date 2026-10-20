@@ -6,17 +6,41 @@
 
 namespace glide90::ui
 {
+namespace
+{
+
+const juce::StringArray& modeNames()
+{
+    static const juce::StringArray names { "STRIKE", "LATCH", "LIVE", "MIDI" };
+    return names;
+}
+
+void arrow(juce::Graphics& g, float x, float y, int side)
+{
+    juce::Path tri;
+    tri.addTriangle(x - (float) side * 3.0f, y - 4.5f, x - (float) side * 3.0f, y + 4.5f, x + (float) side * 3.5f, y);
+    g.fillPath(tri);
+}
+
+} // namespace
 
 // --- HoldDisplay ---
 
 HoldDisplay::HoldDisplay(Glide90Processor& p) : proc(p), source(p.holdDisplay())
 {
-    setTooltip("What HOLD holds: the chord captured at the last pick (or frozen, or the last moments in LIVE), "
-               "with the grains that play it");
     frame(0.0); // what there is now, before the first frame of the display
 }
 
 HoldDisplay::~HoldDisplay() = default;
+
+void HoldDisplay::setCompact(bool c)
+{
+    compact = c;
+    hover = Spot::Nowhere;
+    setMouseCursor(compact ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+    setTooltip(compact ? "What HOLD holds. Click to open the strip" : "");
+    repaint();
+}
 
 int HoldDisplay::choice(const char* id) const
 {
@@ -38,15 +62,16 @@ void HoldDisplay::frame(double seconds)
             changed = true;
         }
     };
-    set(on, proc.state().getRawParameterValue(ids::holdOn)->load() > 0.5f);
+    set(on, choice(ids::holdOn) != 0);
     set(mode, choice(ids::holdMode));
-    set(latched, proc.state().getRawParameterValue(ids::holdLatch)->load() > 0.5f);
-    set(toGate, choice(ids::holdFeed) == (int) hold::Feed::Gate
-                    && proc.state().getRawParameterValue(ids::bypass)->load() < 0.5f);
+    set(feed, choice(ids::holdFeed));
+    set(character, choice(ids::holdCharacter));
+    set(root, choice(ids::holdRoot));
+    set(latched, choice(ids::holdLatch) != 0);
+    set(gateBypassed, choice(ids::bypass) != 0);
     set(holding, source.holding.load());
 
-    const bool live = (hold::Mode) mode == hold::Mode::Live;
-    if (live)
+    if ((hold::Mode) mode == hold::Mode::Live)
     {
         // The last moments, oldest on the left.
         const int head = source.liveHead.load();
@@ -90,17 +115,188 @@ void HoldDisplay::frame(double seconds)
         repaint();
 }
 
-void HoldDisplay::paint(juce::Graphics& g)
+juce::String HoldDisplay::status() const
+{
+    const auto m = (hold::Mode) mode;
+    if (!on)
+        return "HOLD OFF";
+    if (m == hold::Mode::Live)
+        return "LIVE";
+    if (m == hold::Mode::Latch && !latched)
+        return "FREEZE TO HOLD";
+    if (!holding)
+        return m == hold::Mode::Midi ? "PICK, THEN A NOTE" : "WAITING FOR A PICK";
+    return (m == hold::Mode::Latch ? "FROZEN " : "HOLDING ") + juce::String(heldSeconds, 2) + " S";
+}
+
+// --- The screen's controls ---
+
+juce::Rectangle<float> HoldDisplay::spotArea(Spot s) const
+{
+    const auto r = getLocalBounds().toFloat();
+    const float line = 22.0f, w = r.getWidth();
+    const juce::Rectangle<float> top { 0.0f, 0.0f, w, line }, bottom { 0.0f, r.getBottom() - line, w, line };
+    switch (s)
+    {
+        case Spot::ModeDown: return top.withWidth(20.0f);
+        case Spot::Mode: return top.withX(20.0f).withWidth(88.0f);
+        case Spot::ModeUp: return top.withX(108.0f).withWidth(20.0f);
+        case Spot::Feed: return top.withTrimmedLeft(w - 70.0f);
+        case Spot::Character: return bottom.withWidth(78.0f);
+        case Spot::RootDown: return bottom.withX(w - 86.0f).withWidth(18.0f);
+        case Spot::Root: return bottom.withX(w - 68.0f).withWidth(50.0f);
+        case Spot::RootUp: return bottom.withX(w - 18.0f).withWidth(18.0f);
+        case Spot::Nowhere: break;
+    }
+    return {};
+}
+
+HoldDisplay::Spot HoldDisplay::spotAt(juce::Point<float> p) const
+{
+    if (compact)
+        return Spot::Nowhere;
+    const bool midi = (hold::Mode) mode == hold::Mode::Midi;
+    for (auto s : { Spot::ModeDown, Spot::Mode, Spot::ModeUp, Spot::Feed, Spot::Character, Spot::RootDown, Spot::Root,
+                    Spot::RootUp })
+    {
+        const bool rootSpot = s == Spot::RootDown || s == Spot::Root || s == Spot::RootUp;
+        if ((!rootSpot || midi) && spotArea(s).contains(p))
+            return s;
+    }
+    return Spot::Nowhere;
+}
+
+void HoldDisplay::setTo(const char* id, int value)
+{
+    auto* param = proc.state().getParameter(id);
+    param->beginChangeGesture();
+    param->setValueNotifyingHost(param->convertTo0to1((float) value));
+    param->endChangeGesture();
+}
+
+void HoldDisplay::step(const char* id, int delta, bool wrap)
+{
+    auto* param = proc.state().getParameter(id);
+    const auto range = param->getNormalisableRange();
+    const int lo = juce::roundToInt(range.start), hi = juce::roundToInt(range.end);
+    int v = choice(id) + delta;
+    if (wrap)
+        v = lo + ((v - lo) % (hi - lo + 1) + (hi - lo + 1)) % (hi - lo + 1);
+    setTo(id, juce::jlimit(lo, hi, v));
+}
+
+void HoldDisplay::mouseMove(const juce::MouseEvent& e)
+{
+    if (compact)
+        return;
+    const auto s = spotAt(e.position);
+    if (s == hover)
+        return;
+    hover = s;
+    setMouseCursor(s == Spot::Nowhere ? juce::MouseCursor::NormalCursor : juce::MouseCursor::PointingHandCursor);
+    switch (s)
+    {
+        case Spot::ModeDown:
+        case Spot::Mode:
+        case Spot::ModeUp:
+            setTooltip("STRIKE: each pick attack captures the chord and holds it. LATCH: FREEZE holds what just "
+                       "played. LIVE: grains of the last moments, nothing held. MIDI: captured on each pick, heard "
+                       "while a MIDI note is held, at that note's pitch");
+            break;
+        case Spot::Feed:
+            setTooltip("GATE: into the reverse gate, so the held chord swells backwards. OUT: straight to the output");
+            break;
+        case Spot::Character: setTooltip("12-BIT: captured like a late-80s sampler, grainy and dull at the top"); break;
+        case Spot::RootDown:
+        case Spot::Root:
+        case Spot::RootUp: setTooltip("The MIDI note that plays the held chord at its own pitch"); break;
+        case Spot::Nowhere:
+            setTooltip("What HOLD holds: the chord captured at the last pick (or frozen, or the last moments in "
+                       "LIVE), with the grains that play it");
+            break;
+    }
+    repaint();
+}
+
+void HoldDisplay::mouseExit(const juce::MouseEvent&)
+{
+    if (hover != Spot::Nowhere)
+    {
+        hover = Spot::Nowhere;
+        repaint();
+    }
+}
+
+void HoldDisplay::mouseDown(const juce::MouseEvent& e)
+{
+    if (compact)
+    {
+        if (onUnfold)
+            onUnfold();
+        return;
+    }
+    switch (spotAt(e.position))
+    {
+        case Spot::ModeDown: step(ids::holdMode, -1, true); break;
+        case Spot::ModeUp: step(ids::holdMode, 1, true); break;
+        case Spot::Mode:
+        {
+            juce::PopupMenu menu;
+            menu.setLookAndFeel(&getLookAndFeel());
+            for (int i = 0; i < modeNames().size(); ++i)
+                menu.addItem(modeNames()[i], true, i == mode, [this, i] { setTo(ids::holdMode, i); });
+            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this));
+            break;
+        }
+        case Spot::Feed: setTo(ids::holdFeed, 1 - feed); break;
+        case Spot::Character: setTo(ids::holdCharacter, 1 - character); break;
+        case Spot::RootDown: step(ids::holdRoot, -1, false); break;
+        case Spot::RootUp: step(ids::holdRoot, 1, false); break;
+        case Spot::Root:
+        {
+            // By octave, then the note.
+            juce::PopupMenu menu;
+            menu.setLookAndFeel(&getLookAndFeel());
+            for (int octave = 24; octave <= 96; octave += 12)
+            {
+                juce::PopupMenu notes;
+                for (int n = octave; n < octave + 12 && n <= 96; ++n)
+                    notes.addItem(noteName(n), true, n == root, [this, n] { setTo(ids::holdRoot, n); });
+                menu.addSubMenu(noteName(octave) + " ...", notes, true, nullptr, octave <= root && root < octave + 12);
+            }
+            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this));
+            break;
+        }
+        case Spot::Nowhere: break;
+    }
+}
+
+void HoldDisplay::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
+{
+    const int delta = wheel.deltaY > 0.0f ? 1 : (wheel.deltaY < 0.0f ? -1 : 0);
+    if (delta == 0)
+        return;
+    switch (spotAt(e.position))
+    {
+        case Spot::ModeDown:
+        case Spot::Mode:
+        case Spot::ModeUp: step(ids::holdMode, -delta, false); break;
+        case Spot::RootDown:
+        case Spot::Root:
+        case Spot::RootUp: step(ids::holdRoot, delta, false); break;
+        case Spot::Feed:
+        case Spot::Character:
+        case Spot::Nowhere: Component::mouseWheelMove(e, wheel); break;
+    }
+}
+
+// --- Painting ---
+
+void HoldDisplay::paintWave(juce::Graphics& g, juce::Rectangle<float> plot, bool grains)
 {
     const auto& t = theme();
-    const auto bounds = getLocalBounds().toFloat();
-    drawGlass(g, bounds);
     const auto ink = t.ink.withAlpha(on ? 1.0f : 0.35f);
-    const auto plot = bounds.withTrimmedLeft(14.0f).withTrimmedRight(14.0f).withTrimmedTop(34.0f).withTrimmedBottom(26.0f);
     const float mid = plot.getCentreY();
-    const auto m = (hold::Mode) mode;
-    const bool live = m == hold::Mode::Live;
-
     // The waveform, scaled to its loudest so a quiet chord still shows.
     float loudest = 1e-4f;
     for (float v : wave)
@@ -108,183 +304,218 @@ void HoldDisplay::paint(juce::Graphics& g)
     const float scale = plot.getHeight() * 0.5f / loudest;
     const int columns = hold::HoldDisplay::kColumns;
     const float step = plot.getWidth() / (float) columns;
-    g.setColour(t.ink.withAlpha(0.25f));
-    g.drawHorizontalLine((int) mid, plot.getX(), plot.getRight());
-    juce::Path shape;
-    for (int col = 0; col < columns; ++col)
+    if ((hold::Mode) mode == hold::Mode::Live || holding)
     {
-        const float x = plot.getX() + ((float) col + 0.5f) * step;
-        const float hi = mid - wave[(size_t) (2 * col + 1)] * scale;
-        if (col == 0)
-            shape.startNewSubPath(x, hi);
-        else
-            shape.lineTo(x, hi);
-    }
-    for (int col = columns; --col >= 0;)
-        shape.lineTo(plot.getX() + ((float) col + 0.5f) * step, mid - wave[(size_t) (2 * col)] * scale);
-    shape.closeSubPath();
-    const bool showWave = live || holding;
-    if (showWave)
-    {
-        g.setColour(ink.withMultipliedAlpha(0.32f));
+        g.setColour(t.ink.withAlpha(0.2f));
+        g.drawHorizontalLine((int) mid, plot.getX(), plot.getRight());
+        juce::Path shape;
+        for (int col = 0; col < columns; ++col)
+        {
+            const float x = plot.getX() + ((float) col + 0.5f) * step;
+            const float hi = mid - wave[(size_t) (2 * col + 1)] * scale;
+            if (col == 0)
+                shape.startNewSubPath(x, hi);
+            else
+                shape.lineTo(x, hi);
+        }
+        for (int col = columns; --col >= 0;)
+            shape.lineTo(plot.getX() + ((float) col + 0.5f) * step, mid - wave[(size_t) (2 * col)] * scale);
+        shape.closeSubPath();
+        g.setColour(ink.withMultipliedAlpha(0.3f));
         g.fillPath(shape);
         strokeGlowing(g, shape, ink.withMultipliedAlpha(0.6f), 0.8f);
     }
-
-    // The grains: each a window over the stretch it reads, as tall as it is loud now.
+    if (!grains || !on)
+        return;
+    // The grains: each a mark where it reads, as tall as it is loud now.
     for (int i = 0; i < hold::HoldDisplay::kGrains; ++i)
     {
         const float pos = grainPos[(size_t) i], amp = grainAmp[(size_t) i];
-        if (pos < 0.0f || !on)
+        if (pos < 0.0f)
             continue;
         const float x = plot.getX() + juce::jlimit(0.0f, 1.0f, pos) * plot.getWidth();
-        const float h = juce::jmax(2.0f, amp * plot.getHeight() * 0.9f);
+        const float h = juce::jmax(2.0f, amp * plot.getHeight());
         g.setColour(ink.withMultipliedAlpha(0.25f + 0.6f * amp));
-        g.fillRoundedRectangle(x - 1.5f, plot.getBottom() - h, 3.0f, h, 1.5f);
+        g.fillRoundedRectangle(x - 1.5f, mid - h * 0.5f, 3.0f, h, 1.5f);
+    }
+}
+
+void HoldDisplay::paint(juce::Graphics& g)
+{
+    const auto& t = theme();
+    const auto bounds = getLocalBounds().toFloat();
+    drawGlass(g, bounds);
+    const auto ink = t.ink.withAlpha(on ? 1.0f : 0.35f);
+    const float level = juce::jlimit(0.0f, 1.0f, (levelDb + 60.0f) / 60.0f);
+    const bool toGate = feed == (int) hold::Feed::Gate && !gateBypassed;
+
+    if (compact)
+    {
+        // One line: what it does and where it goes; the waveform beside it, its level under it.
+        auto line = status();
+        if (on)
+            line << "  " << modeNames()[mode] << (toGate ? " > GATE" : " > OUT");
+        drawReadout(g, line, bounds.reduced(10.0f, 0.0f).withWidth(bounds.getWidth() * 0.6f), t.ink.withAlpha(on ? 0.8f : 0.35f));
+        const auto plot = bounds.withTrimmedLeft(bounds.getWidth() * 0.62f).reduced(8.0f, 5.0f).withTrimmedBottom(3.0f);
+        paintWave(g, plot, true);
+        g.setColour(ink.withMultipliedAlpha(0.8f));
+        g.fillRect(plot.getX(), plot.getBottom() + 1.0f, plot.getWidth() * level, 1.5f);
+        return;
     }
 
-    // The layer's level along the bottom, -60 to 0 dB.
-    const float level = juce::jlimit(0.0f, 1.0f, (levelDb + 60.0f) / 60.0f);
-    g.setColour(t.ink.withAlpha(0.12f));
-    g.fillRect(plot.getX(), plot.getBottom() + 4.0f, plot.getWidth(), 2.0f);
-    g.setColour(ink.withMultipliedAlpha(0.8f));
-    g.fillRect(plot.getX(), plot.getBottom() + 4.0f, plot.getWidth() * level, 2.0f);
+    const auto dimText = t.ink.withAlpha(on ? 0.45f : 0.25f);
+    auto lit = [&](Spot a, Spot b = Spot::Nowhere, Spot c = Spot::Nowhere) {
+        return ink.withMultipliedAlpha(hover == a || hover == b || hover == c ? 1.0f : 0.8f);
+    };
 
-    juce::String status;
-    if (!on)
-        status = "HOLD OFF";
-    else if (live)
-        status = "LIVE";
-    else if (m == hold::Mode::Latch && !latched)
-        status = "FREEZE TO HOLD";
-    else if (!holding)
-        status = m == hold::Mode::Midi ? "PICK, THEN PLAY A NOTE" : "WAITING FOR A PICK";
-    else
-        status = (m == hold::Mode::Latch ? "FROZEN " : "HOLDING ") + juce::String(heldSeconds, 2) + " S";
-    drawReadout(g, status, { 12.0f, 6.0f, 300.0f, 22.0f }, t.ink.withAlpha(on ? 0.8f : 0.35f));
-    drawReadout(g, toGate ? "INTO GATE" : "TO OUTPUT", { bounds.getRight() - 212.0f, 6.0f, 200.0f, 22.0f }, ink,
-                juce::Justification::right);
-    const juce::Rectangle<float> axis { plot.getX(), plot.getBottom() + 8.0f, plot.getWidth(), 14.0f };
-    if (live)
-        drawReadout(g, juce::String(hold::HoldDisplay::kLiveSeconds, 1) + " S AGO", axis, t.ink.withAlpha(on ? 0.45f : 0.25f));
-    drawReadout(g, live ? juce::String("NOW") : juce::String("LEVEL"), axis, t.ink.withAlpha(on ? 0.45f : 0.25f),
-                juce::Justification::right);
+    // Top line: MODE with its arrows, FEED on the right.
+    g.setColour(lit(Spot::ModeDown, Spot::Mode, Spot::ModeUp));
+    arrow(g, 10.0f, 11.0f, -1);
+    arrow(g, spotArea(Spot::ModeUp).getCentreX(), 11.0f, 1);
+    drawReadout(g, modeNames()[mode], spotArea(Spot::Mode), lit(Spot::ModeDown, Spot::Mode, Spot::ModeUp),
+                juce::Justification::centred);
+    drawReadout(g, toGate ? "> GATE" : "> OUT", spotArea(Spot::Feed).withTrimmedRight(8.0f), lit(Spot::Feed),
+                juce::Justification::centredRight);
+
+    // The waveform with its grains and the level under it; what HOLD waits for, while nothing is held.
+    const auto plot = bounds.reduced(10.0f, 0.0f).withTrimmedTop(24.0f).withTrimmedBottom(28.0f);
+    paintWave(g, plot, true);
+    g.setColour(t.ink.withAlpha(0.12f));
+    g.fillRect(plot.getX(), plot.getBottom() + 2.0f, plot.getWidth(), 1.5f);
+    g.setColour(ink.withMultipliedAlpha(0.8f));
+    g.fillRect(plot.getX(), plot.getBottom() + 2.0f, plot.getWidth() * level, 1.5f);
+    const bool sounding = on && ((hold::Mode) mode == hold::Mode::Live
+                                 || (holding && ((hold::Mode) mode != hold::Mode::Latch || latched)));
+    if (!sounding)
+        drawReadout(g, status(), plot, dimText, juce::Justification::centred);
+
+    // Bottom line: SAMPLER; ROOT in MIDI, or how long the held chord is.
+    drawReadout(g, character == (int) hold::Character::Bit12 ? "12-BIT" : "CLEAN",
+                spotArea(Spot::Character).withTrimmedLeft(8.0f), lit(Spot::Character));
+    if ((hold::Mode) mode == hold::Mode::Midi)
+    {
+        g.setColour(lit(Spot::RootDown, Spot::Root, Spot::RootUp));
+        arrow(g, spotArea(Spot::RootDown).getCentreX(), spotArea(Spot::RootDown).getCentreY(), -1);
+        arrow(g, spotArea(Spot::RootUp).getCentreX(), spotArea(Spot::RootUp).getCentreY(), 1);
+        drawReadout(g, noteName(root), spotArea(Spot::Root), lit(Spot::RootDown, Spot::Root, Spot::RootUp),
+                    juce::Justification::centred);
+    }
+    else if (sounding && holding)
+        drawReadout(g, juce::String(heldSeconds, 2) + " S", spotArea(Spot::Root).withRight(bounds.getRight() - 8.0f),
+                    dimText, juce::Justification::centredRight);
 }
 
 // --- HoldPanel ---
 
 HoldPanel::HoldPanel(Glide90Processor& p)
     : ModulePanel("Hold"), proc(p), on(p.state(), ids::holdOn, "ON"), freeze(p.state(), ids::holdLatch, "FREEZE"),
-      mode(p.state(), ids::holdMode, "MODE", { "STRIKE", "LATCH", "LIVE", "MIDI" }, { 0, 1, 2, 3 }),
-      feed(p.state(), ids::holdFeed, "FEED", { "GATE", "OUT" }, { 0, 1 }),
-      character(p.state(), ids::holdCharacter, "SAMPLER", { "CLEAN", "12-BIT" }, { 0, 1 }), display(p),
-      sensitivity(p.state(), ids::holdSensitivity, "PICK SENS"), size(p.state(), ids::holdSize, "SIZE", Knob::Size::Large),
+      display(p), follow(p.state(), ids::holdFollow, "FOLLOW", Knob::Size::Large), size(p.state(), ids::holdSize, "SIZE"),
       density(p.state(), ids::holdDensity, "DENSITY"), smear(p.state(), ids::holdSmear, "SMEAR"),
-      spread(p.state(), ids::holdSpread, "SPREAD"), follow(p.state(), ids::holdFollow, "FOLLOW", Knob::Size::Hero),
-      reverse(p.state(), ids::holdReverse, "REVERSE"), root(p.state(), ids::holdRoot, "ROOT"),
+      spread(p.state(), ids::holdSpread, "SPREAD"), reverse(p.state(), ids::holdReverse, "REVERSE"),
       duck(p.state(), ids::holdDuck, "DUCK"), decay(p.state(), ids::holdDecay, "DECAY"),
-      level(p.state(), ids::holdLevel, "HOLD LEVEL")
+      level(p.state(), ids::holdLevel, "LEVEL"),
+      modeWatch(*p.state().getParameter(ids::holdMode),
+                [this](float v) { freeze.setEnabled((hold::Mode) juce::roundToInt(v) == hold::Mode::Latch); })
 {
     setDraggable(false);
-    for (auto* c : std::initializer_list<juce::Component*> { &on, &freeze, &mode, &feed, &character, &display,
-                                                             &sensitivity, &size, &density, &smear, &spread, &follow,
-                                                             &reverse, &root, &duck, &decay, &level })
+    for (auto* c : std::initializer_list<juce::Component*> { &on, &freeze, &display, &follow, &size, &density, &smear,
+                                                             &spread, &reverse, &duck, &decay, &level })
         addAndMakeVisible(c);
 
     on.setTooltip("Hold on/off. It plays beside the glide and the reverse gate and adds no delay");
     freeze.setTooltip("LATCH: holds what just played, for as long as it is down");
-    mode.setTooltip("STRIKE: each pick attack captures the chord and holds it. LATCH: FREEZE holds what just played. "
-                    "LIVE: grains of the last moments, nothing held. MIDI: captured on each pick, heard while a MIDI "
-                    "note is held, at that note's pitch");
-    feed.setTooltip("GATE: into the reverse gate, so the held chord swells backwards. OUT: straight to the output");
-    character.setTooltip("12-BIT: captured like a late-80s sampler, grainy and dull at the top");
-    sensitivity.setTooltip("How easily a pick attack captures a new chord");
+    follow.setTooltip("How much the glide bar bends the held chord. 100 bends it with the guitar, 200 twice as far, "
+                      "0 holds it still");
     size.setTooltip("Length of each grain. Long is smooth, short is grainy");
     density.setTooltip("How many grains play at once");
     smear.setTooltip("How far each grain may wander from the start of the held chord. 0 is a steady loop");
     spread.setTooltip("Each grain a few cents off and panned apart: many slightly different guitars");
-    follow.setTooltip("How much the glide bar bends the held chord. 100 bends it with the guitar, 200 twice as far, "
-                      "0 holds it still");
     reverse.setTooltip("How many grains play backwards");
-    root.setTooltip("MIDI: the note that plays the held chord at its own pitch");
     duck.setTooltip("How far the held chord drops while you play. It swells back as the strings die away");
     decay.setTooltip("How long a held chord takes to die away. INF holds it until the next pick");
     level.setTooltip("Level of the held chord");
 
-    updateForMode();
-    startTimerHz(10);
+    display.onUnfold = [this] {
+        setFolded(false);
+        if (onFold)
+            onFold(false);
+    };
+    modeWatch.sendInitialUpdate();
+    setFolded(holdFolded());
 }
 
-HoldPanel::~HoldPanel()
-{
-    stopTimer();
-}
+HoldPanel::~HoldPanel() = default;
 
-int HoldPanel::choice(const char* id) const
+void HoldPanel::setFolded(bool f)
 {
-    return juce::roundToInt(proc.state().getRawParameterValue(id)->load());
-}
-
-int HoldPanel::colX(int column) const
-{
-    return (getWidth() - widthFor(kColumns)) / 2 + columnX(column);
-}
-
-void HoldPanel::timerCallback()
-{
-    updateForMode();
-}
-
-void HoldPanel::updateForMode()
-{
-    const int m = choice(ids::holdMode);
-    if (m == shownMode)
-        return;
-    shownMode = m;
-    // What each mode listens to: always in its place, dimmed where the mode does not use it.
-    const auto holdMode = (hold::Mode) m;
-    sensitivity.setEnabled(holdMode == hold::Mode::Strike || holdMode == hold::Mode::Midi);
-    freeze.setEnabled(holdMode == hold::Mode::Latch);
-    root.setEnabled(holdMode == hold::Mode::Midi);
+    folded = f;
+    for (auto* c : std::initializer_list<juce::Component*> { &follow, &size, &density, &smear, &spread, &reverse, &duck,
+                                                             &decay, &level })
+        c->setVisible(!folded);
+    display.setCompact(folded);
+    resized();
     repaint();
+}
+
+juce::Rectangle<int> HoldPanel::freezeBounds() const
+{
+    return onKeyBounds().translated(-84, 0).withWidth(76);
+}
+
+juce::Rectangle<int> HoldPanel::titleArea() const
+{
+    // Where a click folds or opens the strip: the title, up to the screen (folded) or the keys.
+    const int right = folded ? display.getX() - 4 : freezeBounds().getX() - 8;
+    return { 0, 0, right, kTitleHeight };
 }
 
 void HoldPanel::paint(juce::Graphics& g)
 {
     ModulePanel::paint(g);
-    // FREEZE has no knob to carry its name.
-    g.setFont(legendFont(13.5f));
-    g.setColour(freeze.isEnabled() ? theme().text : theme().textDim.withMultipliedAlpha(0.6f));
-    g.drawFittedText(themed("LATCH"), juce::Rectangle<int>(colX(2), kRow1, Knob::kColumn, 15), juce::Justification::centred, 1);
-
-    drawGroupRule(g, "Colour", (float) colX(0), (float) (3 * Knob::kColumn - 8), (float) kRuleY);
-    drawGroupRule(g, "Mix", (float) colX(3) + 8.0f, (float) (4 * Knob::kColumn - 16), (float) kRuleY);
+    // Where the other modules have their grip: which way the strip opens.
+    g.setColour(theme().textDim);
+    juce::Path chevron;
+    const float x = 17.0f, y = (float) kTitleHeight * 0.5f;
+    if (folded)
+        chevron.addTriangle(x - 3.0f, y - 5.0f, x - 3.0f, y + 5.0f, x + 4.0f, y);
+    else
+        chevron.addTriangle(x - 5.0f, y - 3.0f, x + 5.0f, y - 3.0f, x, y + 4.0f);
+    g.fillPath(chevron);
 }
 
 void HoldPanel::resized()
 {
-    const int h = Knob::kHeight, w = Knob::kColumn;
     on.setBounds(onKeyBounds());
-    display.setBounds(columnX(0), kScreenTop, getWidth() - 2 * PanelLookAndFeel::kMargin, kScreenHeight);
+    freeze.setBounds(freezeBounds());
+    if (folded)
+    {
+        // The screen shrinks into the title bar, between the title and the keys.
+        display.setBounds(juce::Rectangle<int>(110, 6, freezeBounds().getX() - 12 - 110, kTitleHeight - 12));
+        return;
+    }
+    const int m = PanelLookAndFeel::kMargin, w = Knob::kColumn, h = Knob::kHeight;
+    display.setBounds(m, kRowTop, kScreenWidth, h);
+    int x = getWidth() - m - 9 * w;
+    for (auto* k : { &follow, &size, &density, &smear, &spread, &reverse, &duck, &decay, &level })
+    {
+        k->setBounds(x, kRowTop, w, h);
+        x += w;
+    }
+}
 
-    // CAPTURE, GRAINS, and FOLLOW down both rows.
-    mode.setBounds(colX(0), kRow1, w, h);
-    sensitivity.setBounds(colX(1), kRow1, w, h);
-    freeze.setBounds(juce::Rectangle<int>(w - 16, 28).withCentre({ colX(2) + w / 2, kRow1 + 50 }));
-    size.setBounds(colX(3), kRow1, w, h);
-    density.setBounds(colX(4), kRow1, w, h);
-    smear.setBounds(colX(5), kRow1, w, h);
-    spread.setBounds(colX(6), kRow1, w, h);
-    follow.setBounds(colX(7), kRow1, w, kRow2 + h - kRow1);
+void HoldPanel::mouseMove(const juce::MouseEvent& e)
+{
+    setMouseCursor(titleArea().contains(e.getPosition()) ? juce::MouseCursor::PointingHandCursor
+                                                         : juce::MouseCursor::NormalCursor);
+}
 
-    // COLOUR | MIX.
-    reverse.setBounds(colX(0), kRow2, w, h);
-    character.setBounds(colX(1), kRow2, w, h);
-    root.setBounds(colX(2), kRow2, w, h);
-    duck.setBounds(colX(3), kRow2, w, h);
-    decay.setBounds(colX(4), kRow2, w, h);
-    level.setBounds(colX(5), kRow2, w, h);
-    feed.setBounds(colX(6), kRow2, w, h);
+void HoldPanel::mouseDown(const juce::MouseEvent& e)
+{
+    if (!e.mods.isLeftButtonDown() || !titleArea().contains(e.getPosition()))
+        return;
+    setFolded(!folded);
+    if (onFold)
+        onFold(folded);
 }
 
 } // namespace glide90::ui

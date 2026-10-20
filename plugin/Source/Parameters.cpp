@@ -167,8 +167,7 @@ std::optional<float> parseText(const juce::String& id, const juce::String& text,
 
     // Shown as percentages, typed as percentages: "50" and "50 %" are both one half.
     if (isOneOf(id, { ids::balance, ids::outLevel, ids::glideRandom, ids::glideSmooth, ids::glideSensitivity,
-                      ids::glideDynamics, ids::glideBar, ids::glideTwinLevel, ids::glideMix, ids::holdSensitivity,
-                      ids::holdFollow, ids::holdReverse, ids::holdDuck, ids::holdLevel }))
+                      ids::glideDynamics, ids::glideBar, ids::glideTwinLevel, ids::glideMix, ids::holdFollow, ids::holdReverse, ids::holdDuck, ids::holdLevel }))
         return (float) (v / 100.0);
     // Milliseconds, or seconds when said so ("1.2 s").
     if (isOneOf(id, { ids::erDelay, ids::glidePeriod, ids::holdSize, ids::holdSmear }))
@@ -334,7 +333,6 @@ Layout createParameterLayout()
     layout.add(boolParam(ids::holdOn, "Hold On", false));
     layout.add(choiceParam(ids::holdMode, "Hold Mode", { "STRIKE", "LATCH", "LIVE", "MIDI" }, 0));
     layout.add(boolParam(ids::holdLatch, "Hold Freeze", false));
-    layout.add(percentParam(ids::holdSensitivity, "Hold Sensitivity", 0.55f));
     layout.add(floatParam(ids::holdFollow, "Hold Follow", NormalisableRange<float>(0.0f, 2.0f, 0.01f), 1.0f,
                           [](float v) { return juce::String(juce::roundToInt(v * 100.0f)) + "%"; }));
     const auto ms = [](float v) { return juce::String(juce::roundToInt(v)) + " ms"; };

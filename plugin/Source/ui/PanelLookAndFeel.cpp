@@ -73,6 +73,13 @@ std::unique_ptr<juce::PropertiesFile> settings()
 
 constexpr const char* kLookKey = "look";
 constexpr const char* kMotionKey = "motion";
+constexpr const char* kHoldFoldedKey = "holdFolded";
+
+bool& currentHoldFolded()
+{
+    static bool folded = settings()->getBoolValue(kHoldFoldedKey, false);
+    return folded;
+}
 
 MotionLevel& currentMotion()
 {
@@ -302,6 +309,19 @@ void setMotionLevel(MotionLevel level)
     currentMotion() = level;
     auto file = settings();
     file->setValue(kMotionKey, level == MotionLevel::Full ? "full" : (level == MotionLevel::Subtle ? "subtle" : "off"));
+    file->saveIfNeeded();
+}
+
+bool holdFolded()
+{
+    return currentHoldFolded();
+}
+
+void setHoldFolded(bool folded)
+{
+    currentHoldFolded() = folded;
+    auto file = settings();
+    file->setValue(kHoldFoldedKey, folded);
     file->saveIfNeeded();
 }
 

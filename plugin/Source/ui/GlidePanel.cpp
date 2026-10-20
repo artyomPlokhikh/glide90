@@ -64,7 +64,8 @@ GlidePanel::GlidePanel(Glide90Processor& p)
     twinDetune.setTooltip("A second string tuned slightly sharp, moved by the same bar: the two beat against each other");
     twinLevel.setTooltip("Level of the second string");
     mix.setTooltip("Glide wet / dry");
-    sensitivity.setTooltip("How easily a pick attack restarts the shape (TRIGGER from PICK ATTACK)");
+    sensitivity.setTooltip("How easily a pick attack restarts the shape (TRIGGER from PICK ATTACK), and captures a new "
+                           "chord in HOLD");
     dynamics.setTooltip("How much a strike's strength sets the depth: 0 = every strike bends the full DEPTH, "
                         "100 = a soft strike bends a little, a hard one all the way (pick attack or MIDI velocity)");
     direction.setTooltip("DOWN: like a Jazzmaster bar. BOTH: around the open pitch. UP: above it");
@@ -91,11 +92,15 @@ void GlidePanel::timerCallback()
 void GlidePanel::updateForMode()
 {
     const int m = choice(ids::glideMode), t = choice(ids::glideTriggerSource), s = choice(ids::glideManualSource);
-    if (m == shownMode && t == shownTrigger && s == shownManual)
+    // HOLD listens to the picking too (STRIKE and MIDI capture on each attack), with this PICK SENS.
+    const auto holdMode = (hold::Mode) choice(ids::holdMode);
+    const int h = choice(ids::holdOn) != 0 && (holdMode == hold::Mode::Strike || holdMode == hold::Mode::Midi) ? 1 : 0;
+    if (m == shownMode && t == shownTrigger && s == shownManual && h == shownHold)
         return;
     shownMode = m;
     shownTrigger = t;
     shownManual = s;
+    shownHold = h;
 
     // One RATE slot: milliseconds, a note value, or the bar itself.
     const auto glideMode = (sway::GlideMode) m;
@@ -108,9 +113,9 @@ void GlidePanel::updateForMode()
     // What the mode listens to: always in its place, dimmed where the mode does not listen.
     const bool trigger = glideMode == sway::GlideMode::Trigger;
     source.setEnabled(trigger || manual);
-    sensitivity.setEnabled(trigger && (TriggerSource) t == TriggerSource::Pick);
+    sensitivity.setEnabled((trigger && (TriggerSource) t == TriggerSource::Pick) || h != 0);
     dynamics.setEnabled(trigger);
-    pickGroupActive = trigger || manual;
+    pickGroupActive = trigger || manual || h != 0;
     repaint();
 }
 

@@ -1341,7 +1341,7 @@ TEST_CASE("HOLD is off in new instances and old projects, and while off its cont
     const auto after = renderFresh(in, [](Glide90Processor& p) {
         for (const char* id : { ids::holdMode, ids::holdLatch, ids::holdFollow, ids::holdSize, ids::holdDensity,
                                 ids::holdSmear, ids::holdSpread, ids::holdReverse, ids::holdDuck, ids::holdDecay,
-                                ids::holdLevel, ids::holdFeed, ids::holdCharacter, ids::holdRoot, ids::holdSensitivity })
+                                ids::holdLevel, ids::holdFeed, ids::holdCharacter, ids::holdRoot })
         {
             auto* param = p.state().getParameter(id);
             param->setValueNotifyingHost(param->getValue() > 0.5f ? 0.1f : 0.9f);
@@ -1419,43 +1419,44 @@ TEST_CASE("HOLD's typed values are read the way they are shown")
     CHECK(p->state().getParameter(ids::holdDecay)->getCurrentValueAsText() == "INF");
 }
 
-TEST_CASE("HOLD sits under the glide and the gate, stays put, and shows what it holds")
+TEST_CASE("HOLD is a strip under the glide and the gate that folds to its title bar, and shows what it holds")
 {
+    namespace ui = glide90::ui;
+    using Editor = glide90::Glide90Editor;
+    const bool wasFolded = ui::holdFolded();
+    ui::setHoldFolded(false);
     auto p = make();
     set(*p, ids::holdOn, 1.0f);
     set(*p, ids::holdSpread, 20.0f);
     render(*p, strummed(1.5));
     std::unique_ptr<juce::AudioProcessorEditor> editor(p->createEditor());
-    glide90::ui::HoldPanel* holdPanel = nullptr;
-    glide90::ui::GlidePanel* glidePanel = nullptr;
-    glide90::ui::GatePanel* gatePanel = nullptr;
+    ui::HoldPanel* holdPanel = nullptr;
+    ui::GlidePanel* glidePanel = nullptr;
+    std::vector<ui::IoColumn*> io;
     std::function<void(juce::Component&)> find = [&](juce::Component& c) {
-        if (auto* h = dynamic_cast<glide90::ui::HoldPanel*>(&c))
+        if (auto* h = dynamic_cast<ui::HoldPanel*>(&c))
             holdPanel = h;
-        if (auto* g = dynamic_cast<glide90::ui::GlidePanel*>(&c))
+        if (auto* g = dynamic_cast<ui::GlidePanel*>(&c))
             glidePanel = g;
-        if (auto* g = dynamic_cast<glide90::ui::GatePanel*>(&c))
-            gatePanel = g;
+        if (auto* column = dynamic_cast<ui::IoColumn*>(&c))
+            io.push_back(column);
         for (auto* child : c.getChildren())
             find(*child);
     };
     find(*editor);
     REQUIRE(holdPanel != nullptr);
-    CHECK(holdPanel->getY() >= glidePanel->getBottom());
-    CHECK(holdPanel->getX() == glidePanel->getX());
-    CHECK(holdPanel->getRight() == gatePanel->getRight());
-    CHECK(holdPanel->getBottom() <= glide90::Glide90Editor::kHeight);
+    REQUIRE(io.size() == 2);
+    auto windowHeight = [&](bool folded) { return juce::roundToInt(Editor::heightFor(folded) * p->uiScale()); };
 
-    // Its title bar is no handle.
-    bool started = false;
-    holdPanel->onDragStart = [&] { started = true; };
-    juce::MouseEvent press(juce::Desktop::getInstance().getMainMouseSource(), { 120.0f, 20.0f }, {}, 1.0f, 0.0f, 0.0f,
-                           0.0f, 0.0f, holdPanel, holdPanel, juce::Time::getCurrentTime(), { 120.0f, 20.0f },
-                           juce::Time::getCurrentTime(), 1, false);
-    holdPanel->mouseDown(press.withNewPosition(juce::Point<float>(120.0f, 20.0f)));
-    holdPanel->mouseDrag(press.withNewPosition(juce::Point<float>(300.0f, 20.0f)));
-    holdPanel->mouseUp(press);
-    CHECK_FALSE(started);
+    // Open: across the window under the modules and IN/OUT, the window about a third taller than
+    // without HOLD.
+    CHECK(Editor::heightFor(false) < 700);
+    CHECK(editor->getHeight() == windowHeight(false));
+    CHECK(holdPanel->getY() >= glidePanel->getBottom());
+    CHECK(holdPanel->getY() >= io[0]->getBottom());
+    CHECK(holdPanel->getX() == juce::jmin(io[0]->getX(), io[1]->getX()));
+    CHECK(holdPanel->getRight() == juce::jmax(io[0]->getRight(), io[1]->getRight()));
+    CHECK(holdPanel->getBottom() <= Editor::heightFor(false));
 
     if (const auto path = juce::SystemStats::getEnvironmentVariable("GLIDE90_SNAPSHOT", {}); path.isNotEmpty())
     {
@@ -1466,4 +1467,39 @@ TEST_CASE("HOLD sits under the glide and the gate, stays put, and shows what it 
         juce::FileOutputStream out(file);
         REQUIRE(juce::PNGImageFormat().writeImageToStream(image, out));
     }
+
+    // A click on the title folds it: the window shrinks to the bar, and the setting is kept. The title
+    // is no handle: dragging it moves nothing.
+    bool started = false;
+    holdPanel->onDragStart = [&] { started = true; };
+    auto mouse = [&](juce::Component& c, juce::Point<float> at) {
+        return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), at,
+                                juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                &c, &c, juce::Time::getCurrentTime(), at, juce::Time::getCurrentTime(), 1, false);
+    };
+    holdPanel->mouseDown(mouse(*holdPanel, { 60.0f, 20.0f }));
+    holdPanel->mouseDrag(mouse(*holdPanel, { 300.0f, 20.0f }));
+    holdPanel->mouseUp(mouse(*holdPanel, { 300.0f, 20.0f }));
+    CHECK_FALSE(started);
+    CHECK(holdPanel->isFolded());
+    CHECK(ui::holdFolded());
+    CHECK(editor->getHeight() == windowHeight(true));
+    CHECK(holdPanel->getHeight() == ui::HoldPanel::kFoldedHeight);
+    if (const auto path = juce::SystemStats::getEnvironmentVariable("GLIDE90_SNAPSHOT", {}); path.isNotEmpty())
+    {
+        const auto image = editor->createComponentSnapshot(editor->getLocalBounds(), true, 2.0f);
+        juce::File file(juce::File(path).getSiblingFile(juce::File(path).getFileNameWithoutExtension() + "-folded.png"));
+        file.deleteFile();
+        juce::FileOutputStream out(file);
+        REQUIRE(juce::PNGImageFormat().writeImageToStream(image, out));
+    }
+    // A new window opens folded too; a click on the folded screen opens it again.
+    {
+        std::unique_ptr<juce::AudioProcessorEditor> second(p->createEditor());
+        CHECK(second->getHeight() == windowHeight(true));
+    }
+    holdPanel->mouseDown(mouse(*holdPanel, { 60.0f, 20.0f }));
+    CHECK_FALSE(holdPanel->isFolded());
+    CHECK(editor->getHeight() == windowHeight(false));
+    ui::setHoldFolded(wasFolded);
 }

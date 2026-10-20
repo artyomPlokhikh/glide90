@@ -232,10 +232,10 @@ Glide90Processor::Glide90Processor()
             p(ids::glideTriggerSource), p(ids::glideSensitivity), p(ids::glideManualSource), p(ids::glideBar),
             p(ids::glideTwinDetune),  p(ids::glideTwinLevel),    p(ids::glideMix),       p(ids::glidePosition),
             p(ids::outputMode),       p(ids::glideDynamics),     p(ids::inputMode),
-            p(ids::holdOn),           p(ids::holdMode),          p(ids::holdLatch),      p(ids::holdSensitivity),
-            p(ids::holdFollow),       p(ids::holdSize),          p(ids::holdDensity),    p(ids::holdSmear),
-            p(ids::holdSpread),       p(ids::holdReverse),       p(ids::holdDuck),       p(ids::holdDecay),
-            p(ids::holdLevel),        p(ids::holdFeed),          p(ids::holdCharacter),  p(ids::holdRoot) };
+            p(ids::holdOn),           p(ids::holdMode),          p(ids::holdLatch),      p(ids::holdFollow),
+            p(ids::holdSize),         p(ids::holdDensity),       p(ids::holdSmear),      p(ids::holdSpread),
+            p(ids::holdReverse),      p(ids::holdDuck),          p(ids::holdDecay),      p(ids::holdLevel),
+            p(ids::holdFeed),         p(ids::holdCharacter),     p(ids::holdRoot) };
     for (size_t i = 0; i < presetShapes.size(); ++i)
         presetShapes[i] = sway::makeShape((sway::ShapePreset) i);
     customShape = audioCustomShape = presetShapes[0];
@@ -444,7 +444,8 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
     h.enabled = raw.holdOn->load() > 0.5f;
     h.mode = (hold::Mode) choice(raw.holdMode);
     h.latched = raw.holdLatch->load() > 0.5f;
-    h.sensitivity = raw.holdSensitivity->load();
+    // One PICK SENS for the plugin: how hard the player picks is the same for the glide and HOLD.
+    h.sensitivity = raw.glideSensitivity->load();
     h.follow = raw.holdFollow->load();
     h.followBar = w.enabled;
     h.sizeMs = raw.holdSize->load();

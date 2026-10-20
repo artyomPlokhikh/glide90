@@ -98,6 +98,11 @@ enum class MotionLevel
 MotionLevel motionLevel();
 void setMotionLevel(MotionLevel);
 
+// HOLD's strip folded down to its title bar (the window shorter): a setting of the user, kept like
+// the look.
+bool holdFolded();
+void setHoldFolded(bool);
+
 // Text in the theme's case: legends, values and the screens' text all go through it.
 juce::String themed(const juce::String& text);
 

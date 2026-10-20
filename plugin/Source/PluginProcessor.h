@@ -199,7 +199,7 @@ private:
             *outputSwitch, *bypass, *glideOn, *glideMode, *glidePeriod, *glideDivision, *glideDepth, *glideDirection,
             *glideRandom, *glideSmooth, *glideShape, *glideTriggerSource, *glideSensitivity, *glideManualSource,
             *glideBar, *glideTwinDetune, *glideTwinLevel, *glideMix, *glidePosition, *outputMode, *glideDynamics,
-            *inputMode, *holdOn, *holdMode, *holdLatch, *holdSensitivity, *holdFollow, *holdSize, *holdDensity,
+            *inputMode, *holdOn, *holdMode, *holdLatch, *holdFollow, *holdSize, *holdDensity,
             *holdSmear, *holdSpread, *holdReverse, *holdDuck, *holdDecay, *holdLevel, *holdFeed, *holdCharacter,
             *holdRoot;
     } raw;

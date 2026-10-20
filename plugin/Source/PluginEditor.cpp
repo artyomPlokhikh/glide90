@@ -27,7 +27,7 @@ Glide90Editor::Glide90Editor(Glide90Processor& p)
     addAndMakeVisible(content);
     for (auto* c : std::initializer_list<juce::Component*> { &header, &input, &glide, &gate, &holdPanel, &output })
         content.addAndMakeVisible(c);
-    content.setSize(kWidth, kHeight);
+    content.setSize(kWidth, contentHeight());
     input.modeKey().setTooltip("Stereo: the direct sound keeps its sides, the reverse gate hears both. "
                                "Mono: one input, like the SPX90's");
     output.modeKey().setTooltip("Stereo, the left output on both sides (one amp), or both outputs summed");
@@ -49,6 +49,11 @@ Glide90Editor::Glide90Editor(Glide90Processor& p)
     position.sendInitialUpdate();
     header.onZoom = [this](float s) { setZoom(s); };
     header.onTheme = [this](int i) { setLook(i); };
+    holdPanel.onFold = [this](bool folded) {
+        ui::setHoldFolded(folded);
+        content.setSize(kWidth, contentHeight());
+        setZoom(proc.uiScale());
+    };
     setZoom(fittingZoom(proc.uiScale()));
 }
 
@@ -60,10 +65,10 @@ float Glide90Editor::fittingZoom(float wanted) const
     if (display == nullptr)
         return wanted;
     const double room = display->userBounds.getHeight() - 80.0; // the host's own window frame and title
-    if (kHeight * (double) wanted <= room)
+    if (contentHeight() * (double) wanted <= room)
         return wanted;
     for (float s : { 1.75f, 1.5f, 1.25f, 1.0f })
-        if (s < wanted && kHeight * (double) s <= room)
+        if (s < wanted && contentHeight() * (double) s <= room)
             return s;
     return 0.75f;
 }
@@ -77,7 +82,7 @@ void Glide90Editor::setZoom(float scale)
 {
     proc.setUiScale(scale);
     content.setTransform(juce::AffineTransform::scale(proc.uiScale()));
-    setSize(juce::roundToInt(kWidth * proc.uiScale()), juce::roundToInt(kHeight * proc.uiScale()));
+    setSize(juce::roundToInt(kWidth * proc.uiScale()), juce::roundToInt(contentHeight() * proc.uiScale()));
 }
 
 void Glide90Editor::setLook(int index)
@@ -185,10 +190,9 @@ void Glide90Editor::resized()
 {
     const int m = ui::PanelLookAndFeel::kMargin, h = ui::ModulePanel::kHeight;
     header.setBounds(0, 0, kWidth, kHeaderHeight);
-    // IN and OUT run down both rows.
-    input.setBounds(m, kBodyTop, ui::IoColumn::kWidth, kHeight - m - kBodyTop);
-    output.setBounds(kWidth - m - ui::IoColumn::kWidth, kBodyTop, ui::IoColumn::kWidth, kHeight - m - kBodyTop);
-    holdPanel.setBounds(modulesLeft(), kHoldTop, kModulesWidth, h);
+    input.setBounds(m, kBodyTop, ui::IoColumn::kWidth, h);
+    output.setBounds(kWidth - m - ui::IoColumn::kWidth, kBodyTop, ui::IoColumn::kWidth, h);
+    holdPanel.setBounds(m, kHoldTop, kWidth - 2 * m, contentHeight() - m - kHoldTop);
     if (dragged == nullptr)
         layoutModules(false);
 }
