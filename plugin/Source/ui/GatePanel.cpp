@@ -99,7 +99,7 @@ void GateDisplay::paint(juce::Graphics& g)
     const auto& t = theme();
     const auto bounds = getLocalBounds().toFloat();
     drawGlass(g, bounds);
-    const auto ink = t.ink.withAlpha(on ? 1.0f : 0.35f);
+    const auto ink = t.ink.withAlpha(on ? 1.0f : kOffInkAlpha);
     auto msOf = [](int samples) { return (float) (samples * 1000.0 / spx::kDspRate); };
     const float scaleMs = shownScaleMs;
     const auto& s = settings;
@@ -157,11 +157,11 @@ void GateDisplay::paint(juce::Graphics& g)
     for (float y = plot.getY(); y < plot.getBottom(); y += 5.0f)
         g.fillRect(cutX + 2.0f, y, 1.0f, 2.5f);
 
-    drawReadout(g, on ? juce::String("REVERSE") : juce::String("GATE OFF"), { 12.0f, 6.0f, 120.0f, 22.0f }, t.ink.withAlpha(on ? 0.8f : 0.35f));
+    drawReadout(g, on ? juce::String("REVERSE") : juce::String("GATE OFF"), { 12.0f, 6.0f, 120.0f, 22.0f }, t.ink.withAlpha(on ? 0.8f : kOffInkAlpha));
     drawReadout(g, timeText(lengthMs), { bounds.getRight() - 132.0f, 6.0f, 120.0f, 22.0f }, ink, juce::Justification::right, true, true);
     const juce::Rectangle<float> axis { plot.getX(), plot.getBottom() + 6.0f, plot.getWidth(), 14.0f };
-    drawReadout(g, "PRE " + timeText(s.delayMs), axis, t.ink.withAlpha(on ? 0.6f : 0.3f));
-    drawReadout(g, timeText(scaleFor(lengthMs)), axis, t.ink.withAlpha(on ? 0.45f : 0.25f), juce::Justification::right);
+    drawReadout(g, "PRE " + timeText(s.delayMs), axis, t.ink.withAlpha(on ? 0.9f : 0.6f));
+    drawReadout(g, timeText(scaleFor(lengthMs)), axis, t.ink.withAlpha(on ? 0.7f : 0.55f), juce::Justification::right);
 }
 
 // --- GatePanel ---
@@ -229,7 +229,7 @@ void IoColumn::paint(juce::Graphics& g)
     g.drawText(themed(title), juce::Rectangle<int>(0, 8, getWidth(), 26), juce::Justification::centred);
 
     const auto m = meter.getBounds().toFloat();
-    g.setFont(legendFont(10.0f));
+    g.setFont(legendFont(11.0f));
     g.setColour(t.textDim);
     for (float db : kScaleDb)
     {

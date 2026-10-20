@@ -24,14 +24,27 @@ GlidePanel::GlidePanel(Glide90Processor& p)
                                                              &sensitivity, &dynamics, &direction })
         addAndMakeVisible(c);
 
-    // Short names that fit the window (ten characters); the menu has the full ones.
+    // Names that fit the window: these where the look has room, the shorter ones where it has not (the
+    // dot matrix takes eight characters). The menu has the full ones.
     source.getText = [this] {
-        static const juce::StringArray trigger { "PICK", "MIDI NOTE" };
-        static const juce::StringArray manual { "BAR KNOB", "PITCH BEND", "MOD WHEEL", "EXPR CC11" };
+        static const juce::StringArray trigger { "PICK", "MIDI NOTE" }, triggerShort { "PICK", "MIDI" };
+        static const juce::StringArray manual { "BAR KNOB", "PITCH BEND", "MOD WHEEL", "EXPR CC11" },
+            manualShort { "BAR KNOB", "BEND", "MOD WHL", "CC11" };
+        auto fitting = [this](const juce::String& name, const juce::String& shortName) {
+            return readoutWidth(name) <= (float) source.getWidth() - 12.0f ? name : shortName;
+        };
         switch ((sway::GlideMode) choice(ids::glideMode))
         {
-            case sway::GlideMode::Trigger: return trigger[choice(ids::glideTriggerSource)];
-            case sway::GlideMode::Manual: return manual[choice(ids::glideManualSource)];
+            case sway::GlideMode::Trigger:
+            {
+                const int i = choice(ids::glideTriggerSource);
+                return fitting(trigger[i], triggerShort[i]);
+            }
+            case sway::GlideMode::Manual:
+            {
+                const int i = choice(ids::glideManualSource);
+                return fitting(manual[i], manualShort[i]);
+            }
             case sway::GlideMode::Free:
             case sway::GlideMode::Sync:
             default: return juce::String("INTERNAL");
@@ -124,7 +137,7 @@ void GlidePanel::paint(juce::Graphics& g)
     ModulePanel::paint(g);
     // SOURCE has no knob to carry its name.
     g.setFont(legendFont(13.5f));
-    g.setColour(source.isEnabled() ? theme().text : theme().textDim.withMultipliedAlpha(0.6f));
+    g.setColour(source.isEnabled() ? theme().text : theme().textDim.withMultipliedAlpha(kDimmedAlpha));
     g.drawFittedText(themed("SOURCE"), juce::Rectangle<int>(columnX(3), kRow2, Knob::kColumn, 15), juce::Justification::centred, 1);
 
     drawGroupRule(g, "Sound", (float) columnX(0), (float) (3 * Knob::kColumn - 8), (float) kRuleY);

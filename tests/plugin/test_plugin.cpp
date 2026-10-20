@@ -9,11 +9,15 @@
 #include "ui/Dialog.h"
 #include "ui/GatePanel.h"
 #include "ui/GlidePanel.h"
+#include "ui/HeaderBar.h"
 #include "ui/HoldPanel.h"
 #include "ui/PanelLookAndFeel.h"
+#include "ui/ShapeDisplay.h"
 
 #include <juce_events/juce_events.h>
 #include <map>
+#include <numeric>
+#include <typeinfo>
 #include <juce_gui_basics/juce_gui_basics.h>
 
 using glide90::Glide90Processor;
@@ -1501,5 +1505,212 @@ TEST_CASE("HOLD is a strip under the glide and the gate that folds to its title 
     holdPanel->mouseDown(mouse(*holdPanel, { 60.0f, 20.0f }));
     CHECK_FALSE(holdPanel->isFolded());
     CHECK(editor->getHeight() == windowHeight(false));
+    ui::setHoldFolded(wasFolded);
+}
+
+namespace
+{
+// --- Legibility: how well each piece of text stands out from what is behind it, as drawn ---
+
+double luminance(juce::Colour c)
+{
+    auto channel = [](float v) { return v <= 0.04045f ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * channel(c.getFloatRed()) + 0.7152 * channel(c.getFloatGreen()) + 0.0722 * channel(c.getFloatBlue());
+}
+
+// WCAG contrast of the text in `area` (of `image`) against its background: the background is the
+// area's most common luminance (its median), the text what its strokes reach, a few pixels deep, so
+// anti-aliased edges and single specks of grain do not count.
+double contrastIn(const juce::Image& image, juce::Rectangle<int> area)
+{
+    area = area.getIntersection(image.getBounds());
+    std::vector<double> l;
+    l.reserve((size_t) area.getWidth() * (size_t) area.getHeight());
+    for (int y = area.getY(); y < area.getBottom(); ++y)
+        for (int x = area.getX(); x < area.getRight(); ++x)
+            l.push_back(luminance(image.getPixelAt(x, y)));
+    if (l.size() < 50)
+        return 21.0;
+    auto sorted = l;
+    std::nth_element(sorted.begin(), sorted.begin() + (long) sorted.size() / 2, sorted.end());
+    const double bg = sorted[sorted.size() / 2];
+    std::vector<double> distance;
+    distance.reserve(l.size());
+    for (double v : l)
+        distance.push_back(std::abs(v - bg));
+    // The text's own colour: what its strokes reach, a few pixels deep (not a stray speck of grain).
+    const size_t deep = std::max<size_t>(8, distance.size() * 3 / 1000);
+    const size_t at = distance.size() - std::min(deep, distance.size());
+    std::vector<size_t> order(l.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::nth_element(order.begin(), order.begin() + (long) at, order.end(),
+                     [&](size_t a, size_t b) { return distance[a] < distance[b]; });
+    const double text = l[order[at]];
+    return (std::max(text, bg) + 0.05) / (std::min(text, bg) + 0.05);
+}
+
+struct Reading
+{
+    juce::String what;
+    double ratio;
+    bool dimmed; // a control that does nothing in the current mode (drawn faint on purpose)
+};
+
+bool enabledHere(const juce::Component& c)
+{
+    for (auto* p = &c; p != nullptr; p = p->getParentComponent())
+        if (!p->isEnabled())
+            return false;
+    return true;
+}
+
+std::vector<Reading> readText(juce::AudioProcessorEditor& editor, const juce::Image& image, float scale, bool crop)
+{
+    namespace ui = glide90::ui;
+    std::vector<Reading> out;
+    auto measure = [&](juce::Component& c, juce::Rectangle<float> local, const juce::String& what, bool dimmed) {
+        const auto inEditor = editor.getLocalArea(&c, local);
+        const auto area = (inEditor * scale).getSmallestIntegerContainer();
+        out.push_back({ what, contrastIn(image, area), dimmed });
+        // GLIDE90_CONTRAST_CROPS=<folder>: each measured area as a picture, to check what was measured (of
+// the look and state GLIDE90_CONTRAST_ONLY names, "crimson/playing").
+        if (const auto crops = juce::SystemStats::getEnvironmentVariable("GLIDE90_CONTRAST_CROPS", {}); crop && crops.isNotEmpty())
+        {
+            juce::File file(juce::File(crops).getChildFile(juce::String((int) out.size()) + " " + what.removeCharacters("/") + ".png"));
+            file.deleteFile();
+            juce::FileOutputStream stream(file);
+            juce::PNGImageFormat().writeImageToStream(image.getClippedImage(area.getIntersection(image.getBounds())), stream);
+        }
+    };
+    std::function<void(juce::Component&)> walk = [&](juce::Component& c) {
+        if (!c.isVisible() && &c != &editor) // the editor itself is not on the desktop here
+            return;
+        const bool dim = !enabledHere(c);
+        const auto r = c.getLocalBounds().toFloat();
+        if (auto* k = dynamic_cast<ui::Knob*>(&c))
+        {
+            measure(c, r.withHeight(15.0f), k->getLabel() + " (name)", dim);
+            measure(c, r.withTrimmedTop(r.getHeight() - 14.0f), k->getLabel() + " (value)", dim);
+        }
+        else if (auto* list = dynamic_cast<ui::ChoiceList*>(&c))
+        {
+            measure(c, r.withHeight(15.0f), list->getLabel() + " (name)", dim);
+            for (int i = 0; i < list->numRows(); ++i)
+                measure(c, list->rowArea(i), list->getLabel() + " (row " + juce::String(i + 1) + ")", dim);
+        }
+        else if (auto* key = dynamic_cast<juce::TextButton*>(&c))
+            measure(c, r.withTrimmedTop(r.getHeight() * 0.35f), "key " + key->getButtonText(), dim);
+        else if (dynamic_cast<ui::GlassSelector*>(&c) != nullptr)
+            measure(c, r, "selector in " + c.getParentComponent()->getComponentID() + juce::String(typeid(*c.getParentComponent()).name()).fromLastOccurrenceOf("ui", false, false), dim);
+        else if (dynamic_cast<ui::ShapeDisplay*>(&c) || dynamic_cast<ui::GateDisplay*>(&c) || dynamic_cast<ui::HoldDisplay*>(&c))
+        {
+            const auto name = juce::String(typeid(c).name()).fromLastOccurrenceOf("ui", false, false);
+            measure(c, r.withHeight(juce::jmin(28.0f, r.getHeight())), name + " top line", dim);
+            if (r.getHeight() > 60.0f)
+                measure(c, r.withTrimmedTop(r.getHeight() - 26.0f), name + " bottom line", dim);
+        }
+        else if (dynamic_cast<ui::IoColumn*>(&c) != nullptr)
+        {
+            measure(c, { 0.0f, 8.0f, r.getWidth(), 26.0f }, "IN/OUT title", dim);
+            measure(c, { 44.0f, 80.0f, 28.0f, (float) ui::ModulePanel::kRuleY - 100.0f }, "IN/OUT dB scale", dim);
+        }
+        else if (auto* module = dynamic_cast<ui::ModulePanel*>(&c))
+        {
+            measure(c, { 28.0f, 8.0f, 200.0f, 26.0f }, "module title", dim);
+            if (dynamic_cast<ui::HoldPanel*>(module) == nullptr)
+                measure(c, { 0.0f, (float) ui::ModulePanel::kRuleY - 7.0f, r.getWidth(), 14.0f }, "group names", dim);
+        }
+        else if (dynamic_cast<ui::HeaderBar*>(&c) != nullptr)
+            measure(c, { 16.0f, 8.0f, 140.0f, 40.0f }, "logo", dim);
+        for (auto* child : c.getChildren())
+            walk(*child);
+    };
+    walk(editor);
+    return out;
+}
+} // namespace
+
+TEST_CASE("every look: text stands out from what is behind it, in every state (GLIDE90_SNAPSHOT also saves a tour)")
+{
+    namespace ui = glide90::ui;
+    const auto before = ui::theme().id;
+    const bool wasFolded = ui::holdFolded();
+    const auto snapshotPath = juce::SystemStats::getEnvironmentVariable("GLIDE90_SNAPSHOT", {});
+    const bool report = juce::SystemStats::getEnvironmentVariable("GLIDE90_CONTRAST", {}).isNotEmpty();
+    struct State
+    {
+        const char* name;
+        std::function<void(Glide90Processor&)> setUp;
+        bool folded;
+    };
+    const std::vector<State> states {
+        { "playing", [](Glide90Processor& p) { p.loadFactoryPreset(p.factoryPresetNames().indexOf("Held Chord")); }, false },
+        { "folded", [](Glide90Processor& p) { p.loadFactoryPreset(p.factoryPresetNames().indexOf("Held Chord")); }, true },
+        { "manual-midi",
+          [](Glide90Processor& p) {
+              p.loadFactoryPreset(p.factoryPresetNames().indexOf("Sampled Feedback"));
+              set(p, ids::glideMode, 3.0f);
+          },
+          false },
+        { "all-off",
+          [](Glide90Processor& p) {
+              set(p, ids::glideOn, 0.0f);
+              set(p, ids::glideMode, 0.0f);
+              set(p, ids::bypass, 1.0f);
+              set(p, ids::holdOn, 0.0f);
+              set(p, ids::holdMode, 1.0f);
+          },
+          false },
+    };
+    double worstText = 21.0, worstDimmed = 21.0;
+    for (int look = 0; look < ui::kThemeCount; ++look)
+        for (const auto& state : states)
+        {
+            CAPTURE(ui::themeAt(look).name);
+            CAPTURE(state.name);
+            ui::setTheme(ui::themeAt(look).id);
+            ui::setHoldFolded(state.folded);
+            auto p = make();
+            state.setUp(*p);
+            render(*p, strummed(1.5));
+            std::unique_ptr<juce::AudioProcessorEditor> editor(p->createEditor());
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+            const float scale = 2.0f;
+            const auto image = editor->createComponentSnapshot(editor->getLocalBounds(), true, scale);
+            if (snapshotPath.isNotEmpty())
+            {
+                const juce::File given(snapshotPath);
+                juce::File file(given.getSiblingFile(given.getFileNameWithoutExtension() + "-tour-" + ui::themeAt(look).key + "-"
+                                                     + state.name + ".png"));
+                file.deleteFile();
+                juce::FileOutputStream out(file);
+                REQUIRE(juce::PNGImageFormat().writeImageToStream(image, out));
+            }
+            const bool crop = juce::SystemStats::getEnvironmentVariable("GLIDE90_CONTRAST_ONLY", {})
+                              == juce::String(ui::themeAt(look).key) + "/" + state.name;
+            auto readings = readText(*editor, image, scale, crop);
+            // A module switched off shows its screen faint on purpose: held to the dimmed standard.
+            if (juce::String(state.name) == "all-off")
+                for (auto& r : readings)
+                    if (r.what.contains("Display"))
+                        r.dimmed = true;
+            std::sort(readings.begin(), readings.end(), [](const Reading& a, const Reading& b) { return a.ratio < b.ratio; });
+            for (const auto& r : readings)
+            {
+                // WCAG AA for text (4.5:1, less a little for how it is measured); what is dimmed on
+                // purpose still at 3:1.
+                CAPTURE(r.what);
+                CHECK(r.ratio >= (r.dimmed ? 3.0 : 4.4));
+                (r.dimmed ? worstDimmed : worstText) = std::min(r.dimmed ? worstDimmed : worstText, r.ratio);
+                if (report && (r.dimmed ? r.ratio < 2.5 : r.ratio < 4.5))
+                {
+                    const juce::String line = juce::String(ui::themeAt(look).name) + " | " + state.name + " | " + r.what
+                                              + (r.dimmed ? " [dimmed]" : "") + " | " + juce::String(r.ratio, 2);
+                    MESSAGE(line.toStdString());
+                }
+            }
+        }
+    MESSAGE("lowest contrast: text " << worstText << ", dimmed controls " << worstDimmed);
+    ui::setTheme(before);
     ui::setHoldFolded(wasFolded);
 }

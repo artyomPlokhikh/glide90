@@ -28,7 +28,7 @@ void drawLegend(juce::Graphics& g, const juce::String& text, juce::Rectangle<flo
                 juce::Justification j = juce::Justification::centred)
 {
     g.setFont(legendFont(13.5f));
-    g.setColour(enabled ? theme().text : theme().textDim.withMultipliedAlpha(0.6f));
+    g.setColour(enabled ? theme().text : theme().textDim.withMultipliedAlpha(kDimmedAlpha));
     // A long name is narrowed a little rather than cut.
     g.drawFittedText(themed(text), area.toNearestInt().expanded(6, 0), j, 1, 0.75f);
 }
@@ -318,7 +318,7 @@ void Knob::paint(juce::Graphics& g)
     drawKnob(g, knobArea(), param.convertTo0to1(value), enabled, size != Size::Small);
     if (editor == nullptr)
     {
-        const auto colour = !enabled ? theme().textDim.withMultipliedAlpha(0.5f) : (hover || dragging ? theme().accent : theme().textDim);
+        const auto colour = !enabled ? theme().textDim.withMultipliedAlpha(kDimmedAlpha) : (hover || dragging ? theme().accent : theme().textDim);
         drawReadout(g, param.getCurrentValueAsText(), valueArea().toFloat(), colour, juce::Justification::centred);
     }
 }
@@ -487,7 +487,7 @@ void ChoiceList::paint(juce::Graphics& g)
             g.drawEllipse(mark.reduced(0.5f), 1.0f);
         }
         g.setFont(legendFont(13.5f, on));
-        g.setColour(on && enabled ? t.text : t.textDim.withMultipliedAlpha(enabled ? 1.0f : 0.6f));
+        g.setColour(on && enabled ? t.text : t.textDim.withMultipliedAlpha(enabled ? 1.0f : kDimmedAlpha));
         g.drawText(themed(labels[i]), row.withLeft(x + 14.0f), juce::Justification::centredLeft);
     }
 }
@@ -590,7 +590,9 @@ void GlassSelector::paint(juce::Graphics& g)
     const auto r = getLocalBounds().toFloat();
     drawGlass(g, r);
     auto textArea = r.reduced(5.0f, 0.0f);
-    const auto ink = t.ink.withMultipliedAlpha(isEnabled() ? 1.0f : 0.35f);
+    const auto ink = t.ink.withMultipliedAlpha(isEnabled() ? 1.0f : kDimmedAlpha);
+    if (shown.isEmpty() && getText)
+        shown = getText(); // the first frame, before the timer has looked
     if (arrows)
     {
         g.setColour(ink.withMultipliedAlpha(0.85f));

@@ -103,6 +103,12 @@ void setMotionLevel(MotionLevel);
 bool holdFolded();
 void setHoldFolded(bool);
 
+// How faint a control is drawn while it does nothing in the current mode: clearly dimmer than the
+// live ones, still easy to read.
+inline constexpr float kDimmedAlpha = 0.72f;
+// How faint a module's screen is while the module is off.
+inline constexpr float kOffInkAlpha = 0.7f;
+
 // Text in the theme's case: legends, values and the screens' text all go through it.
 juce::String themed(const juce::String& text);
 

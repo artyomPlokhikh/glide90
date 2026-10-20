@@ -42,8 +42,9 @@ bool ShapeDisplay::editable() const
 
 juce::Rectangle<float> ShapeDisplay::plotArea() const
 {
-    // The right margin holds the depth scale.
-    return getLocalBounds().toFloat().withTrimmedLeft(16.0f).withTrimmedRight(54.0f).withTrimmedTop(34.0f).withTrimmedBottom(28.0f);
+    // The right margin holds the depth scale: as wide as its widest label (DEPTH goes to 300 cents).
+    const float scale = juce::jmax(46.0f, readoutWidth("-300CT")) + 12.0f;
+    return getLocalBounds().toFloat().withTrimmedLeft(16.0f).withTrimmedRight(scale).withTrimmedTop(34.0f).withTrimmedBottom(28.0f);
 }
 
 juce::Rectangle<float> ShapeDisplay::nameArea() const
@@ -198,7 +199,7 @@ void ShapeDisplay::paintStill(juce::Graphics& g)
 
     const auto r = plotArea();
     const bool on = proc.state().getRawParameterValue(ids::glideOn)->load() > 0.5f;
-    const auto ink = t.ink.withAlpha(on ? 1.0f : 0.35f);
+    const auto ink = t.ink.withAlpha(on ? 1.0f : kOffInkAlpha);
 
     // Grid: a dot at each eighth of the cycle and quarter of the depth.
     g.setColour(t.ink.withAlpha(0.18f));
@@ -229,7 +230,7 @@ void ShapeDisplay::paintStill(juce::Graphics& g)
     const float scaleX = r.getRight() + 4.0f, scaleW = bounds.getRight() - 8.0f - scaleX;
     auto scaleLabel = [&](float push) {
         const float y = toScreen(0.0f, push).y;
-        drawReadout(g, centsAt(push), { scaleX, y - 6.0f, scaleW, 12.0f }, t.ink.withAlpha(0.45f), juce::Justification::right);
+        drawReadout(g, centsAt(push), { scaleX, y - 6.0f, scaleW, 12.0f }, t.ink.withAlpha(0.65f), juce::Justification::right);
     };
     if (direction == sway::BendDirection::Both)
         scaleLabel(0.0f);
@@ -292,7 +293,7 @@ void ShapeDisplay::paintStill(juce::Graphics& g)
 
     // Bottom: what drives it.
     drawReadout(g, on ? statusText() : juce::String("GLIDE OFF"), { r.getX(), r.getBottom() + 8.0f, r.getWidth(), 14.0f },
-                t.ink.withAlpha(on ? 0.7f : 0.35f));
+                t.ink.withAlpha(on ? 0.85f : kOffInkAlpha));
 }
 
 void ShapeDisplay::paintMoving(juce::Graphics& g)
@@ -301,7 +302,7 @@ void ShapeDisplay::paintMoving(juce::Graphics& g)
     const auto bounds = getLocalBounds().toFloat();
     const auto r = plotArea();
     const bool on = proc.state().getRawParameterValue(ids::glideOn)->load() > 0.5f;
-    const auto ink = t.ink.withAlpha(on ? 1.0f : 0.35f);
+    const auto ink = t.ink.withAlpha(on ? 1.0f : kOffInkAlpha);
     // The dot that shows where the bar is: white on a dark screen, the ink on a light one.
     const auto dotColour = t.backdrop == Theme::Backdrop::Matte ? juce::Colours::white : t.ink;
 
@@ -345,7 +346,7 @@ void ShapeDisplay::paintMoving(juce::Graphics& g)
     {
         const bool flash = juce::Time::getMillisecondCounter() < attackFlashUntil;
         drawReadout(g, "PICK", { r.getX(), r.getBottom() + 8.0f, r.getWidth(), 14.0f },
-                    flash ? dotColour : t.ink.withAlpha(0.25f), juce::Justification::right, false, flash);
+                    flash ? dotColour : t.ink.withAlpha(0.45f), juce::Justification::right, false, flash);
     }
 }
 

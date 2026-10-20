@@ -62,6 +62,7 @@ public:
     ~Knob() override;
 
     void setLabel(const juce::String& text);
+    const juce::String& getLabel() const { return label; }
 
     // Every knob takes one column of the grid and one row (a hero two), whatever its size, so that
     // names and values line up.
@@ -107,13 +108,16 @@ public:
                const juce::StringArray& labels, const juce::Array<int>& values);
 
     static constexpr int kRowHeight = 17;
+    const juce::String& getLabel() const { return label; }
+    int numRows() const { return labels.size(); }
+    // Where row `row` is drawn (its mark and its name).
+    juce::Rectangle<float> rowArea(int row) const;
 
     void paint(juce::Graphics&) override;
     void mouseDown(const juce::MouseEvent&) override;
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
 private:
-    juce::Rectangle<float> rowArea(int row) const;
     void select(int row);
 
     juce::RangedAudioParameter& param;

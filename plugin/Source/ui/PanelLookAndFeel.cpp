@@ -19,28 +19,28 @@ const std::array<Theme, kThemeCount>& themes()
     static const std::array<Theme, kThemeCount> all { {
         { ThemeId::Crimson, "Crimson", "crimson",
           C(0xff141014), C(0xff1b1418), C(0xff2c2027),
-          C(0xffe9d6dc), C(0xff8f7880), C(0xffff4f9a),
+          C(0xffe9d6dc), C(0xffa8939b), C(0xffff4f9a),
           C(0xff0c080a), C(0xff33222a), C(0xffff5aa0), C(0x66ff5aa0), C(0xff160f13),
           C(0xff241a1f), C(0xff000000), C(0xffe9d6dc), C(0xff241a1f), C(0xffffffff),
           C(0xff1d1d20), C(0xffff4f9a), C(0xff8f7880),
           Theme::Knob::Rack, Theme::Face::Condensed, Theme::Backdrop::Matte, true, true, false, 6.0f },
         { ThemeId::Smear, "Smear", "smear",
           C(0xff8e0f33), C(0x572a0010), C(0x1fffffff),
-          C(0xfffff0f4), C(0xd4ffd0de), C(0xffffe6d0),
+          C(0xfffff0f4), C(0xf5ffd8e4), C(0xffffe6d0),
           C(0xc2fff4ec), C(0xfffff6ef), C(0xff5a0a22), C(0x735a0a22), C(0xfffbeee6),
-          C(0x1affffff), C(0x80fff0e6), C(0xfffff0f4), C(0xffefe3d0), C(0xff5a0a22),
+          C(0x47400012), C(0x80fff0e6), C(0xfffff0f4), C(0xffefe3d0), C(0xff5a0a22),
           C(0xffefe3d0), C(0xff5a0a22), C(0x80ffe6d0),
           Theme::Knob::Bakelite, Theme::Face::Barlow, Theme::Backdrop::Smear, false, false, true, 14.0f },
         { ThemeId::Duotone, "Duotone", "duotone",
           C(0xfff3a6bd), C(0xbff6b3c7), C(0xff1a0a0f),
-          C(0xff1a0a0f), C(0xff6b2a3d), C(0xffc8173f),
-          C(0xfff9cdd9), C(0xff1a0a0f), C(0xffc8173f), C(0x80c8173f), C(0xfff9cdd9),
+          C(0xff1a0a0f), C(0xff561c2e), C(0xffc8173f),
+          C(0xfff9cdd9), C(0xff1a0a0f), C(0xffae0f33), C(0x80ae0f33), C(0xfff9cdd9),
           C(0x00000000), C(0xff1a0a0f), C(0xff1a0a0f), C(0xff1a0a0f), C(0xfff9cdd9),
           C(0xfff9cdd9), C(0xff1a0a0f), C(0xff1a0a0f),
           Theme::Knob::Flat, Theme::Face::Courier, Theme::Backdrop::Duotone, false, false, true, 0.0f },
         { ThemeId::Instant, "Instant", "instant",
           C(0xffeaa0b4), C(0x42ffffff), C(0x99ffffff),
-          C(0xff5a1a2c), C(0xb35a1a2c), C(0xff8a2340),
+          C(0xff5a1a2c), C(0xf05a1a2c), C(0xff8a2340),
           C(0xb8fffaf6), C(0xf2ffffff), C(0xff8a2340), C(0x738a2340), C(0xfffdf1f3),
           C(0x4dffffff), C(0x598a2340), C(0xff5a1a2c), C(0xff8a2340), C(0xfffff3f6),
           C(0x4dffffff), C(0xff8a2340), C(0x408a2340),
@@ -359,8 +359,10 @@ juce::Font legendFont(float height, bool strong)
 
 juce::Font readoutFont(float height, bool strong)
 {
+    // Light only where it is large (the preset's name, the bar's reading): small values in a light
+    // face are too thin to read easily.
     static const auto light = typeface(GlideFonts::BarlowLight_ttf, GlideFonts::BarlowLight_ttfSize);
-    if (theme().face == Theme::Face::Barlow && !strong)
+    if (theme().face == Theme::Face::Barlow && !strong && height >= 20.0f)
         return juce::Font(juce::FontOptions(light).withHeight(height));
     return legendFont(height, strong || theme().face == Theme::Face::Courier);
 }
@@ -473,7 +475,7 @@ void drawGroupRule(juce::Graphics& g, const juce::String& name, float x, float w
     g.drawHorizontalLine(juce::roundToInt(y), x, mid - textW * 0.5f - gap);
     g.drawHorizontalLine(juce::roundToInt(y), mid + textW * 0.5f + gap, x + width);
     g.setFont(font);
-    g.setColour(quiet ? t.textDim.withMultipliedAlpha(0.5f) : t.textDim);
+    g.setColour(quiet ? t.textDim.withMultipliedAlpha(kDimmedAlpha) : t.textDim);
     g.drawText(text, juce::Rectangle<float>(textW + 4.0f, 12.0f).withCentre({ mid, y }), juce::Justification::centred, false);
 }
 
@@ -910,7 +912,7 @@ void PanelLookAndFeel::drawPopupMenuItem(juce::Graphics& g, const juce::Rectangl
         g.setColour(t.ink);
         g.fillRect(juce::Rectangle<float>(3.0f, r.getHeight() - 10.0f).withPosition(r.getX() + 9.0f, r.getY() + 5.0f));
     }
-    const auto colour = !isActive ? t.ink.withAlpha(0.3f) : t.ink.withAlpha(isTicked || isHighlighted ? 1.0f : 0.8f);
+    const auto colour = isActive ? t.ink : t.ink.withAlpha(0.8f); // greyed out, still readable
     drawReadout(g, text, r.withTrimmedLeft(22.0f).withTrimmedRight(hasSubMenu ? 20.0f : 8.0f), colour);
     if (hasSubMenu)
     {
@@ -925,7 +927,7 @@ void PanelLookAndFeel::drawPopupMenuItem(juce::Graphics& g, const juce::Rectangl
 void PanelLookAndFeel::drawPopupMenuSectionHeader(juce::Graphics& g, const juce::Rectangle<int>& area, const juce::String& name)
 {
     g.setFont(legendFont(12.0f, true).withExtraKerningFactor(0.1f));
-    g.setColour(theme().ink.withAlpha(0.6f));
+    g.setColour(theme().ink);
     g.drawText(themed(name), area.toFloat().withTrimmedLeft(12.0f).withTrimmedTop(4.0f), juce::Justification::centredLeft);
 }
 
@@ -1066,7 +1068,7 @@ void PanelLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton& b, bo
     if (segment)
     {
         g.setFont(legendFont(rack ? 13.0f : 14.0f, true));
-        g.setColour(on ? (rack ? juce::Colours::white : t.keyOnText) : t.keyText.withMultipliedAlpha(0.75f));
+        g.setColour(on ? (rack ? juce::Colours::white : t.keyOnText) : t.keyText.withMultipliedAlpha(0.9f));
         g.drawText(themed(b.getButtonText()), b.getLocalBounds(), juce::Justification::centred);
         return;
     }
@@ -1077,7 +1079,7 @@ void PanelLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton& b, bo
 
     auto colour = dialog ? t.ink : ((on && !rack) ? t.keyOnText : t.keyText);
     if (!b.isEnabled())
-        colour = colour.withMultipliedAlpha(0.35f);
+        colour = colour.withMultipliedAlpha(kDimmedAlpha);
     g.setColour(colour);
 
     if (const auto icon = b.getProperties()[kIcon].toString(); icon == "undo" || icon == "redo")

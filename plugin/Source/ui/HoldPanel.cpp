@@ -295,7 +295,7 @@ void HoldDisplay::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWhe
 void HoldDisplay::paintWave(juce::Graphics& g, juce::Rectangle<float> plot, bool grains)
 {
     const auto& t = theme();
-    const auto ink = t.ink.withAlpha(on ? 1.0f : 0.35f);
+    const auto ink = t.ink.withAlpha(on ? 1.0f : kOffInkAlpha);
     const float mid = plot.getCentreY();
     // The waveform, scaled to its loudest so a quiet chord still shows.
     float loudest = 1e-4f;
@@ -345,7 +345,7 @@ void HoldDisplay::paint(juce::Graphics& g)
     const auto& t = theme();
     const auto bounds = getLocalBounds().toFloat();
     drawGlass(g, bounds);
-    const auto ink = t.ink.withAlpha(on ? 1.0f : 0.35f);
+    const auto ink = t.ink.withAlpha(on ? 1.0f : kOffInkAlpha);
     const float level = juce::jlimit(0.0f, 1.0f, (levelDb + 60.0f) / 60.0f);
     const bool toGate = feed == (int) hold::Feed::Gate && !gateBypassed;
 
@@ -355,7 +355,7 @@ void HoldDisplay::paint(juce::Graphics& g)
         auto line = status();
         if (on)
             line << "  " << modeNames()[mode] << (toGate ? " > GATE" : " > OUT");
-        drawReadout(g, line, bounds.reduced(10.0f, 0.0f).withWidth(bounds.getWidth() * 0.6f), t.ink.withAlpha(on ? 0.8f : 0.35f));
+        drawReadout(g, line, bounds.reduced(10.0f, 0.0f).withWidth(bounds.getWidth() * 0.6f), t.ink.withAlpha(on ? 0.95f : kOffInkAlpha));
         const auto plot = bounds.withTrimmedLeft(bounds.getWidth() * 0.62f).reduced(8.0f, 5.0f).withTrimmedBottom(3.0f);
         paintWave(g, plot, true);
         g.setColour(ink.withMultipliedAlpha(0.8f));
@@ -363,7 +363,7 @@ void HoldDisplay::paint(juce::Graphics& g)
         return;
     }
 
-    const auto dimText = t.ink.withAlpha(on ? 0.45f : 0.25f);
+    const auto dimText = t.ink.withAlpha(on ? 0.7f : 0.55f);
     auto lit = [&](Spot a, Spot b = Spot::Nowhere, Spot c = Spot::Nowhere) {
         return ink.withMultipliedAlpha(hover == a || hover == b || hover == c ? 1.0f : 0.8f);
     };
