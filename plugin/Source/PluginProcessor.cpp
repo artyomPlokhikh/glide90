@@ -12,12 +12,7 @@ namespace glide90
 namespace
 {
 
-// Left by older versions (the SPX90 memories and programs): dropped when a state is restored.
-const juce::Identifier kAlgorithmProp { "algorithm" }, kLoadedProp { "loadedMemory" }, kMemoriesTree { "MEMORIES" };
-const juce::Identifier kPresetProp { "preset" },
-    kPresetNameProp { "presetName" }, kVersionProp { "version" }, kScaleProp { "uiScale" };
-// 2: the Glide parameters. Older states had a different bar (Sway) and no glide_* values worth keeping.
-constexpr int kStateVersion = 2;
+const juce::Identifier kPresetProp { "preset" }, kPresetNameProp { "presetName" }, kScaleProp { "uiScale" };
 // The preset as loaded, kept with each A/B slot: what the * after the preset's name compares against.
 const juce::Identifier kBaselineTree { "BASELINE" };
 const juce::Identifier kShapeTree { "SHAPE" }, kPointTree { "POINT" }, kXProp { "x" }, kYProp { "y" };
@@ -26,13 +21,14 @@ const juce::Identifier kPresetIsUserProp { "presetIsUser" };
 const juce::Identifier kAbTree { "AB" }, kAbSlotProp { "slot" }, kAbIndexProp { "selected" };
 constexpr const char* kPresetExtension = ".glide90";
 
-// The only parameters that belong to the plugin instance rather than to the sound: the rear-panel
-// level switches, which match the unit to the user's rig. A and B share them and presets leave them
-// alone. Everything else is part of the sound: in each A/B slot, in presets and in undo.
+// The only parameters that belong to the plugin instance rather than to the sound: INPUT and the
+// input mode, which match the plugin to the user's rig (the guitar's level, a mono or stereo track),
+// and HOLD's FREEZE key, which is played like a footswitch. A and B share them and presets leave them
+// alone. Everything else is part of the sound: in each A/B slot, in presets and in undo (INPUT and
+// the input mode are in undo too; FREEZE is not).
 const juce::StringArray& instanceParameters()
 {
-    // HOLD's FREEZE key is played, like a footswitch: presets, A/B and undo leave it as it is.
-    static const juce::StringArray ids { ids::inputSwitch, ids::outputSwitch, ids::holdLatch };
+    static const juce::StringArray ids { ids::input, ids::inputMode, ids::holdFreeze };
     return ids;
 }
 
@@ -49,10 +45,10 @@ struct FactoryPreset
 const std::vector<std::pair<const char*, float>>& plainBase()
 {
     static const std::vector<std::pair<const char*, float>> base {
-        { ids::erRoomSize, 3.3f },   { ids::erLiveness, 5.0f },     { ids::erDelay, 25.0f },
+        { ids::gateRoomSize, 3.3f },   { ids::gateLiveness, 5.0f },     { ids::gatePreDelay, 25.0f },
         { ids::glideMode, 0.0f },    { ids::glidePeriod, 333.0f },  { ids::glideDepth, 30.0f },
         { ids::glideShape, (float) sway::ShapePreset::Sine },       { ids::glideRandom, 0.15f },
-        { ids::glideSmooth, 0.2f },  { ids::glideSensitivity, 0.5f }, { ids::glideDynamics, 0.0f },
+        { ids::glideSmooth, 0.2f },  { ids::pickSensitivity, 0.5f }, { ids::glideDynamics, 0.0f },
     };
     return base;
 }
@@ -65,27 +61,27 @@ const std::vector<FactoryPreset>& factoryPresets()
         // Pushing the bar down on each strum into a long reverse gate; a harder strike bends deeper.
         { "Glide Guitar", false, {} },
         { "Steep Swell", true,
-          { { ids::erRoomSize, 20.0f }, { ids::erLiveness, 10.0f }, { ids::erDelay, 0.1f }, { ids::glideMode, 2.0f }, { ids::glidePeriod, 450.0f }, { ids::glideDepth, 35.0f },
+          { { ids::gateRoomSize, 20.0f }, { ids::gateLiveness, 10.0f }, { ids::gatePreDelay, 0.1f }, { ids::glideMode, 2.0f }, { ids::glidePeriod, 450.0f }, { ids::glideDepth, 35.0f },
             { ids::glideShape, shape(ShapePreset::Dive) }, { ids::glideRandom, 0.2f }, { ids::glideSmooth, 0.2f } } },
         { "Drowned Shimmy", true,
-          { { ids::erRoomSize, 20.0f }, { ids::erLiveness, 7.0f }, { ids::erDelay, 75.0f }, { ids::glidePeriod, 900.0f }, { ids::glideDepth, 45.0f }, { ids::glideShape, shape(ShapePreset::Shimmy) },
+          { { ids::gateRoomSize, 20.0f }, { ids::gateLiveness, 7.0f }, { ids::gatePreDelay, 75.0f }, { ids::glidePeriod, 900.0f }, { ids::glideDepth, 45.0f }, { ids::glideShape, shape(ShapePreset::Shimmy) },
             { ids::glideRandom, 0.5f }, { ids::glideSmooth, 0.35f }, { ids::glideTwinDetune, 10.0f },
             { ids::glideTwinLevel, 0.4f } } },
         // Two strings tuned almost alike, bent together.
         { "Two-String Unison", true,
-          { { ids::erRoomSize, 20.0f }, { ids::erLiveness, 4.0f }, { ids::erDelay, 25.0f }, { ids::glidePeriod, 1500.0f }, { ids::glideDepth, 15.0f }, { ids::glideRandom, 0.6f },
+          { { ids::gateRoomSize, 20.0f }, { ids::gateLiveness, 4.0f }, { ids::gatePreDelay, 25.0f }, { ids::glidePeriod, 1500.0f }, { ids::glideDepth, 15.0f }, { ids::glideRandom, 0.6f },
             { ids::glideSmooth, 0.5f }, { ids::glideTwinDetune, 15.0f }, { ids::glideTwinLevel, 1.0f } } },
         // Soft playing with the bar and the guitar's tone knob down.
         { "Dark Slow Bend", true,
-          { { ids::erRoomSize, 20.0f }, { ids::erLiveness, 5.0f }, { ids::erDelay, 25.0f }, { ids::erLpf, 8.0f /* 2.5 kHz */ }, { ids::glidePeriod, 1200.0f }, { ids::glideDepth, 25.0f }, { ids::glideRandom, 0.4f },
+          { { ids::gateRoomSize, 20.0f }, { ids::gateLiveness, 5.0f }, { ids::gatePreDelay, 25.0f }, { ids::gateLpf, 8.0f /* 2.5 kHz */ }, { ids::glidePeriod, 1200.0f }, { ids::glideDepth, 25.0f }, { ids::glideRandom, 0.4f },
             { ids::glideSmooth, 0.5f } } },
         // Hardly a bend at all: a clean part that never quite sits still.
         { "Slow Drift", true,
-          { { ids::erRoomSize, 8.0f }, { ids::erLiveness, 5.0f }, { ids::erDelay, 10.0f }, { ids::balance, 0.45f }, { ids::glidePeriod, 2400.0f },
+          { { ids::gateRoomSize, 8.0f }, { ids::gateLiveness, 5.0f }, { ids::gatePreDelay, 10.0f }, { ids::gateMix, 0.45f }, { ids::glidePeriod, 2400.0f },
             { ids::glideDepth, 8.0f }, { ids::glideDirection, 1.0f }, { ids::glideRandom, 0.7f }, { ids::glideSmooth, 0.6f } } },
         // Everything at once, the bar after the reverb: a wall.
         { "Wall", true,
-          { { ids::erRoomSize, 20.0f }, { ids::erLiveness, 10.0f }, { ids::erDelay, 0.1f }, { ids::glidePosition, 1.0f }, { ids::glidePeriod, 1200.0f },
+          { { ids::gateRoomSize, 20.0f }, { ids::gateLiveness, 10.0f }, { ids::gatePreDelay, 0.1f }, { ids::glidePosition, 1.0f }, { ids::glidePeriod, 1200.0f },
             { ids::glideDepth, 25.0f }, { ids::glideRandom, 0.4f }, { ids::glideSmooth, 0.4f }, { ids::glideTwinDetune, 12.0f },
             { ids::glideTwinLevel, 0.7f } } },
         { "Seasick (Sync)", true,
@@ -93,53 +89,45 @@ const std::vector<FactoryPreset>& factoryPresets()
             { ids::glideDepth, 15.0f }, { ids::glideDirection, 1.0f }, { ids::glideRandom, 0.3f },
             { ids::glideTwinDetune, 12.0f }, { ids::glideTwinLevel, 0.5f } } },
         { "Bar-Long Swell (Sync)", true,
-          { { ids::erRoomSize, 8.0f }, { ids::erLiveness, 5.0f }, { ids::erDelay, 10.0f }, { ids::glideMode, 1.0f }, { ids::glideDivision, 2.0f }, { ids::glideShape, shape(ShapePreset::Swell) },
+          { { ids::gateRoomSize, 8.0f }, { ids::gateLiveness, 5.0f }, { ids::gatePreDelay, 10.0f }, { ids::glideMode, 1.0f }, { ids::glideDivision, 2.0f }, { ids::glideShape, shape(ShapePreset::Swell) },
             { ids::glideDepth, 30.0f }, { ids::glideRandom, 0.1f } } },
         { "Pitch-Bend Bar", true,
           { { ids::glideMode, 3.0f }, { ids::glideManualSource, (float) ManualSource::PitchBend },
             { ids::glideDepth, 200.0f }, { ids::glideDirection, 1.0f }, { ids::glideSmooth, 0.15f } } },
         { "Expression Bar", true,
-          { { ids::erRoomSize, 20.0f }, { ids::erLiveness, 4.0f }, { ids::erDelay, 25.0f }, { ids::glideMode, 3.0f }, { ids::glideManualSource, (float) ManualSource::Expression },
+          { { ids::gateRoomSize, 20.0f }, { ids::gateLiveness, 4.0f }, { ids::gatePreDelay, 25.0f }, { ids::glideMode, 3.0f }, { ids::glideManualSource, (float) ManualSource::Expression },
             { ids::glideDepth, 100.0f }, { ids::glideSmooth, 0.3f } } },
         // HOLD: each strum held and bent by the bar on the next one, swelling backwards through the gate.
         { "Held Chord", true,
-          { { ids::erRoomSize, 20.0f }, { ids::erLiveness, 7.0f }, { ids::erDelay, 25.0f }, { ids::glideMode, 2.0f },
+          { { ids::gateRoomSize, 20.0f }, { ids::gateLiveness, 7.0f }, { ids::gatePreDelay, 25.0f }, { ids::glideMode, 2.0f },
             { ids::glidePeriod, 600.0f }, { ids::glideDepth, 40.0f }, { ids::glideShape, shape(ShapePreset::Dive) },
-            { ids::holdOn, 1.0f }, { ids::holdDuck, 0.7f }, { ids::holdLevel, 0.8f }, { ids::holdSpread, 6.0f } } },
+            { ids::holdOn, 1.0f }, { ids::holdDuck, 0.7f }, { ids::holdLevel, -1.9f }, { ids::holdSpread, 6.0f } } },
         // Strum to capture, then play the held chord from a keyboard and bend it with the wheel.
         { "Sampled Feedback", true,
-          { { ids::erRoomSize, 20.0f }, { ids::erLiveness, 5.0f }, { ids::glideMode, 3.0f },
+          { { ids::gateRoomSize, 20.0f }, { ids::gateLiveness, 5.0f }, { ids::glideMode, 3.0f },
             { ids::glideManualSource, (float) ManualSource::PitchBend }, { ids::glideDepth, 200.0f },
             { ids::glideDirection, 1.0f }, { ids::glideSmooth, 0.15f }, { ids::glideMix, 0.0f }, { ids::holdOn, 1.0f },
-            { ids::holdMode, (float) hold::Mode::Midi }, { ids::holdDuck, 0.3f }, { ids::holdLevel, 0.9f },
+            { ids::holdMode, (float) hold::Mode::Midi }, { ids::holdDuck, 0.3f }, { ids::holdLevel, -0.9f },
             { ids::holdSize, 250.0f }, { ids::holdDensity, 3.0f }, { ids::holdSpread, 4.0f } } },
         // FREEZE a chord into a slow, thick wall that keeps drifting with the bar.
         { "Frozen Wall", true,
-          { { ids::erRoomSize, 20.0f }, { ids::erLiveness, 8.0f }, { ids::erDelay, 50.0f }, { ids::glidePeriod, 2400.0f },
+          { { ids::gateRoomSize, 20.0f }, { ids::gateLiveness, 8.0f }, { ids::gatePreDelay, 50.0f }, { ids::glidePeriod, 2400.0f },
             { ids::glideDepth, 20.0f }, { ids::glideRandom, 0.6f }, { ids::glideSmooth, 0.5f }, { ids::holdOn, 1.0f },
             { ids::holdMode, (float) hold::Mode::Latch }, { ids::holdSize, 300.0f }, { ids::holdDensity, 6.0f },
             { ids::holdSmear, 400.0f }, { ids::holdSpread, 20.0f }, { ids::holdReverse, 0.2f }, { ids::holdDuck, 0.2f },
-            { ids::holdLevel, 0.8f } } },
+            { ids::holdLevel, -1.9f } } },
         // Grains of the last moments trailing behind the guitar, some backwards.
         { "Smear Trail", true,
-          { { ids::erRoomSize, 8.0f }, { ids::erLiveness, 5.0f }, { ids::erDelay, 10.0f }, { ids::balance, 0.6f },
+          { { ids::gateRoomSize, 8.0f }, { ids::gateLiveness, 5.0f }, { ids::gatePreDelay, 10.0f }, { ids::gateMix, 0.6f },
             { ids::glidePeriod, 1200.0f }, { ids::glideDepth, 15.0f }, { ids::glideRandom, 0.4f }, { ids::holdOn, 1.0f },
             { ids::holdMode, (float) hold::Mode::Live }, { ids::holdSize, 120.0f }, { ids::holdDensity, 5.0f },
             { ids::holdSmear, 500.0f }, { ids::holdSpread, 12.0f }, { ids::holdReverse, 0.4f }, { ids::holdDuck, 0.5f },
-            { ids::holdFeed, 1.0f }, { ids::holdLevel, 0.6f } } },
+            { ids::holdFeed, 1.0f }, { ids::holdLevel, -4.4f } } },
         { "Reverse Gate Only", true, { { ids::glideOn, 0.0f } } },
         { "Short Reverse", true,
-          { { ids::erRoomSize, 8.0f }, { ids::erLiveness, 5.0f }, { ids::erDelay, 10.0f }, { ids::glideOn, 0.0f } } },
+          { { ids::gateRoomSize, 8.0f }, { ids::gateLiveness, 5.0f }, { ids::gatePreDelay, 10.0f }, { ids::glideOn, 0.0f } } },
     };
     return presets;
-}
-
-// Parameters older versions had (the SPX90 memory number and the early-reflection type).
-void removeRetiredParameters(juce::ValueTree& params)
-{
-    for (int i = params.getNumChildren(); --i >= 0;)
-        if (const auto id = params.getChild(i).getProperty("id").toString(); id == "memory" || id == "er_type")
-            params.removeChild(i, nullptr);
 }
 
 void raiseTo(std::atomic<float>& a, float v)
@@ -224,15 +212,15 @@ Glide90Processor::Glide90Processor()
       apvts(*this, nullptr, "GLIDE90", createParameterLayout())
 {
     auto p = [this](const char* id) { return apvts.getRawParameterValue(id); };
-    raw = { p(ids::erRoomSize),        p(ids::erLiveness),     p(ids::erDelay),
-            p(ids::erLpf),            p(ids::balance),           p(ids::outLevel),       p(ids::input),
-            p(ids::inputSwitch),      p(ids::outputSwitch),      p(ids::bypass),         p(ids::glideOn),
+    raw = { p(ids::gateRoomSize),        p(ids::gateLiveness),     p(ids::gatePreDelay),
+            p(ids::gateLpf),          p(ids::gateMix),           p(ids::output),         p(ids::input),
+            p(ids::gateOn),           p(ids::glideOn),
             p(ids::glideMode),        p(ids::glidePeriod),       p(ids::glideDivision),  p(ids::glideDepth),
             p(ids::glideDirection),   p(ids::glideRandom),       p(ids::glideSmooth),    p(ids::glideShape),
-            p(ids::glideTriggerSource), p(ids::glideSensitivity), p(ids::glideManualSource), p(ids::glideBar),
+            p(ids::glideTriggerSource), p(ids::pickSensitivity), p(ids::glideManualSource), p(ids::glideBar),
             p(ids::glideTwinDetune),  p(ids::glideTwinLevel),    p(ids::glideMix),       p(ids::glidePosition),
             p(ids::outputMode),       p(ids::glideDynamics),     p(ids::inputMode),
-            p(ids::holdOn),           p(ids::holdMode),          p(ids::holdLatch),      p(ids::holdFollow),
+            p(ids::holdOn),           p(ids::holdMode),          p(ids::holdFreeze),      p(ids::holdFollow),
             p(ids::holdSize),         p(ids::holdDensity),       p(ids::holdSmear),      p(ids::holdSpread),
             p(ids::holdReverse),      p(ids::holdDuck),          p(ids::holdDecay),      p(ids::holdLevel),
             p(ids::holdFeed),         p(ids::holdCharacter),     p(ids::holdRoot) };
@@ -271,6 +259,8 @@ void Glide90Processor::prepareToPlay(double sampleRate, int samplesPerBlock)
     bypassDelay.setSize(2, latency + 1);
     dryOut.setSize(2, maxBlock);
     fadeLength = juce::jmax(1, juce::roundToInt(0.01 * sampleRate));
+    inputGain.reset(sampleRate, 0.02);
+    outputGain.reset(sampleRate, 0.02);
     reset();
 }
 
@@ -279,6 +269,8 @@ void Glide90Processor::reset()
     activePost = (GlidePosition) choice(raw.glidePosition) == GlidePosition::Post;
     orderFadeLeft = 0;
     stereoMix = choice(raw.inputMode) == (int) InputMode::Stereo ? 1.0f : 0.0f;
+    inputGain.setCurrentAndTargetValue(gainOf(raw.input->load()));
+    outputGain.setCurrentAndTargetValue(gainOf(raw.output->load()));
     spxEngine.reset();
     glideProcessor.reset();
     holdEngine.reset();
@@ -372,16 +364,14 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
     spx::SpxSettings s;
     s.program = kProgram;
     s.er = spx::romProgram(kProgram).er; // the reverse gate's type and density
-    s.er.roomSize = (float) juce::roundToInt(raw.erRoomSize->load() * 10.0f) / 10.0f;
-    s.er.liveness = choice(raw.erLiveness);
-    s.er.delayMs = (float) juce::roundToInt(raw.erDelay->load() * 10.0f) / 10.0f;
-    s.er.lpfHz = spx::kLpfValuesHz[(size_t) juce::jlimit(0, (int) spx::kLpfValuesHz.size() - 1, choice(raw.erLpf))];
-    s.balance = raw.balance->load();
-    s.outLevel = raw.outLevel->load();
-    s.inputKnob = raw.input->load();
-    s.inputMinus20 = raw.inputSwitch->load() > 0.5f;
-    s.outputMinus20 = raw.outputSwitch->load() > 0.5f;
-    s.bypass = raw.bypass->load() > 0.5f;
+    s.er.roomSize = (float) juce::roundToInt(raw.gateRoomSize->load() * 10.0f) / 10.0f;
+    s.er.liveness = choice(raw.gateLiveness);
+    s.er.delayMs = (float) juce::roundToInt(raw.gatePreDelay->load() * 10.0f) / 10.0f;
+    s.er.lpfHz = spx::kLpfValuesHz[(size_t) juce::jlimit(0, (int) spx::kLpfValuesHz.size() - 1, choice(raw.gateLpf))];
+    s.balance = raw.gateMix->load();
+    s.bypass = raw.gateOn->load() < 0.5f;
+    inputGain.setTargetValue(gainOf(raw.input->load()));
+    outputGain.setTargetValue(gainOf(raw.output->load()));
 
     // Host tempo and position for SYNC.
     double bpm = 120.0, hostBeats = -1.0;
@@ -407,7 +397,7 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
     w.random = raw.glideRandom->load();
     w.smooth = raw.glideSmooth->load();
     w.triggerFromPick = (TriggerSource) choice(raw.glideTriggerSource) == TriggerSource::Pick;
-    w.sensitivity = raw.glideSensitivity->load();
+    w.sensitivity = raw.pickSensitivity->load();
     w.dynamics = raw.glideDynamics->load();
     w.midiTriggerVelocity = noteVelocity;
     w.twinDetuneCents = raw.glideTwinDetune->load();
@@ -443,9 +433,9 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
     hold::HoldSettings h;
     h.enabled = raw.holdOn->load() > 0.5f;
     h.mode = (hold::Mode) choice(raw.holdMode);
-    h.latched = raw.holdLatch->load() > 0.5f;
+    h.latched = raw.holdFreeze->load() > 0.5f;
     // One PICK SENS for the plugin: how hard the player picks is the same for the glide and HOLD.
-    h.sensitivity = raw.glideSensitivity->load();
+    h.sensitivity = raw.pickSensitivity->load();
     h.follow = raw.holdFollow->load();
     h.followBar = w.enabled;
     h.sizeMs = raw.holdSize->load();
@@ -456,7 +446,7 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
     h.duck = raw.holdDuck->load();
     const float decay = raw.holdDecay->load();
     h.decaySeconds = decay >= kHoldDecayForever ? std::numeric_limits<float>::infinity() : decay;
-    h.level = raw.holdLevel->load();
+    h.level = gainOf(raw.holdLevel->load());
     // With the reverse gate bypassed there is no gate to feed: HOLD goes to the output instead.
     h.feed = s.bypass ? hold::Feed::Out : (hold::Feed) choice(raw.holdFeed);
     h.character = (hold::Character) choice(raw.holdCharacter);
@@ -522,6 +512,7 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
     lastBarCents.store(glideProcessor.barCents());
     lastGlidePhase.store(glideProcessor.phase());
     lastPickAttacks.store(glideProcessor.pickAttacks());
+    lastPicksHeard.store(holdEngine.pickAttacks()); // HOLD's detector listens even while HOLD is off
 }
 
 void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start, int num, const spx::SpxSettings& s,
@@ -567,6 +558,15 @@ void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start,
         juce::FloatVectorOperations::copy(inL, sum, num);
         juce::FloatVectorOperations::copy(inR, sum, num);
     }
+    // INPUT, before anything else hears the guitar: the pick detector, HOLD, the glide and the gate.
+    if (inputGain.isSmoothing() || !juce::exactlyEqual(inputGain.getTargetValue(), 1.0f))
+        for (int i = 0; i < num; ++i)
+        {
+            const float g = inputGain.getNextValue();
+            inL[i] *= g;
+            inR[i] *= g;
+            sum[i] *= g;
+        }
     // Into cleared engines the input fades in: a sudden start would come back from every reflection.
     for (int i = 0; i < num && inputRampLeft > 0; ++i, --inputRampLeft)
     {
@@ -596,11 +596,10 @@ void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start,
         glideProcessor.processWithBar(channels, twoInputs ? 2 : 1, num, w, bar);
     }
 
-    const float gain = spx::SpxEngine::inputGain(s.inputKnob, s.inputMinus20);
     for (const float* ch : { inL, inR })
     {
-        raiseTo(inputPeak, juce::FloatVectorOperations::findMaximum(ch, num) * gain);
-        raiseTo(inputPeak, -juce::FloatVectorOperations::findMinimum(ch, num) * gain);
+        raiseTo(inputPeak, juce::FloatVectorOperations::findMaximum(ch, num));
+        raiseTo(inputPeak, -juce::FloatVectorOperations::findMinimum(ch, num));
     }
 
     float* l = buffer.getWritePointer(0, start);
@@ -618,6 +617,15 @@ void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start,
         juce::FloatVectorOperations::add(l, holdL, num);
         juce::FloatVectorOperations::add(r, holdR, num);
     }
+
+    // OUTPUT, after everything: the modules, HOLD on either path, the gate on or off.
+    if (outputGain.isSmoothing() || !juce::exactlyEqual(outputGain.getTargetValue(), 1.0f))
+        for (int i = 0; i < num; ++i)
+        {
+            const float g = outputGain.getNextValue();
+            l[i] *= g;
+            r[i] *= g;
+        }
 
     switch ((OutputMode) choice(raw.outputMode))
     {
@@ -925,7 +933,7 @@ juce::ValueTree Glide90Processor::editState()
     auto state = presetState(true);
     auto params = state.getChildWithName(apvts.state.getType());
     for (int i = params.getNumChildren(); --i >= 0;)
-        if (params.getChild(i).getProperty("id").toString() == ids::holdLatch)
+        if (params.getChild(i).getProperty("id").toString() == ids::holdFreeze)
             params.removeChild(i, nullptr);
     return state;
 }
@@ -1009,7 +1017,7 @@ void Glide90Processor::setParameter(const char* id, float plainValue)
 void Glide90Processor::getStateInformation(juce::MemoryBlock& destData)
 {
     // The project is made of A/B slots only, plus the instance's own settings: the slot that plays,
-    // laid out on the parameter tree (as older versions read it, the level switches included), and
+    // laid out on the parameter tree (the instance's own parameters included), and
     // both slots again under AB. What a slot holds is saved with no further step.
     const auto active = slotState();
     juce::ValueTree st(apvts.state.getType());
@@ -1021,7 +1029,6 @@ void Glide90Processor::getStateInformation(juce::MemoryBlock& destData)
         if (!child.hasType(st.getType()))
             st.appendChild(child.createCopy(), nullptr);
 
-    st.setProperty(kVersionProp, kStateVersion, nullptr);
     st.setProperty(kScaleProp, scale, nullptr);
     juce::ValueTree ab(kAbTree);
     ab.setProperty(kAbIndexProp, abIndex, nullptr);
@@ -1047,7 +1054,6 @@ void Glide90Processor::setStateInformation(const void* data, int sizeInBytes)
 
     // The instance's own settings.
     setUiScale((float) st.getProperty(kScaleProp, 1.0f));
-    const int version = (int) st.getProperty(kVersionProp, 1);
     abStates = {};
     abIndex = 0;
     if (const auto ab = st.getChildWithName(kAbTree); ab.isValid())
@@ -1058,26 +1064,10 @@ void Glide90Processor::setStateInformation(const void* data, int sizeInBytes)
                 abStates[(size_t) juce::jlimit(0, 1, (int) slot.getProperty(kAbSlotProp, 0))] = slot.createCopy();
     }
 
-    // What older versions left.
-    for (const auto& type : { kMemoriesTree, kAbTree })
-        st.removeChild(st.getChildWithName(type), nullptr);
-    for (const auto& prop : { kAlgorithmProp, kLoadedProp, kVersionProp, kScaleProp })
-        st.removeProperty(prop, nullptr);
-    removeRetiredParameters(st);
-    // A state from before the input had two modes: it summed its inputs, and keeps doing so.
-    if (!st.getChildWithProperty("id", ids::inputMode).isValid())
-    {
-        juce::ValueTree mode("PARAM");
-        mode.setProperty("id", ids::inputMode, nullptr);
-        mode.setProperty("value", (float) InputMode::Mono, nullptr);
-        st.appendChild(mode, nullptr);
-    }
-    if (version < 2)
-        for (int i = st.getNumChildren(); --i >= 0;)
-            if (st.getChild(i).getProperty("id").toString().startsWith("glide_"))
-                st.removeChild(i, nullptr);
+    st.removeChild(st.getChildWithName(kAbTree), nullptr);
+    st.removeProperty(kScaleProp, nullptr);
 
-    // The rest is the slot that plays: the parameters (the level switches too), and the slot's
+    // The rest is the slot that plays: the parameters (the instance's own too), and the slot's
     // other parts beside them.
     juce::ValueTree active(kPresetFileTree), params(st.getType());
     for (int i = 0; i < st.getNumProperties(); ++i)
@@ -1088,8 +1078,8 @@ void Glide90Processor::setStateInformation(const void* data, int sizeInBytes)
     apvts.replaceState(params.createCopy());
 
     // replaceState skips parameters whose stored value already maps to the current one (a bool left
-    // at a raw 0.57 stays there instead of the stored 1), and leaves parameters missing from older
-    // states at whatever they were. Set every value exactly, missing ones to their default; not as
+    // at a raw 0.57 stays there instead of the stored 1), and leaves parameters missing from a
+    // state at whatever they were. Set every value exactly, missing ones to their default; not as
     // edits, so a host in touch or latch mode records nothing.
     applySlotState(active, true, false);
     for (auto& u : undos)

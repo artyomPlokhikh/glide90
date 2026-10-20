@@ -65,10 +65,11 @@ void HoldDisplay::frame(double seconds)
     set(on, choice(ids::holdOn) != 0);
     set(mode, choice(ids::holdMode));
     set(feed, choice(ids::holdFeed));
+    set(density, choice(ids::holdDensity));
     set(character, choice(ids::holdCharacter));
     set(root, choice(ids::holdRoot));
-    set(latched, choice(ids::holdLatch) != 0);
-    set(gateBypassed, choice(ids::bypass) != 0);
+    set(latched, choice(ids::holdFreeze) != 0);
+    set(gateBypassed, choice(ids::gateOn) == 0);
     set(holding, source.holding.load());
 
     if ((hold::Mode) mode == hold::Mode::Live)
@@ -141,7 +142,9 @@ juce::Rectangle<float> HoldDisplay::spotArea(Spot s) const
         case Spot::ModeDown: return top.withWidth(20.0f);
         case Spot::Mode: return top.withX(20.0f).withWidth(88.0f);
         case Spot::ModeUp: return top.withX(108.0f).withWidth(20.0f);
-        case Spot::Feed: return top.withTrimmedLeft(w - 70.0f);
+        case Spot::DensityDown: return top.withX(w - 72.0f).withWidth(18.0f);
+        case Spot::Density: return top.withX(w - 54.0f).withWidth(36.0f);
+        case Spot::DensityUp: return top.withX(w - 18.0f).withWidth(18.0f);
         case Spot::Character: return bottom.withWidth(78.0f);
         case Spot::RootDown: return bottom.withX(w - 86.0f).withWidth(18.0f);
         case Spot::Root: return bottom.withX(w - 68.0f).withWidth(50.0f);
@@ -156,8 +159,8 @@ HoldDisplay::Spot HoldDisplay::spotAt(juce::Point<float> p) const
     if (compact)
         return Spot::Nowhere;
     const bool midi = (hold::Mode) mode == hold::Mode::Midi;
-    for (auto s : { Spot::ModeDown, Spot::Mode, Spot::ModeUp, Spot::Feed, Spot::Character, Spot::RootDown, Spot::Root,
-                    Spot::RootUp })
+    for (auto s : { Spot::ModeDown, Spot::Mode, Spot::ModeUp, Spot::DensityDown, Spot::Density, Spot::DensityUp,
+                    Spot::Character, Spot::RootDown, Spot::Root, Spot::RootUp })
     {
         const bool rootSpot = s == Spot::RootDown || s == Spot::Root || s == Spot::RootUp;
         if ((!rootSpot || midi) && spotArea(s).contains(p))
@@ -203,9 +206,9 @@ void HoldDisplay::mouseMove(const juce::MouseEvent& e)
                        "played. LIVE: grains of the last moments, nothing held. MIDI: captured on each pick, heard "
                        "while a MIDI note is held, at that note's pitch");
             break;
-        case Spot::Feed:
-            setTooltip("GATE: into the reverse gate, so the held chord swells backwards. OUT: straight to the output");
-            break;
+        case Spot::DensityDown:
+        case Spot::Density:
+        case Spot::DensityUp: setTooltip("DENSITY: how many grains play at once"); break;
         case Spot::Character: setTooltip("12-BIT: captured like a late-80s sampler, grainy and dull at the top"); break;
         case Spot::RootDown:
         case Spot::Root:
@@ -248,7 +251,18 @@ void HoldDisplay::mouseDown(const juce::MouseEvent& e)
             menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this));
             break;
         }
-        case Spot::Feed: setTo(ids::holdFeed, 1 - feed); break;
+        case Spot::DensityDown: step(ids::holdDensity, -1, false); break;
+        case Spot::DensityUp: step(ids::holdDensity, 1, false); break;
+        case Spot::Density:
+        {
+            juce::PopupMenu menu;
+            menu.setLookAndFeel(&getLookAndFeel());
+            for (int n = 1; n <= 8; ++n)
+                menu.addItem(juce::String(n) + (n == 1 ? " grain" : " grains"), true, n == density,
+                             [this, n] { setTo(ids::holdDensity, n); });
+            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this));
+            break;
+        }
         case Spot::Character: setTo(ids::holdCharacter, 1 - character); break;
         case Spot::RootDown: step(ids::holdRoot, -1, false); break;
         case Spot::RootUp: step(ids::holdRoot, 1, false); break;
@@ -284,7 +298,9 @@ void HoldDisplay::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWhe
         case Spot::RootDown:
         case Spot::Root:
         case Spot::RootUp: step(ids::holdRoot, delta, false); break;
-        case Spot::Feed:
+        case Spot::DensityDown:
+        case Spot::Density:
+        case Spot::DensityUp: step(ids::holdDensity, delta, false); break;
         case Spot::Character:
         case Spot::Nowhere: Component::mouseWheelMove(e, wheel); break;
     }
@@ -365,17 +381,21 @@ void HoldDisplay::paint(juce::Graphics& g)
 
     const auto dimText = t.ink.withAlpha(on ? 0.7f : 0.55f);
     auto lit = [&](Spot a, Spot b = Spot::Nowhere, Spot c = Spot::Nowhere) {
-        return ink.withMultipliedAlpha(hover == a || hover == b || hover == c ? 1.0f : 0.8f);
+        // Off, the ink is faint already: not fainter still.
+        return ink.withMultipliedAlpha(hover == a || hover == b || hover == c || !on ? 1.0f : 0.9f);
     };
 
-    // Top line: MODE with its arrows, FEED on the right.
+    // Top line: MODE with its arrows; DENSITY (grains at once) with its arrows on the right.
     g.setColour(lit(Spot::ModeDown, Spot::Mode, Spot::ModeUp));
     arrow(g, 10.0f, 11.0f, -1);
     arrow(g, spotArea(Spot::ModeUp).getCentreX(), 11.0f, 1);
     drawReadout(g, modeNames()[mode], spotArea(Spot::Mode), lit(Spot::ModeDown, Spot::Mode, Spot::ModeUp),
                 juce::Justification::centred);
-    drawReadout(g, toGate ? "> GATE" : "> OUT", spotArea(Spot::Feed).withTrimmedRight(8.0f), lit(Spot::Feed),
-                juce::Justification::centredRight);
+    g.setColour(lit(Spot::DensityDown, Spot::Density, Spot::DensityUp));
+    arrow(g, spotArea(Spot::DensityDown).getCentreX(), 11.0f, -1);
+    arrow(g, spotArea(Spot::DensityUp).getCentreX(), 11.0f, 1);
+    drawReadout(g, juce::String(density) + "X", spotArea(Spot::Density), lit(Spot::DensityDown, Spot::Density, Spot::DensityUp),
+                juce::Justification::centred);
 
     // The waveform with its grains and the level under it; what HOLD waits for, while nothing is held.
     const auto plot = bounds.reduced(10.0f, 0.0f).withTrimmedTop(24.0f).withTrimmedBottom(28.0f);
@@ -408,26 +428,34 @@ void HoldDisplay::paint(juce::Graphics& g)
 // --- HoldPanel ---
 
 HoldPanel::HoldPanel(Glide90Processor& p)
-    : ModulePanel("Hold"), proc(p), on(p.state(), ids::holdOn, "ON"), freeze(p.state(), ids::holdLatch, "FREEZE"),
-      display(p), follow(p.state(), ids::holdFollow, "FOLLOW", Knob::Size::Large), size(p.state(), ids::holdSize, "SIZE"),
-      density(p.state(), ids::holdDensity, "DENSITY"), smear(p.state(), ids::holdSmear, "SMEAR"),
-      spread(p.state(), ids::holdSpread, "SPREAD"), reverse(p.state(), ids::holdReverse, "REVERSE"),
-      duck(p.state(), ids::holdDuck, "DUCK"), decay(p.state(), ids::holdDecay, "DECAY"),
-      level(p.state(), ids::holdLevel, "LEVEL"),
+    : ModulePanel("Hold"), proc(p), on(p.state(), ids::holdOn, "ON"), freeze(p.state(), ids::holdFreeze, "FREEZE"),
+      feed(p.state(), ids::holdFeed, (int) hold::Feed::Gate), display(p),
+      follow(p.state(), ids::holdFollow, "FOLLOW", Knob::Size::Large), size(p.state(), ids::holdSize, "SIZE"),
+      smear(p.state(), ids::holdSmear, "SMEAR"), spread(p.state(), ids::holdSpread, "SPREAD"),
+      reverse(p.state(), ids::holdReverse, "REVERSE"), duck(p.state(), ids::holdDuck, "DUCK"),
+      decay(p.state(), ids::holdDecay, "DECAY"), level(p.state(), ids::holdLevel, "LEVEL"),
       modeWatch(*p.state().getParameter(ids::holdMode),
-                [this](float v) { freeze.setEnabled((hold::Mode) juce::roundToInt(v) == hold::Mode::Latch); })
+                [this](float v) { freeze.setEnabled((hold::Mode) juce::roundToInt(v) == hold::Mode::Latch); }),
+      gateWatch(*p.state().getParameter(ids::gateOn),
+                [this](float v) {
+                    feed.setForcedChoice(v > 0.5f ? std::nullopt : std::optional<int>((int) hold::Feed::Out));
+                }),
+      glideWatch(*p.state().getParameter(ids::glideOn), [this](float v) { follow.setEnabled(v > 0.5f); })
 {
     setDraggable(false);
-    for (auto* c : std::initializer_list<juce::Component*> { &on, &freeze, &display, &follow, &size, &density, &smear,
+    feed.setComponentID(ids::holdFeed);
+    feed.setLegendPrefix("> ");
+    for (auto* c : std::initializer_list<juce::Component*> { &on, &freeze, &feed, &display, &follow, &size, &smear,
                                                              &spread, &reverse, &duck, &decay, &level })
         addAndMakeVisible(c);
 
     on.setTooltip("Hold on/off. It plays beside the glide and the reverse gate and adds no delay");
     freeze.setTooltip("LATCH: holds what just played, for as long as it is down");
+    feed.setTooltip("Where HOLD goes. GATE: into the reverse gate, so the held chord swells backwards. OUT: straight "
+                    "to the output. With the reverse gate off, always OUT");
     follow.setTooltip("How much the glide bar bends the held chord. 100 bends it with the guitar, 200 twice as far, "
-                      "0 holds it still");
+                      "0 holds it still. The bar moves only while GLIDE is on");
     size.setTooltip("Length of each grain. Long is smooth, short is grainy");
-    density.setTooltip("How many grains play at once");
     smear.setTooltip("How far each grain may wander from the start of the held chord. 0 is a steady loop");
     spread.setTooltip("Each grain a few cents off and panned apart: many slightly different guitars");
     reverse.setTooltip("How many grains play backwards");
@@ -441,6 +469,8 @@ HoldPanel::HoldPanel(Glide90Processor& p)
             onFold(false);
     };
     modeWatch.sendInitialUpdate();
+    gateWatch.sendInitialUpdate();
+    glideWatch.sendInitialUpdate();
     setFolded(holdFolded());
 }
 
@@ -449,8 +479,8 @@ HoldPanel::~HoldPanel() = default;
 void HoldPanel::setFolded(bool f)
 {
     folded = f;
-    for (auto* c : std::initializer_list<juce::Component*> { &follow, &size, &density, &smear, &spread, &reverse, &duck,
-                                                             &decay, &level })
+    for (auto* c : std::initializer_list<juce::Component*> { &follow, &size, &smear, &spread, &reverse, &duck, &decay,
+                                                             &level })
         c->setVisible(!folded);
     display.setCompact(folded);
     resized();
@@ -462,10 +492,15 @@ juce::Rectangle<int> HoldPanel::freezeBounds() const
     return onKeyBounds().translated(-84, 0).withWidth(76);
 }
 
+juce::Rectangle<int> HoldPanel::feedBounds() const
+{
+    return freezeBounds().translated(-84, 0);
+}
+
 juce::Rectangle<int> HoldPanel::titleArea() const
 {
     // Where a click folds or opens the strip: the title, up to the screen (folded) or the keys.
-    const int right = folded ? display.getX() - 4 : freezeBounds().getX() - 8;
+    const int right = folded ? display.getX() - 4 : feedBounds().getX() - 8;
     return { 0, 0, right, kTitleHeight };
 }
 
@@ -487,16 +522,17 @@ void HoldPanel::resized()
 {
     on.setBounds(onKeyBounds());
     freeze.setBounds(freezeBounds());
+    feed.setBounds(feedBounds());
     if (folded)
     {
         // The screen shrinks into the title bar, between the title and the keys.
-        display.setBounds(juce::Rectangle<int>(110, 6, freezeBounds().getX() - 12 - 110, kTitleHeight - 12));
+        display.setBounds(juce::Rectangle<int>(110, 6, feedBounds().getX() - 12 - 110, kTitleHeight - 12));
         return;
     }
     const int m = PanelLookAndFeel::kMargin, w = Knob::kColumn, h = Knob::kHeight;
     display.setBounds(m, kRowTop, kScreenWidth, h);
-    int x = getWidth() - m - 9 * w;
-    for (auto* k : { &follow, &size, &density, &smear, &spread, &reverse, &duck, &decay, &level })
+    int x = getWidth() - m - kKnobs * w;
+    for (auto* k : { &follow, &size, &smear, &spread, &reverse, &duck, &decay, &level })
     {
         k->setBounds(x, kRowTop, w, h);
         x += w;

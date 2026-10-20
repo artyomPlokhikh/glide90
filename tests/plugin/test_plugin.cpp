@@ -86,60 +86,20 @@ int impulsePeak(Glide90Processor& p, bool hostBypass)
 TEST_CASE("the reverb is the reverse gate, and a state keeps its edits")
 {
     auto a = make();
-    REQUIRE(a->state().getParameter("er_type") == nullptr);
-    REQUIRE(a->state().getParameter("memory") == nullptr);
-    set(*a, ids::erRoomSize, 7.7f);
-    set(*a, ids::erLiveness, 2.0f);
+    set(*a, ids::gateRoomSize, 7.7f);
+    set(*a, ids::gateLiveness, 2.0f);
     const auto state = saveState(*a);
 
     auto b = make();
     b->setStateInformation(state.getData(), (int) state.getSize());
-    CHECK(plain(*b, ids::erRoomSize) == doctest::Approx(7.7f));
-    CHECK(plain(*b, ids::erLiveness) == doctest::Approx(2.0f));
-}
-
-TEST_CASE("a project saved with the SPX90 memories opens with its reverse gate settings")
-{
-    auto a = make();
-    set(*a, ids::erRoomSize, 12.0f);
-    set(*a, ids::erDelay, 80.0f);
-    const auto block = saveState(*a);
-    auto xml = juce::AudioProcessor::getXmlFromBinary(block.getData(), (int) block.getSize());
-    REQUIRE(xml != nullptr);
-    // What an older version saved besides: the memory number, the type, the memories, the program.
-    for (auto [id, value] : { std::pair<const char*, double> { "memory", 16.0 }, { "er_type", 1.0 } })
-    {
-        auto* param = xml->createNewChildElement("PARAM");
-        param->setAttribute("id", id);
-        param->setAttribute("value", value);
-    }
-    xml->createNewChildElement("MEMORIES")->createNewChildElement("MEMORY")->setAttribute("number", 31);
-    xml->setAttribute("algorithm", 16);
-    xml->setAttribute("loadedMemory", 16);
-    // ...and not yet: the preset as loaded, so what it opens with counts as unchanged.
-    xml->deleteAllChildElementsWithTagName("BASELINE");
-    juce::MemoryBlock old;
-    juce::AudioProcessor::copyXmlToBinary(*xml, old);
-
-    auto b = make();
-    b->setStateInformation(old.getData(), (int) old.getSize());
-    CHECK(plain(*b, ids::erRoomSize) == doctest::Approx(12.0f));
-    CHECK(plain(*b, ids::erDelay) == doctest::Approx(80.0f));
-    CHECK_FALSE(b->isPresetModified());
-    // Saved again, nothing of the old memories is left.
-    const auto again = saveState(*b);
-    auto saved = juce::AudioProcessor::getXmlFromBinary(again.getData(), (int) again.getSize());
-    REQUIRE(saved != nullptr);
-    CHECK(saved->getChildByName("MEMORIES") == nullptr);
-    CHECK(saved->getChildByAttribute("id", "memory") == nullptr);
-    CHECK(saved->getChildByAttribute("id", "er_type") == nullptr);
-    CHECK_FALSE(saved->hasAttribute("algorithm"));
+    CHECK(plain(*b, ids::gateRoomSize) == doctest::Approx(7.7f));
+    CHECK(plain(*b, ids::gateLiveness) == doctest::Approx(2.0f));
 }
 
 TEST_CASE("the reported latency is where the direct signal comes out, with or without host bypass")
 {
     auto p = make();
-    set(*p, ids::balance, 0.0f);
+    set(*p, ids::gateMix, 0.0f);
     set(*p, ids::glideDepth, 0.0f);
     for (bool glideOn : { false, true })
     {
@@ -165,18 +125,20 @@ TEST_CASE("factory presets set the reverse gate and the glide")
             CHECK_FALSE(p->getProgramName(i).contains(foreign));
     }
     p->setCurrentProgram(p->factoryPresetNames().indexOf("Steep Swell")); // a dive on each pick
-    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(20.0f));
-    CHECK(plain(*p, ids::erLiveness) == doctest::Approx(10.0f));
+    CHECK(plain(*p, ids::gateRoomSize) == doctest::Approx(20.0f));
+    CHECK(plain(*p, ids::gateLiveness) == doctest::Approx(10.0f));
     CHECK(plain(*p, ids::glideOn) > 0.5f);
     CHECK(juce::roundToInt(plain(*p, ids::glideMode)) == (int) sway::GlideMode::Trigger);
 
-    // A preset leaves the level switches alone and resets what it does not set, the INPUT knob too.
-    set(*p, ids::inputSwitch, 1.0f);
-    set(*p, ids::input, 6.0f);
+    // A preset leaves the rig alone (INPUT, the input mode) and resets what it does not set, OUTPUT too.
+    set(*p, ids::input, -6.0f);
+    set(*p, ids::inputMode, (float) glide90::InputMode::Mono);
+    set(*p, ids::output, -3.0f);
     set(*p, ids::glideTwinLevel, 0.9f);
     p->setCurrentProgram(1);
-    CHECK(plain(*p, ids::inputSwitch) == doctest::Approx(1.0f));
-    CHECK(plain(*p, ids::input) == doctest::Approx(8.0f));
+    CHECK(plain(*p, ids::input) == doctest::Approx(-6.0f));
+    CHECK(juce::roundToInt(plain(*p, ids::inputMode)) == (int) glide90::InputMode::Mono);
+    CHECK(plain(*p, ids::output) == doctest::Approx(0.0f));
     CHECK(plain(*p, ids::glideTwinLevel) == doctest::Approx(0.0f));
 }
 
@@ -189,7 +151,7 @@ TEST_CASE("factory presets bring their own reverb settings and load unmodified")
         p->setCurrentProgram(i);
         CHECK_FALSE(p->isPresetModified());
         if (p->getProgramName(i) == "Glide Guitar" || p->getProgramName(i) == "Steep Swell" || p->getProgramName(i) == "Wall")
-            CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(20.0f));
+            CHECK(plain(*p, ids::gateRoomSize) == doctest::Approx(20.0f));
     }
 }
 
@@ -483,7 +445,7 @@ TEST_CASE("a knob's value field: a click elsewhere applies it; Alt-click resets 
     };
     find(*editor);
     REQUIRE(knob != nullptr);
-    set(*p, ids::balance, 1.0f);
+    set(*p, ids::gateMix, 1.0f);
 
     auto event = [&](juce::ModifierKeys mods, int clicks) {
         const auto now = juce::Time::getCurrentTime();
@@ -521,7 +483,7 @@ TEST_CASE("a knob's value field: a click elsewhere applies it; Alt-click resets 
         peer->handleMouseEvent(juce::MouseInputSource::InputSourceType::mouse, spot, juce::ModifierKeys(), 1.0f, 0.0f, t + 20);
         juce::MessageManager::getInstance()->runDispatchLoopUntil(100);
         CHECK(fieldOf() == nullptr);
-        CHECK(plain(*p, ids::balance) == doctest::Approx(0.5f));
+        CHECK(plain(*p, ids::gateMix) == doctest::Approx(0.5f));
 
         // Text that names no value leaves it alone; Escape-like cancel is the same path without applying.
         knob->mouseDoubleClick(event(juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), 2));
@@ -532,7 +494,7 @@ TEST_CASE("a knob's value field: a click elsewhere applies it; Alt-click resets 
         peer->handleMouseEvent(juce::MouseInputSource::InputSourceType::mouse, spot, juce::ModifierKeys(), 1.0f, 0.0f, t + 1020);
         juce::MessageManager::getInstance()->runDispatchLoopUntil(100);
         CHECK(fieldOf() == nullptr);
-        CHECK(plain(*p, ids::balance) == doctest::Approx(0.5f));
+        CHECK(plain(*p, ids::gateMix) == doctest::Approx(0.5f));
     }
     else
     {
@@ -542,7 +504,7 @@ TEST_CASE("a knob's value field: a click elsewhere applies it; Alt-click resets 
     // Alt-click: back to the default (100 %).
     knob->mouseDown(event(juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::altModifier), 1));
     juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
-    CHECK(plain(*p, ids::balance) == doctest::Approx(1.0f));
+    CHECK(plain(*p, ids::gateMix) == doctest::Approx(1.0f));
 
     editor->removeFromDesktop();
 }
@@ -583,25 +545,10 @@ TEST_CASE("output mode: left only copies the left output, mono sums them")
     CHECK(monoErr < 1e-6);
 }
 
-TEST_CASE("input mode: new instances are stereo, older projects open in mono")
+TEST_CASE("input mode: new instances are stereo")
 {
     auto a = make();
     CHECK(juce::roundToInt(plain(*a, ids::inputMode)) == (int) glide90::InputMode::Stereo);
-
-    // A project from before the input had a mode: it summed its inputs, and still does.
-    auto xml = juce::AudioProcessor::getXmlFromBinary(saveState(*a).getData(), (int) saveState(*a).getSize());
-    REQUIRE(xml != nullptr);
-    for (auto* child = xml->getFirstChildElement(); child != nullptr; child = child->getNextElement())
-        if (child->getStringAttribute("id") == ids::inputMode)
-        {
-            xml->removeChildElement(child, true);
-            break;
-        }
-    juce::MemoryBlock old;
-    juce::AudioProcessor::copyXmlToBinary(*xml, old);
-    auto b = make();
-    b->setStateInformation(old.getData(), (int) old.getSize());
-    CHECK(juce::roundToInt(plain(*b, ids::inputMode)) == (int) glide90::InputMode::Mono);
 }
 
 namespace
@@ -612,7 +559,7 @@ juce::AudioBuffer<float> renderInput(const juce::AudioBuffer<float>& in, float b
 {
     auto p = make();
     set(*p, ids::glideOn, 0.0f);
-    set(*p, ids::balance, balance);
+    set(*p, ids::gateMix, balance);
     set(*p, ids::inputMode, (float) inputMode);
     p->reset();
     juce::AudioBuffer<float> buffer(2, kBlock), out(2, in.getNumSamples());
@@ -750,13 +697,14 @@ TEST_CASE("the IN and OUT keys switch the input and output modes")
 }
 
 // --- A/B, presets and the project: checked for every parameter there is, so a new one is covered
-// without a test of its own. Only the level switches belong to the instance rather than the sound.
+// without a test of its own. Only INPUT, the input mode and FREEZE belong to the instance rather than
+// the sound.
 
 namespace
 {
 bool isInstanceParameter(const juce::String& id)
 {
-    return id == ids::inputSwitch || id == ids::outputSwitch || id == ids::holdLatch;
+    return id == ids::input || id == ids::inputMode || id == ids::holdFreeze;
 }
 
 std::vector<juce::RangedAudioParameter*> allParameters(Glide90Processor& p)
@@ -781,7 +729,7 @@ std::map<juce::String, float> setEveryParameter(Glide90Processor& p, int which)
     return values;
 }
 
-// Every parameter as `sound` has it, the level switches as `instance` has them.
+// Every parameter as `sound` has it, the instance's own as `instance` has them.
 void checkEveryParameter(Glide90Processor& p, const std::map<juce::String, float>& sound,
                          const std::map<juce::String, float>& instance)
 {
@@ -794,7 +742,7 @@ void checkEveryParameter(Glide90Processor& p, const std::map<juce::String, float
 }
 } // namespace
 
-TEST_CASE("A and B each keep every parameter but the level switches and FREEZE, which they share")
+TEST_CASE("A and B each keep every parameter but INPUT, the input mode and FREEZE, which they share")
 {
     auto p = make();
     const auto a = setEveryParameter(*p, 0);
@@ -863,7 +811,7 @@ TEST_CASE("A and B each keep their preset: its name, whether it is a user one, a
     p->deleteUserPreset(file);
 }
 
-TEST_CASE("a user preset keeps every parameter but the level switches and FREEZE")
+TEST_CASE("a user preset keeps every parameter but INPUT, the input mode and FREEZE")
 {
     auto p = make();
     const auto saved = setEveryParameter(*p, 0);
@@ -944,7 +892,7 @@ TEST_CASE("typed values are read the way they are shown")
     auto value = [&](const char* id, const char* text) { return typed(id, text).value_or(-999.0f); };
 
     // Percentages: shown as "50%", typed as percentages.
-    for (const char* id : { ids::balance, ids::outLevel, ids::glideMix, ids::glideDynamics, ids::glideBar })
+    for (const char* id : { ids::gateMix, ids::glideTwinLevel, ids::glideMix, ids::glideDynamics, ids::glideBar })
     {
         CAPTURE(id);
         CHECK(value(id, "50") == doctest::Approx(0.5f));
@@ -953,12 +901,35 @@ TEST_CASE("typed values are read the way they are shown")
         CHECK(value(id, "100%") == doctest::Approx(1.0f));
         CHECK(value(id, "12,5") == doctest::Approx(0.125f));
     }
+    // Levels in dB: plain numbers are dB, "-inf" and "off" are silence (INPUT's bottom, which has none).
+    for (const char* id : { ids::input, ids::output, ids::holdLevel })
+    {
+        CAPTURE(id);
+        CHECK(value(id, "-6") == doctest::Approx(-6.0f));
+        CHECK(value(id, "-6 dB") == doctest::Approx(-6.0f));
+        CHECK(value(id, "+3") == doctest::Approx(3.0f));
+        CHECK(value(id, "3") == doctest::Approx(3.0f));
+        CHECK(value(id, "-inf") == doctest::Approx(glide90::kOffDb));
+        CHECK(value(id, "off") == doctest::Approx(glide90::kOffDb));
+        CHECK(value(id, "-inf dB") == doctest::Approx(glide90::kOffDb));
+    }
+    auto shown = [&](const char* id, float v) {
+        auto* param = p->state().getParameter(id);
+        return param->getText(param->convertTo0to1(v), 16);
+    };
+    CHECK(shown(ids::output, -60.0f) == "-inf dB");
+    CHECK(shown(ids::output, 0.0f) == "0.0 dB");
+    CHECK(shown(ids::output, 3.0f) == "+3.0 dB");
+    CHECK(shown(ids::input, -24.0f) == "-24.0 dB");
+    auto* input = p->state().getParameter(ids::input);
+    CHECK(input->convertFrom0to1(input->getValueForText("-inf")) == doctest::Approx(-24.0f));
+
     // What the host's own field sends goes through the same reading.
-    auto* mix = p->state().getParameter(ids::balance);
+    auto* mix = p->state().getParameter(ids::gateMix);
     CHECK(mix->convertFrom0to1(mix->getValueForText("50")) == doctest::Approx(0.5f));
 
     // Text that names no value changes nothing.
-    for (const char* id : { ids::balance, ids::erRoomSize, ids::erLiveness, ids::erLpf, ids::glideDivision })
+    for (const char* id : { ids::gateMix, ids::gateRoomSize, ids::gateLiveness, ids::gateLpf, ids::glideDivision })
     {
         CAPTURE(id);
         CHECK_FALSE(typed(id, "").has_value());
@@ -966,20 +937,20 @@ TEST_CASE("typed values are read the way they are shown")
     }
 
     // Plain numbers, with or without the shown unit; seconds and semitones when said so.
-    CHECK(value(ids::erRoomSize, "3.3") == doctest::Approx(3.3f));
-    CHECK(value(ids::erDelay, "25.0ms") == doctest::Approx(25.0f));
-    CHECK(value(ids::erDelay, "0.2 s") == doctest::Approx(200.0f));
+    CHECK(value(ids::gateRoomSize, "3.3") == doctest::Approx(3.3f));
+    CHECK(value(ids::gatePreDelay, "25.0ms") == doctest::Approx(25.0f));
+    CHECK(value(ids::gatePreDelay, "0.2 s") == doctest::Approx(200.0f));
     CHECK(value(ids::glidePeriod, "333 ms") == doctest::Approx(333.0f));
     CHECK(value(ids::glidePeriod, "1.2s") == doctest::Approx(1200.0f));
     CHECK(value(ids::glidePeriod, "1,2 сек") == doctest::Approx(1200.0f));
     CHECK(value(ids::glideDepth, "30 ct") == doctest::Approx(30.0f));
     CHECK(value(ids::glideDepth, "2 st") == doctest::Approx(200.0f));
-    CHECK(value(ids::erLiveness, "7") == doctest::Approx(7.0f));
+    CHECK(value(ids::gateLiveness, "7") == doctest::Approx(7.0f));
 
     // LPF: kHz, Hz, the shown label in any case, THRU.
     auto lpf = [&](const char* text) {
-        return p->state().getParameter(ids::erLpf)->getText(
-            p->state().getParameter(ids::erLpf)->convertTo0to1(value(ids::erLpf, text)), 16);
+        return p->state().getParameter(ids::gateLpf)->getText(
+            p->state().getParameter(ids::gateLpf)->convertTo0to1(value(ids::gateLpf, text)), 16);
     };
     CHECK(lpf("2.5") == "2.5kHz");
     CHECK(lpf("2.5k") == "2.5kHz");
@@ -1133,14 +1104,14 @@ TEST_CASE("the plugin opens as Glide Guitar, the first preset, which bends with 
             CAPTURE(ranged->getParameterID());
             CHECK(ranged->getValue() == doctest::Approx(ranged->getDefaultValue()));
         }
-    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(20.0f));
-    CHECK(plain(*p, ids::erLiveness) == doctest::Approx(4.0f));
+    CHECK(plain(*p, ids::gateRoomSize) == doctest::Approx(20.0f));
+    CHECK(plain(*p, ids::gateLiveness) == doctest::Approx(4.0f));
     CHECK(plain(*p, ids::glideDynamics) == doctest::Approx(0.6f));
     CHECK(juce::roundToInt(plain(*p, ids::glideMode)) == (int) sway::GlideMode::Trigger);
     p->setCurrentProgram(3);
     p->setCurrentProgram(0);
     CHECK_FALSE(p->isPresetModified());
-    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(20.0f));
+    CHECK(plain(*p, ids::gateRoomSize) == doctest::Approx(20.0f));
 }
 
 TEST_CASE("A and B each keep their own undo history")
@@ -1155,9 +1126,9 @@ TEST_CASE("A and B each keep their own undo history")
     gesture(ids::glideDepth, 100.0f); // in A
     p->selectAB(1);                    // B starts as a copy of A
     CHECK_FALSE(p->undoManager().canUndo());
-    gesture(ids::erRoomSize, 12.0f); // in B
+    gesture(ids::gateRoomSize, 12.0f); // in B
     p->undoManager().undo();
-    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(20.0f));
+    CHECK(plain(*p, ids::gateRoomSize) == doctest::Approx(20.0f));
     CHECK(plain(*p, ids::glideDepth) == doctest::Approx(100.0f)); // B's copy of A's edit stays
     CHECK_FALSE(p->undoManager().canUndo());
 
@@ -1185,23 +1156,23 @@ TEST_CASE("undo takes the editor's edits back, one gesture at a time, and never 
         set(*p, ids::glideDepth, 10.0f + (float) i); // automation: no gestures
     CHECK_FALSE(undo.canUndo());
 
-    gesture(ids::erRoomSize, 12.0f);
+    gesture(ids::gateRoomSize, 12.0f);
     gesture(ids::glideDepth, 200.0f);
     REQUIRE(undo.canUndo());
     undo.undo();
     CHECK(plain(*p, ids::glideDepth) == doctest::Approx(59.0f));
-    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(12.0f));
+    CHECK(plain(*p, ids::gateRoomSize) == doctest::Approx(12.0f));
     undo.undo();
-    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(20.0f));
+    CHECK(plain(*p, ids::gateRoomSize) == doctest::Approx(20.0f));
     undo.redo();
-    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(12.0f));
+    CHECK(plain(*p, ids::gateRoomSize) == doctest::Approx(12.0f));
 
     // Loading a preset starts this slot's history afresh; the other slot keeps its own.
     p->selectAB(1);
     gesture(ids::glideDepth, 150.0f);
     p->selectAB(0);
     p->setCurrentProgram(1);
-    CHECK(plain(*p, ids::erRoomSize) == doctest::Approx(20.0f));
+    CHECK(plain(*p, ids::gateRoomSize) == doctest::Approx(20.0f));
     CHECK_FALSE(p->undoManager().canUndo());
     CHECK_FALSE(p->undoManager().canRedo());
     p->selectAB(1);
@@ -1337,13 +1308,13 @@ juce::AudioBuffer<float> renderFresh(const juce::AudioBuffer<float>& in, const s
     return render(*p, in);
 }
 
-TEST_CASE("HOLD is off in new instances and old projects, and while off its controls change nothing")
+TEST_CASE("HOLD is off in new instances, and while off its controls change nothing")
 {
     CHECK(plain(*make(), ids::holdOn) < 0.5f);
     const auto in = strummed(3.0, 1.0);
     const auto before = renderFresh(in, [](Glide90Processor&) {});
     const auto after = renderFresh(in, [](Glide90Processor& p) {
-        for (const char* id : { ids::holdMode, ids::holdLatch, ids::holdFollow, ids::holdSize, ids::holdDensity,
+        for (const char* id : { ids::holdMode, ids::holdFreeze, ids::holdFollow, ids::holdSize, ids::holdDensity,
                                 ids::holdSmear, ids::holdSpread, ids::holdReverse, ids::holdDuck, ids::holdDecay,
                                 ids::holdLevel, ids::holdFeed, ids::holdCharacter, ids::holdRoot })
         {
@@ -1368,7 +1339,7 @@ TEST_CASE("HOLD holds the strum into the gate, adds no latency, and goes to the 
     // The gate's effect silent: only the direct signal comes out.
     auto dryOnly = [](float holdOn, float feed) {
         return [holdOn, feed](Glide90Processor& p) {
-            set(p, ids::balance, 0.0f);
+            set(p, ids::gateMix, 0.0f);
             set(p, ids::holdOn, holdOn);
             set(p, ids::holdFeed, feed);
         };
@@ -1381,25 +1352,122 @@ TEST_CASE("HOLD holds the strum into the gate, adds no latency, and goes to the 
     // Into a bypassed gate: to the output instead.
     auto bypassed = [](float holdOn) {
         return [holdOn](Glide90Processor& p) {
-            set(p, ids::bypass, 1.0f);
+            set(p, ids::gateOn, 0.0f);
             set(p, ids::holdOn, holdOn);
         };
     };
     CHECK(difference(renderFresh(in, bypassed(0.0f)), renderFresh(in, bypassed(1.0f)), (int) (3.0 * kRate)) > 1.0);
 }
 
+namespace
+{
+// What render() has processed: whole blocks (the rest is the input as it was).
+int processed(const juce::AudioBuffer<float>& b)
+{
+    return b.getNumSamples() / kBlock * kBlock;
+}
+
+// How far `b` is from `a` scaled by `gain`, relative to that (0 = exactly the same, scaled).
+double scaledError(const juce::AudioBuffer<float>& a, const juce::AudioBuffer<float>& b, double gain)
+{
+    double err = 0.0, ref = 0.0;
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < processed(a); ++i)
+        {
+            err += std::pow(b.getSample(ch, i) - gain * a.getSample(ch, i), 2.0);
+            ref += std::pow(gain * a.getSample(ch, i), 2.0);
+        }
+    return ref > 0.0 ? err / ref : 1.0;
+}
+} // namespace
+
+TEST_CASE("OUTPUT is the last stage: it scales everything, HOLD on either path, the gate on or off")
+{
+    const auto in = strummed(3.0, 1.0);
+    for (float gateOn : { 1.0f, 0.0f })
+        for (auto feed : { hold::Feed::Gate, hold::Feed::Out })
+        {
+            CAPTURE(gateOn);
+            CAPTURE((int) feed);
+            auto setUp = [gateOn, feed](float outputDb) {
+                return [gateOn, feed, outputDb](Glide90Processor& p) {
+                    set(p, ids::holdOn, 1.0f);
+                    set(p, ids::holdFeed, (float) feed);
+                    set(p, ids::gateOn, gateOn);
+                    set(p, ids::output, outputDb);
+                };
+            };
+            const auto unity = renderFresh(in, setUp(0.0f));
+            const auto lowered = renderFresh(in, setUp(-6.0f));
+            CHECK(scaledError(unity, lowered, std::pow(10.0, -6.0 / 20.0)) < 1e-9);
+        }
+    // At its bottom, silence.
+    const auto off = renderFresh(in, [](Glide90Processor& p) {
+        set(p, ids::holdOn, 1.0f);
+        set(p, ids::holdFeed, (float) hold::Feed::Out);
+        set(p, ids::output, glide90::kOffDb);
+    });
+    CHECK(off.getMagnitude(0, processed(off)) == 0.0f);
+}
+
+TEST_CASE("INPUT is the first stage: everything follows it, HOLD on its own path too")
+{
+    // The direct sound and HOLD to the output, both linear: 6 dB less in, 6 dB less out.
+    const auto in = strummed(3.0, 1.0);
+    auto setUp = [](float inputDb) {
+        return [inputDb](Glide90Processor& p) {
+            set(p, ids::gateMix, 0.0f);
+            set(p, ids::holdOn, 1.0f);
+            set(p, ids::holdFeed, (float) hold::Feed::Out);
+            set(p, ids::input, inputDb);
+        };
+    };
+    const auto unity = renderFresh(in, setUp(0.0f));
+    const auto lowered = renderFresh(in, setUp(-6.0f));
+    // (The direct sound passes the reverse gate's 16-bit converters: not exactly linear.)
+    CHECK(scaledError(unity, lowered, std::pow(10.0, -6.0 / 20.0)) < 1e-6);
+    // HOLD alone (what is left after the direct sound) follows it as well.
+    const auto dry = renderFresh(in, [](Glide90Processor& p) { set(p, ids::gateMix, 0.0f); });
+    auto holdOf = [&](const juce::AudioBuffer<float>& all) {
+        juce::AudioBuffer<float> layer(all);
+        for (int ch = 0; ch < 2; ++ch)
+            layer.addFrom(ch, 0, dry, ch, 0, dry.getNumSamples(), -1.0f);
+        return layer;
+    };
+    const auto lowDry = renderFresh(in, [](Glide90Processor& p) {
+        set(p, ids::gateMix, 0.0f);
+        set(p, ids::input, -6.0f);
+    });
+    juce::AudioBuffer<float> holdLow(lowered);
+    for (int ch = 0; ch < 2; ++ch)
+        holdLow.addFrom(ch, 0, lowDry, ch, 0, lowDry.getNumSamples(), -1.0f);
+    const auto holdUnity = holdOf(unity);
+    REQUIRE(holdUnity.getMagnitude(0, processed(holdUnity)) > 0.01f);
+    CHECK(scaledError(holdUnity, holdLow, std::pow(10.0, -6.0 / 20.0)) < 1e-6);
+
+    // INPUT is part of undo (as an edit of the rig), though presets and A/B leave it alone.
+    auto p = make();
+    auto* param = p->state().getParameter(ids::input);
+    param->beginChangeGesture();
+    param->setValueNotifyingHost(param->convertTo0to1(-9.0f));
+    param->endChangeGesture();
+    REQUIRE(p->undoManager().canUndo());
+    p->undoManager().undo();
+    CHECK(plain(*p, ids::input) == doctest::Approx(0.0f));
+}
+
 TEST_CASE("FREEZE is played, not part of the sound: presets, A/B and undo leave it alone")
 {
     auto p = make();
-    auto* freeze = p->state().getParameter(ids::holdLatch);
+    auto* freeze = p->state().getParameter(ids::holdFreeze);
     freeze->beginChangeGesture();
     freeze->setValueNotifyingHost(1.0f);
     freeze->endChangeGesture();
     CHECK_FALSE(p->undoManager().canUndo());
     p->loadFactoryPreset(1);
-    CHECK(plain(*p, ids::holdLatch) > 0.5f);
+    CHECK(plain(*p, ids::holdFreeze) > 0.5f);
     p->selectAB(1);
-    CHECK(plain(*p, ids::holdLatch) > 0.5f);
+    CHECK(plain(*p, ids::holdFreeze) > 0.5f);
 }
 
 TEST_CASE("HOLD's typed values are read the way they are shown")
@@ -1423,7 +1491,7 @@ TEST_CASE("HOLD's typed values are read the way they are shown")
     CHECK(p->state().getParameter(ids::holdDecay)->getCurrentValueAsText() == "INF");
 }
 
-TEST_CASE("HOLD is a strip under the glide and the gate that folds to its title bar, and shows what it holds")
+TEST_CASE("HOLD is a strip under the glide and the gate, between IN and OUT, that folds to its title bar")
 {
     namespace ui = glide90::ui;
     using Editor = glide90::Glide90Editor;
@@ -1452,15 +1520,86 @@ TEST_CASE("HOLD is a strip under the glide and the gate that folds to its title 
     REQUIRE(io.size() == 2);
     auto windowHeight = [&](bool folded) { return juce::roundToInt(Editor::heightFor(folded) * p->uiScale()); };
 
-    // Open: across the window under the modules and IN/OUT, the window about a third taller than
-    // without HOLD.
+    // IN and OUT frame everything: from the modules' top down to HOLD's bottom, open or folded; HOLD
+    // lies between them, under the modules, the gaps as between the modules.
+    auto* in = io[0]->getX() < io[1]->getX() ? io[0] : io[1];
+    auto* out = in == io[0] ? io[1] : io[0];
+    auto framed = [&] {
+        CHECK(in->getY() == glidePanel->getY());
+        CHECK(out->getY() == glidePanel->getY());
+        CHECK(in->getBottom() == holdPanel->getBottom());
+        CHECK(out->getBottom() == holdPanel->getBottom());
+        CHECK(holdPanel->getX() == in->getRight() + Editor::kGap);
+        CHECK(holdPanel->getRight() == out->getX() - Editor::kGap);
+        CHECK(holdPanel->getY() >= glidePanel->getBottom());
+        // The level knobs sit on the lowest row of knobs beside them.
+        const int lowest = holdPanel->isFolded() ? glidePanel->getY() + ui::ModulePanel::kRow2
+                                                 : holdPanel->getY() + ui::HoldPanel::kRowTop;
+        CHECK(in->getY() + in->levelKnob().getY() == lowest);
+        CHECK(out->getY() + out->levelKnob().getY() == lowest);
+    };
+
+    // Open: the window about a third taller than without HOLD, and wider for the gate's fourth column.
+    CHECK(Editor::kWidth == 1168);
     CHECK(Editor::heightFor(false) < 700);
     CHECK(editor->getHeight() == windowHeight(false));
-    CHECK(holdPanel->getY() >= glidePanel->getBottom());
-    CHECK(holdPanel->getY() >= io[0]->getBottom());
-    CHECK(holdPanel->getX() == juce::jmin(io[0]->getX(), io[1]->getX()));
-    CHECK(holdPanel->getRight() == juce::jmax(io[0]->getRight(), io[1]->getRight()));
     CHECK(holdPanel->getBottom() <= Editor::heightFor(false));
+    framed();
+
+    // PICK SENS is IN's, with its light: the glide and HOLD share it. GLIDE has no PICK SENS.
+    REQUIRE(in->pickKnob() != nullptr);
+    CHECK(out->pickKnob() == nullptr);
+    std::function<int(juce::Component&)> pickKnobs = [&](juce::Component& c) {
+        int n = 0;
+        if (auto* k = dynamic_cast<ui::Knob*>(&c); k != nullptr && k->getLabel() == "PICK SENS")
+            ++n;
+        for (auto* child : c.getChildren())
+            n += pickKnobs(*child);
+        return n;
+    };
+    CHECK(pickKnobs(*glidePanel) == 0);
+    CHECK(pickKnobs(*editor) == 1);
+
+    // FEED is a key on HOLD's title bar; with the gate off it shows OUT and cannot be pressed.
+    auto* feedKey = dynamic_cast<ui::CycleKey*>(holdPanel->findChildWithID(ids::holdFeed));
+    REQUIRE(feedKey != nullptr);
+    CHECK(feedKey->getY() < ui::ModulePanel::kTitleHeight);
+    CHECK(feedKey->getButtonText() == "> GATE");
+    feedKey->triggerClick();
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+    CHECK(juce::roundToInt(plain(*p, ids::holdFeed)) == (int) hold::Feed::Out);
+    CHECK(feedKey->getButtonText() == "> OUT");
+    set(*p, ids::holdFeed, (float) hold::Feed::Gate);
+    set(*p, ids::gateOn, 0.0f);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+    CHECK(feedKey->getButtonText() == "> OUT");
+    CHECK_FALSE(feedKey->isEnabled());
+    feedKey->triggerClick();
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+    CHECK(juce::roundToInt(plain(*p, ids::holdFeed)) == (int) hold::Feed::Gate); // nothing went to the parameter
+    set(*p, ids::gateOn, 1.0f);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+    CHECK(feedKey->getButtonText() == "> GATE");
+    CHECK(feedKey->isEnabled());
+
+    // FOLLOW dims while the glide is off: then no bar moves the held chord.
+    std::function<ui::Knob*(juce::Component&)> findFollow = [&](juce::Component& c) -> ui::Knob* {
+        if (auto* k = dynamic_cast<ui::Knob*>(&c); k != nullptr && k->getLabel() == "FOLLOW")
+            return k;
+        for (auto* child : c.getChildren())
+            if (auto* k = findFollow(*child))
+                return k;
+        return nullptr;
+    };
+    auto* follow = findFollow(*holdPanel);
+    REQUIRE(follow != nullptr);
+    CHECK(follow->isEnabled());
+    set(*p, ids::glideOn, 0.0f);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+    CHECK_FALSE(follow->isEnabled());
+    set(*p, ids::glideOn, 1.0f);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+    CHECK(follow->isEnabled());
 
     if (const auto path = juce::SystemStats::getEnvironmentVariable("GLIDE90_SNAPSHOT", {}); path.isNotEmpty())
     {
@@ -1489,6 +1628,7 @@ TEST_CASE("HOLD is a strip under the glide and the gate that folds to its title 
     CHECK(ui::holdFolded());
     CHECK(editor->getHeight() == windowHeight(true));
     CHECK(holdPanel->getHeight() == ui::HoldPanel::kFoldedHeight);
+    framed();
     if (const auto path = juce::SystemStats::getEnvironmentVariable("GLIDE90_SNAPSHOT", {}); path.isNotEmpty())
     {
         const auto image = editor->createComponentSnapshot(editor->getLocalBounds(), true, 2.0f);
@@ -1505,6 +1645,7 @@ TEST_CASE("HOLD is a strip under the glide and the gate that folds to its title 
     holdPanel->mouseDown(mouse(*holdPanel, { 60.0f, 20.0f }));
     CHECK_FALSE(holdPanel->isFolded());
     CHECK(editor->getHeight() == windowHeight(false));
+    framed();
     ui::setHoldFolded(wasFolded);
 }
 
@@ -1609,10 +1750,10 @@ std::vector<Reading> readText(juce::AudioProcessorEditor& editor, const juce::Im
             if (r.getHeight() > 60.0f)
                 measure(c, r.withTrimmedTop(r.getHeight() - 26.0f), name + " bottom line", dim);
         }
-        else if (dynamic_cast<ui::IoColumn*>(&c) != nullptr)
+        else if (auto* column = dynamic_cast<ui::IoColumn*>(&c))
         {
             measure(c, { 0.0f, 8.0f, r.getWidth(), 26.0f }, "IN/OUT title", dim);
-            measure(c, { 44.0f, 80.0f, 28.0f, (float) ui::ModulePanel::kRuleY - 100.0f }, "IN/OUT dB scale", dim);
+            measure(c, column->scaleArea(), "IN/OUT dB scale", dim);
         }
         else if (auto* module = dynamic_cast<ui::ModulePanel*>(&c))
         {
@@ -1656,7 +1797,7 @@ TEST_CASE("every look: text stands out from what is behind it, in every state (G
           [](Glide90Processor& p) {
               set(p, ids::glideOn, 0.0f);
               set(p, ids::glideMode, 0.0f);
-              set(p, ids::bypass, 1.0f);
+              set(p, ids::gateOn, 0.0f);
               set(p, ids::holdOn, 0.0f);
               set(p, ids::holdMode, 1.0f);
           },

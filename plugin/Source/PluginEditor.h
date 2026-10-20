@@ -12,8 +12,8 @@
 namespace glide90
 {
 
-// The signal's way, left to right: IN, the two modules in the order they play, OUT; under them the
-// HOLD strip across the window, as it plays beside them (folded to its title bar, the window is
+// The signal's way, left to right: IN, the two modules in the order they play, OUT; under the modules,
+// between IN and OUT, the HOLD strip, as it plays beside them (folded to its title bar, the window is
 // shorter). Dragging GLIDE or GATE by its title bar to the other place turns their order round.
 class Glide90Editor : public juce::AudioProcessorEditor
 {

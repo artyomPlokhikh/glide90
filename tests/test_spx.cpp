@@ -259,24 +259,6 @@ TEST_CASE("the effect is about as loud as the direct signal and does not clip at
             }
 }
 
-TEST_CASE("the output level switch is analog: same signal 24 dB down, not 4 bits less")
-{
-    const double rate = 48000.0;
-    auto in = test::sine(440.0, rate, 24000, 0.01f); // quiet: the 16-bit steps matter
-    auto s = programSettings(17);
-    const auto normal = test::render(in, rate, s);
-    s.outputMinus20 = true;
-    const auto lowered = test::render(in, rate, s);
-    double err = 0.0, ref = 0.0;
-    const double g = std::pow(10.0, -24.0 / 20.0);
-    for (size_t i = 12000; i < 24000; ++i)
-    {
-        err += std::pow(lowered[0][i] - g * normal[0][i], 2.0);
-        ref += std::pow(g * normal[0][i], 2.0);
-    }
-    CHECK(db(std::sqrt(err / ref)) < -80.0);
-}
-
 TEST_CASE("bypass is the analog path: full bandwidth, same latency")
 {
     const double rate = 48000.0;
@@ -289,13 +271,12 @@ TEST_CASE("bypass is the analog path: full bandwidth, same latency")
 
 TEST_CASE("A/D clips at full scale")
 {
-    auto s = programSettings(17, 0.0f);
-    s.inputKnob = 10.0f; // +12 dB
-    const auto out = test::render(test::sine(1000.0, 48000.0, 24000, 0.9f), 48000.0, s);
+    const auto s = programSettings(17, 0.0f);
+    const auto out = test::render(test::sine(1000.0, 48000.0, 24000, 3.6f), 48000.0, s); // 12 dB over
     float peak = 0.0f;
     for (size_t i = 12000; i < 24000; ++i)
         peak = std::max(peak, std::abs(out[0][i]));
-    CHECK(peak < 1.15f); // clipped (plus filter overshoot) instead of 0.9 * 4
+    CHECK(peak < 1.15f); // clipped (plus filter overshoot) instead of 3.6
 }
 
 TEST_CASE("programs 5, 6, 16 and 17 match impulse responses of the real SPX90")

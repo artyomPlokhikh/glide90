@@ -545,21 +545,44 @@ ToggleKey::ToggleKey(juce::AudioProcessorValueTreeState& state, const char* para
 CycleKey::CycleKey(juce::AudioProcessorValueTreeState& state, const char* paramId, int litChoice)
     : param(*dynamic_cast<juce::AudioParameterChoice*>(&parameter(state, paramId))),
       attachment(param, [this](float v) {
-          const int index = juce::jlimit(0, param.choices.size() - 1, juce::roundToInt(v));
-          setButtonText(param.choices[index]);
-          setToggleState(index == lit, juce::dontSendNotification);
-          repaint();
+          current = juce::jlimit(0, param.choices.size() - 1, juce::roundToInt(v));
+          show();
       }),
       lit(litChoice)
 {
     getProperties().set(PanelLookAndFeel::kLed, true);
     onClick = [this] {
+        if (forced)
+            return;
         if (wantsDefault(juce::ModifierKeys::currentModifiers))
             attachment.setValueAsCompleteGesture(defaultOf(param));
         else
             attachment.setValueAsCompleteGesture((float) ((param.getIndex() + 1) % param.choices.size()));
     };
     attachment.sendInitialUpdate();
+}
+
+void CycleKey::setLegendPrefix(const juce::String& prefix)
+{
+    legendPrefix = prefix;
+    show();
+}
+
+void CycleKey::setForcedChoice(std::optional<int> choice)
+{
+    if (forced == choice)
+        return;
+    forced = choice;
+    setEnabled(!forced.has_value());
+    show();
+}
+
+void CycleKey::show()
+{
+    const int index = juce::jlimit(0, param.choices.size() - 1, forced.value_or(current));
+    setButtonText(legendPrefix + param.choices[index]);
+    setToggleState(index == lit, juce::dontSendNotification);
+    repaint();
 }
 
 // --- GlassSelector ---
@@ -634,13 +657,27 @@ void GlassSelector::mouseDown(const juce::MouseEvent& e)
 
 namespace
 {
-constexpr int kSegments = 12;
-constexpr float kFloorDb = -40.0f;
+// The level that lights segment `i` (counted from the bottom).
+float thresholdOf(int i)
+{
+    constexpr int steps = LevelMeter::kSegments - 1;
+    return i >= steps ? -0.1f : LevelMeter::kFloorDb * (1.0f - (float) i / (float) steps);
+}
 } // namespace
 
 LevelMeter::LevelMeter(std::function<float()> peak) : takePeak(std::move(peak)) {}
 
 LevelMeter::~LevelMeter() = default;
+
+float LevelMeter::markY(float db) const
+{
+    const float cell = (float) getHeight() / (float) kSegments;
+    if (db >= thresholdOf(kSegments - 1))
+        return cell * 0.5f;
+    const float steps = (float) (kSegments - 1);
+    const float i = juce::jlimit(0.0f, steps, steps * (1.0f - db / kFloorDb));
+    return (float) getHeight() - cell * i;
+}
 
 void LevelMeter::frame(double seconds)
 {
@@ -654,8 +691,7 @@ void LevelMeter::frame(double seconds)
     int lit = 0;
     while (lit < kSegments)
     {
-        const float threshold = lit == kSegments - 1 ? -0.1f : kFloorDb * (1.0f - (float) lit / (float) (kSegments - 1));
-        if (levelDb < threshold)
+        if (levelDb < thresholdOf(lit))
             break;
         ++lit;
     }

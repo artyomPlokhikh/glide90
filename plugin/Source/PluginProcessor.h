@@ -78,7 +78,7 @@ public:
     juce::String currentPresetName() const { return presetName; }
     // True when the current preset is a user preset file (whatever its name), false for a factory one.
     bool currentPresetIsUser() const { return presetIsUser; }
-    // True once anything (but the level switches) differs from the preset as loaded.
+    // True once anything (but the instance's own parameters) differs from the preset as loaded.
     bool isPresetModified() const;
 
     // --- Editing (message thread) ---
@@ -97,7 +97,7 @@ public:
     void setUiScale(float s) { scale = juce::jlimit(0.75f, 2.0f, s); }
 
     // --- Meters and display (any thread) ---
-    // Peak at the A/D since the last call, relative to its full scale.
+    // Peak at the reverse gate's A/D (after INPUT) since the last call, relative to its full scale.
     float takeInputPeak() { return inputPeak.exchange(0.0f); }
     // Peak at the outputs since the last call.
     float takeOutputPeak() { return outputPeak.exchange(0.0f); }
@@ -107,6 +107,8 @@ public:
     float glidePhase() const { return lastGlidePhase.load(); }
     // Picking attacks detected so far (they restart the glide in TRIGGER mode).
     int pickAttacks() const { return lastPickAttacks.load(); }
+    // Picking attacks heard so far at PICK SENS, whatever GLIDE and HOLD do (for the IN light).
+    int picksHeard() const { return lastPicksHeard.load(); }
     double hostBpm() const { return lastBpm.load(); }
     // What HOLD holds and plays, for its screen.
     hold::HoldDisplay& holdDisplay() { return holdEngine.display(); }
@@ -118,7 +120,7 @@ private:
     void parameterValueChanged(int, float) override {}
     void parameterGestureChanged(int, bool starting) override;
     void commitEdit(const juce::ValueTree& before);
-    juce::ValueTree editState(); // presetState() with the level switches
+    juce::ValueTree editState(); // presetState() with INPUT and the input mode (not FREEZE)
     void processInternal(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi);
     // The input, delayed by the latency, into `dryOut` (the host-bypass path, kept current always).
     void delayDry(const juce::AudioBuffer<float>& buffer, int numSamples);
@@ -170,6 +172,8 @@ private:
     juce::AudioBuffer<float> work;
     // Where the input stands between MONO (0) and STEREO (1), gliding when the mode changes.
     float stereoMix = 1.0f;
+    // INPUT and OUTPUT, the first and the last stage, as gains.
+    juce::SmoothedValue<float> inputGain, outputGain;
     int maxBlock = 0;
     double currentRate = 48000.0;
 
@@ -190,16 +194,16 @@ private:
     float modWheel = 0.0f;   // 0 .. 1
     float expression = 0.0f; // 0 .. 1
     std::atomic<float> inputPeak { 0.0f }, outputPeak { 0.0f }, wetPeak { 0.0f }, lastBarCents { 0.0f }, lastGlidePhase { 0.0f };
-    std::atomic<int> lastPickAttacks { 0 };
+    std::atomic<int> lastPickAttacks { 0 }, lastPicksHeard { 0 };
     std::atomic<double> lastBpm { 120.0 };
 
     struct RawParams
     {
-        std::atomic<float>*erRoomSize, *erLiveness, *erDelay, *erLpf, *balance, *outLevel, *input, *inputSwitch,
-            *outputSwitch, *bypass, *glideOn, *glideMode, *glidePeriod, *glideDivision, *glideDepth, *glideDirection,
-            *glideRandom, *glideSmooth, *glideShape, *glideTriggerSource, *glideSensitivity, *glideManualSource,
+        std::atomic<float>*gateRoomSize, *gateLiveness, *gatePreDelay, *gateLpf, *gateMix, *output, *input, *gateOn,
+            *glideOn, *glideMode, *glidePeriod, *glideDivision, *glideDepth, *glideDirection,
+            *glideRandom, *glideSmooth, *glideShape, *glideTriggerSource, *pickSensitivity, *glideManualSource,
             *glideBar, *glideTwinDetune, *glideTwinLevel, *glideMix, *glidePosition, *outputMode, *glideDynamics,
-            *inputMode, *holdOn, *holdMode, *holdLatch, *holdFollow, *holdSize, *holdDensity,
+            *inputMode, *holdOn, *holdMode, *holdFreeze, *holdFollow, *holdSize, *holdDensity,
             *holdSmear, *holdSpread, *holdReverse, *holdDuck, *holdDecay, *holdLevel, *holdFeed, *holdCharacter,
             *holdRoot;
     } raw;

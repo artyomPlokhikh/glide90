@@ -21,13 +21,8 @@ using juce::AudioParameterIntAttributes;
 using juce::NormalisableRange;
 using juce::ParameterID;
 
+// Every parameter came in with the first published version.
 constexpr int kVersion = 1;
-
-// The version a parameter came in with (AU hosts want new ones marked): HOLD's came in 2.
-int versionOf(const char* id)
-{
-    return juce::String(id).startsWith("hold_") ? 2 : kVersion;
-}
 
 juce::String lpfLabel(float hz)
 {
@@ -141,7 +136,7 @@ std::optional<float> readNote(const juce::String& typed)
 
 std::optional<float> parseText(const juce::String& id, const juce::String& text, const juce::StringArray& choices)
 {
-    if (id == ids::erLpf)
+    if (id == ids::gateLpf)
         return readLpf(text);
     if (id == ids::holdRoot)
         return readNote(text);
@@ -158,6 +153,17 @@ std::optional<float> parseText(const juce::String& id, const juce::String& text,
     }
     if (!choices.isEmpty())
         return matchChoice(text, choices);
+    // Levels in dB: "-6", "-6 dB", "+3"; "-inf", "off" or the infinity sign for silence (on INPUT,
+    // which goes no lower than -24 dB, its bottom).
+    if (isOneOf(id, { ids::input, ids::output, ids::holdLevel }))
+    {
+        const auto word = normalised(text).removeCharacters("+");
+        if (word == "inf" || word == "infdb" || word == "off" || word == "mute"
+            || text.contains(juce::String::fromUTF8("\xe2\x88\x9e")))
+            return kOffDb;
+        const auto n = readNumber(text);
+        return n ? std::optional<float>((float) n->value) : std::nullopt;
+    }
 
     const auto n = readNumber(text);
     if (!n)
@@ -166,11 +172,11 @@ std::optional<float> parseText(const juce::String& id, const juce::String& text,
     double v = n->value;
 
     // Shown as percentages, typed as percentages: "50" and "50 %" are both one half.
-    if (isOneOf(id, { ids::balance, ids::outLevel, ids::glideRandom, ids::glideSmooth, ids::glideSensitivity,
-                      ids::glideDynamics, ids::glideBar, ids::glideTwinLevel, ids::glideMix, ids::holdFollow, ids::holdReverse, ids::holdDuck, ids::holdLevel }))
+    if (isOneOf(id, { ids::gateMix, ids::glideRandom, ids::glideSmooth, ids::pickSensitivity, ids::glideDynamics,
+                      ids::glideBar, ids::glideTwinLevel, ids::glideMix, ids::holdFollow, ids::holdReverse, ids::holdDuck }))
         return (float) (v / 100.0);
     // Milliseconds, or seconds when said so ("1.2 s").
-    if (isOneOf(id, { ids::erDelay, ids::glidePeriod, ids::holdSize, ids::holdSmear }))
+    if (isOneOf(id, { ids::gatePreDelay, ids::glidePeriod, ids::holdSize, ids::holdSmear }))
     {
         const bool seconds = (unit.startsWithChar('s') || unit.startsWith(secondsWord()));
         return (float) (seconds ? v * 1000.0 : v);
@@ -191,7 +197,7 @@ std::unique_ptr<AudioParameterFloat> floatParam(const char* id, const juce::Stri
         });
     if (text)
         attributes = attributes.withStringFromValueFunction([text](float v, int) { return text(v); });
-    return std::make_unique<AudioParameterFloat>(ParameterID { id, versionOf(id) }, name, range, defaultValue, attributes);
+    return std::make_unique<AudioParameterFloat>(ParameterID { id, kVersion }, name, range, defaultValue, attributes);
 }
 
 std::unique_ptr<AudioParameterFloat> percentParam(const char* id, const juce::String& name, float defaultValue,
@@ -199,6 +205,17 @@ std::unique_ptr<AudioParameterFloat> percentParam(const char* id, const juce::St
 {
     return floatParam(id, name, NormalisableRange<float>(0.0f, 1.0f, step), defaultValue,
                       [](float v) { return juce::String(juce::roundToInt(v * 100.0f)) + "%"; });
+}
+
+// A level in dB, shown as "+3.0 dB", "0.0 dB", or "-inf dB" at kOffDb.
+std::unique_ptr<AudioParameterFloat> dbParam(const char* id, const juce::String& name, float lo, float hi, float defaultValue)
+{
+    return floatParam(id, name, NormalisableRange<float>(lo, hi, 0.1f), defaultValue, [](float v) {
+        if (v <= kOffDb + 0.05f)
+            return juce::String("-inf dB");
+        const float shown = std::abs(v) < 0.05f ? 0.0f : v;
+        return (shown > 0.0f ? "+" : "") + juce::String(shown, 1) + " dB";
+    });
 }
 
 std::unique_ptr<AudioParameterInt> intParam(const char* id, const juce::String& name, int lo, int hi, int defaultValue,
@@ -211,14 +228,14 @@ std::unique_ptr<AudioParameterInt> intParam(const char* id, const juce::String& 
         });
     if (text)
         attributes = attributes.withStringFromValueFunction([text](int v, int) { return text(v); });
-    return std::make_unique<AudioParameterInt>(ParameterID { id, versionOf(id) }, name, lo, hi, defaultValue, attributes);
+    return std::make_unique<AudioParameterInt>(ParameterID { id, kVersion }, name, lo, hi, defaultValue, attributes);
 }
 
 std::unique_ptr<AudioParameterChoice> choiceParam(const char* id, const juce::String& name, const juce::StringArray& choices,
                                                   int defaultIndex)
 {
     return std::make_unique<AudioParameterChoice>(
-        ParameterID { id, versionOf(id) }, name, choices, defaultIndex,
+        ParameterID { id, kVersion }, name, choices, defaultIndex,
         AudioParameterChoiceAttributes().withValueFromStringFunction(
             [key = juce::String(id), choices, defaultIndex](const juce::String& t) {
                 const auto v = parseText(key, t, choices);
@@ -228,7 +245,7 @@ std::unique_ptr<AudioParameterChoice> choiceParam(const char* id, const juce::St
 
 std::unique_ptr<AudioParameterBool> boolParam(const char* id, const juce::String& name, bool defaultValue)
 {
-    return std::make_unique<AudioParameterBool>(ParameterID { id, versionOf(id) }, name, defaultValue);
+    return std::make_unique<AudioParameterBool>(ParameterID { id, kVersion }, name, defaultValue);
 }
 
 } // namespace
@@ -280,26 +297,26 @@ Layout createParameterLayout()
     const auto oneDecimal = [](float v) { return juce::String(v, 1); };
 
     // The defaults are the first factory preset, Glide Guitar.
+    // The plugin's first and last stage, and the pick detector GLIDE and HOLD share.
+    layout.add(dbParam(ids::input, "Input", -kInputRangeDb, kInputRangeDb, 0.0f));
+    layout.add(choiceParam(ids::inputMode, "Input Mode", { "MONO", "STEREO" }, (int) InputMode::Stereo));
+    layout.add(dbParam(ids::output, "Output", kOffDb, kOutputMaxDb, 0.0f));
+    layout.add(choiceParam(ids::outputMode, "Output Mode", { "STEREO", "L ONLY", "MONO" }, 0));
+    layout.add(percentParam(ids::pickSensitivity, "Pick Sensitivity", 0.55f));
+
     // The reverse gate: the SPX90's program 17, here at its longest swell.
-    layout.add(floatParam(ids::erRoomSize, "ER Room Size", steppedRange(0.1f, 20.0f, 0.1f, 4.0f), 20.0f, oneDecimal));
-    layout.add(intParam(ids::erLiveness, "ER Liveness", 0, 10, 4));
-    layout.add(floatParam(ids::erDelay, "ER Delay", steppedRange(0.1f, 400.0f, 0.1f, 40.0f), rom17.delayMs,
+    layout.add(boolParam(ids::gateOn, "Gate On", true));
+    layout.add(floatParam(ids::gateRoomSize, "Gate Room Size", steppedRange(0.1f, 20.0f, 0.1f, 4.0f), 20.0f, oneDecimal));
+    layout.add(intParam(ids::gateLiveness, "Gate Liveness", 0, 10, 4));
+    layout.add(floatParam(ids::gatePreDelay, "Gate Pre-Delay", steppedRange(0.1f, 400.0f, 0.1f, 40.0f), rom17.delayMs,
                           [](float v) { return juce::String(v, 1) + "ms"; }));
     juce::StringArray lpfNames;
     for (float hz : spx::kLpfValuesHz)
         lpfNames.add(lpfLabel(hz));
-    layout.add(choiceParam(ids::erLpf, "ER LPF", lpfNames, lpfNames.size() - 1));
-    layout.add(percentParam(ids::balance, "Balance", 1.0f));
-    layout.add(percentParam(ids::outLevel, "Out Level", 1.0f));
+    layout.add(choiceParam(ids::gateLpf, "Gate LPF", lpfNames, lpfNames.size() - 1));
+    layout.add(percentParam(ids::gateMix, "Gate Mix", 1.0f));
 
-    layout.add(floatParam(ids::input, "Input", NormalisableRange<float>(0.0f, 10.0f, 0.01f), 8.0f, oneDecimal));
-    layout.add(choiceParam(ids::inputSwitch, "Input Level Switch", { "+4 dBm", "-20 dBm" }, 0));
-    layout.add(choiceParam(ids::outputSwitch, "Output Level Switch", { "+4 dBm", "-20 dBm" }, 0));
-    layout.add(std::make_unique<AudioParameterBool>(ParameterID { ids::bypass, kVersion }, "SPX Bypass", false));
-    layout.add(choiceParam(ids::outputMode, "Output Mode", { "STEREO", "L ONLY", "MONO" }, 0));
-    layout.add(choiceParam(ids::inputMode, "Input Mode", { "MONO", "STEREO" }, (int) InputMode::Stereo));
-
-    layout.add(std::make_unique<AudioParameterBool>(ParameterID { ids::glideOn, kVersion }, "Glide On", true));
+    layout.add(boolParam(ids::glideOn, "Glide On", true));
     layout.add(choiceParam(ids::glideMode, "Glide Mode", { "FREE", "SYNC", "TRIGGER", "MANUAL" }, 2));
     layout.add(floatParam(ids::glidePeriod, "Glide Rate", steppedRange(30.0f, 4000.0f, 1.0f, 400.0f), 600.0f,
                           [](float v) { return juce::String(juce::roundToInt(v)) + " ms"; }));
@@ -318,7 +335,6 @@ Layout createParameterLayout()
     shapes.add(kCustomShapeName);
     layout.add(choiceParam(ids::glideShape, "Glide Shape", shapes, (int) sway::ShapePreset::Dive));
     layout.add(choiceParam(ids::glideTriggerSource, "Glide Trigger", { "PICK ATTACK", "MIDI NOTE" }, 0));
-    layout.add(percentParam(ids::glideSensitivity, "Glide Sensitivity", 0.55f));
     layout.add(percentParam(ids::glideDynamics, "Glide Dynamics", 0.6f));
     layout.add(choiceParam(ids::glideManualSource, "Glide Manual Source",
                            { "BAR KNOB", "PITCH BEND", "MOD WHEEL", "EXPRESSION (CC11)" }, 0));
@@ -329,10 +345,10 @@ Layout createParameterLayout()
     layout.add(percentParam(ids::glideMix, "Glide Mix", 1.0f));
     layout.add(choiceParam(ids::glidePosition, "Glide Position", { "PRE", "POST" }, 0));
 
-    // Off by default: every older project and preset sounds as it did.
+    // HOLD: off by default.
     layout.add(boolParam(ids::holdOn, "Hold On", false));
     layout.add(choiceParam(ids::holdMode, "Hold Mode", { "STRIKE", "LATCH", "LIVE", "MIDI" }, 0));
-    layout.add(boolParam(ids::holdLatch, "Hold Freeze", false));
+    layout.add(boolParam(ids::holdFreeze, "Hold Freeze", false));
     layout.add(floatParam(ids::holdFollow, "Hold Follow", NormalisableRange<float>(0.0f, 2.0f, 0.01f), 1.0f,
                           [](float v) { return juce::String(juce::roundToInt(v * 100.0f)) + "%"; }));
     const auto ms = [](float v) { return juce::String(juce::roundToInt(v)) + " ms"; };
@@ -348,7 +364,7 @@ Layout createParameterLayout()
             return juce::String("INF");
         return v < 10.0f ? juce::String(v, 1) + " s" : juce::String(juce::roundToInt(v)) + " s";
     }));
-    layout.add(percentParam(ids::holdLevel, "Hold Level", 0.7f));
+    layout.add(dbParam(ids::holdLevel, "Hold Level", kOffDb, kHoldLevelMaxDb, -3.0f));
     layout.add(choiceParam(ids::holdFeed, "Hold Feed", { "GATE", "OUT" }, 0));
     layout.add(choiceParam(ids::holdCharacter, "Hold Character", { "CLEAN", "12-BIT" }, 0));
     layout.add(intParam(ids::holdRoot, "Hold Root", 24, 96, 60, [](int v) { return noteName(v); }));

@@ -12,8 +12,8 @@ namespace glide90::ui
 {
 
 // The top bar: the name; browse and step through factory and user presets (an asterisk marks
-// unsaved changes), save or delete, compare A/B, undo/redo; SETUP for the rig's levels, the window
-// size and the look.
+// unsaved changes), save or delete, compare A/B, undo/redo; SETUP for the window size, the look and
+// its motion.
 class HeaderBar : public juce::Component, private juce::Timer
 {
 public:

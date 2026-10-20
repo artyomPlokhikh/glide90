@@ -336,9 +336,10 @@ void ShapeDisplay::paintMoving(juce::Graphics& g)
         g.fillEllipse(juce::Rectangle<float>(6.0f, 6.0f).withCentre(toScreen(0.999f, pushFromCents(cents))));
     }
 
-    // The bar now.
-    drawReadout(g, on ? (cents > 0.5f ? "+" : "") + juce::String(juce::roundToInt(cents)) + "CT" : juce::String("OFF"),
-                { bounds.getRight() - 120.0f, 6.0f, 108.0f, 22.0f }, ink, juce::Justification::right, true, true);
+    // The bar now (off, the line under the shape says so).
+    if (on)
+        drawReadout(g, (cents > 0.5f ? "+" : "") + juce::String(juce::roundToInt(cents)) + "CT",
+                    { bounds.getRight() - 120.0f, 6.0f, 108.0f, 22.0f }, ink, juce::Justification::right, true, true);
 
     // TRIGGER from the pick: flashes on every attack it hears, to set PICK SENS by.
     if (on && (sway::GlideMode) choice(ids::glideMode) == sway::GlideMode::Trigger

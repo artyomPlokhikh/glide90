@@ -12,7 +12,7 @@ Glide90Editor::Glide90Editor(Glide90Processor& p)
     : AudioProcessorEditor(p), proc(p), header(p),
       input(p.state(), ids::input, "In", "INPUT", [&p] { return p.takeInputPeak(); }, ids::inputMode,
             (int) InputMode::Stereo),
-      output(p.state(), ids::outLevel, "Out", "LEVEL", [&p] { return p.takeOutputPeak(); }, ids::outputMode,
+      output(p.state(), ids::output, "Out", "OUTPUT", [&p] { return p.takeOutputPeak(); }, ids::outputMode,
              (int) OutputMode::Stereo),
       glide(p), gate(p), holdPanel(p),
       position(*p.state().getParameter(ids::glidePosition), [this](float v) {
@@ -28,9 +28,17 @@ Glide90Editor::Glide90Editor(Glide90Processor& p)
     for (auto* c : std::initializer_list<juce::Component*> { &header, &input, &glide, &gate, &holdPanel, &output })
         content.addAndMakeVisible(c);
     content.setSize(kWidth, contentHeight());
+    input.addPickSense(p.state(), ids::pickSensitivity, [&p] { return p.picksHeard(); });
     input.modeKey().setTooltip("Stereo: the direct sound keeps its sides, the reverse gate hears both. "
                                "Mono: one input, like the SPX90's");
+    input.levelKnob().setTooltip("The guitar's level into everything: the glide, HOLD, the pick detector and the "
+                                 "reverse gate. Set it so the meter's CLIP light stays dark. Presets leave it alone");
+    input.pickKnob()->setTooltip("How easily a pick attack is heard: it restarts the glide (TRIGGER from PICK ATTACK) "
+                                 "and captures a new chord in HOLD (STRIKE, MIDI)");
+    input.pickLight()->setTooltip("Lights on each pick attack heard at this PICK SENS");
     output.modeKey().setTooltip("Stereo, the left output on both sides (one amp), or both outputs summed");
+    output.levelKnob().setTooltip("The level of everything that leaves the plugin: the modules and HOLD, with the "
+                                  "reverse gate on or off");
     content.themeChanged();
 
     // Each unit is kept as a picture: moving one, or repainting the moving background behind it,
@@ -133,15 +141,15 @@ void Glide90Editor::updateMotion(double seconds)
     m.time = seconds;
     m.cents = proc.barCents();
     m.bend = juce::jmin(1.0f, std::abs(m.cents) / 60.0f);
-    m.room = raw(ids::erRoomSize);
-    m.gateSeconds = 0.072f * m.room + raw(ids::erDelay) / 1000.0f; // ROOM SIZE 20 swells for 1.44 s
+    m.room = raw(ids::gateRoomSize);
+    m.gateSeconds = 0.072f * m.room + raw(ids::gatePreDelay) / 1000.0f; // ROOM SIZE 20 swells for 1.44 s
 
     // The swell: the effect's level, up at once, down fast (the gate cuts sharply), against the
     // loudest it has been lately, so quiet playing moves the pictures as much as loud.
     const float db = juce::Decibels::gainToDecibels(proc.takeWetPeak(), -100.0f);
     wetDb = juce::jmax(db, wetDb - 120.0f * dt);
     loudDb = juce::jmax(wetDb, loudDb - 4.0f * dt, -40.0f);
-    const bool gateOn = raw(ids::bypass) < 0.5f;
+    const bool gateOn = raw(ids::gateOn) > 0.5f;
     m.swell = gateOn && wetDb > -70.0f ? juce::jlimit(0.0f, 1.0f, 1.0f + (wetDb - loudDb) / 30.0f) : 0.0f;
     if (!rising && m.swell > 0.12f)
     {
@@ -188,11 +196,19 @@ void Glide90Editor::frame(double seconds)
 
 void Glide90Editor::resized()
 {
-    const int m = ui::PanelLookAndFeel::kMargin, h = ui::ModulePanel::kHeight;
+    const int m = ui::PanelLookAndFeel::kMargin;
     header.setBounds(0, 0, kWidth, kHeaderHeight);
-    input.setBounds(m, kBodyTop, ui::IoColumn::kWidth, h);
-    output.setBounds(kWidth - m - ui::IoColumn::kWidth, kBodyTop, ui::IoColumn::kWidth, h);
-    holdPanel.setBounds(m, kHoldTop, kWidth - 2 * m, contentHeight() - m - kHoldTop);
+    // IN and OUT run down the side of everything, HOLD included; their knobs line up with the lowest
+    // rows of knobs beside them (HOLD's, while it is open).
+    const int columnHeight = contentHeight() - m - kBodyTop;
+    input.setBounds(m, kBodyTop, ui::IoColumn::kWidth, columnHeight);
+    output.setBounds(kWidth - m - ui::IoColumn::kWidth, kBodyTop, ui::IoColumn::kWidth, columnHeight);
+    const int holdKnobs = kHoldTop + ui::HoldPanel::kRowTop - kBodyTop;
+    const int upper = holdPanel.isFolded() ? ui::ModulePanel::kRow1 : ui::ModulePanel::kRow2;
+    const int lower = holdPanel.isFolded() ? ui::ModulePanel::kRow2 : holdKnobs;
+    input.setKnobRows(upper, lower);
+    output.setKnobRows(upper, lower);
+    holdPanel.setBounds(modulesLeft(), kHoldTop, kModulesWidth, contentHeight() - m - kHoldTop);
     if (dragged == nullptr)
         layoutModules(false);
 }

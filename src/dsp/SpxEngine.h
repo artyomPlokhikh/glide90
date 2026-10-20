@@ -14,15 +14,12 @@ struct SpxSettings
 {
     int program = 17;
     ErSettings er = {};
-    float balance = 1.0f;     // 0 = direct only, 1 = effect only
-    float outLevel = 1.0f;    // 0 - 1
-    float inputKnob = 8.0f;   // front-panel INPUT, 0 - 10, unity at 8
-    bool inputMinus20 = false;  // rear-panel level switches: -20 dBm instead of +4 dBm
-    bool outputMinus20 = false;
-    bool bypass = false;      // analog bypass: full bandwidth, INPUT knob still applies
+    float balance = 1.0f; // 0 = direct only, 1 = effect only
+    bool bypass = false;  // analog bypass: full bandwidth
 };
 
-// The whole SPX90: mono or stereo in, stereo out, at the host rate. The unit has one input: with two,
+// The whole SPX90 at unity gain (the plugin's INPUT and OUTPUT do the levels): mono or stereo in,
+// stereo out, at the host rate. The unit has one input: with two,
 // the effect hears their sum and the direct signal keeps its sides. Internally the signal is resampled to
 // the DSP rate, filtered by the measured converter response, quantised to 16 bits, processed by
 // the selected program and mixed with the (equally band-limited) direct signal, as in the unit.
@@ -32,8 +29,8 @@ public:
     void prepare(double hostRate, int maxBlockSize);
     void reset();
 
-    // `send`, when given, is heard by the effect only (added to what it hears, after the input gain
-    // and the A/D), never by the direct signal: a return from HOLD into the reverse gate.
+    // `send`, when given, is heard by the effect only (added to what it hears, after the A/D), never
+    // by the direct signal: a return from HOLD into the reverse gate.
     void process(const float* inL, const float* inR, float* outL, float* outR, int numSamples, const SpxSettings& s,
                  const float* send = nullptr);
     void process(const float* monoIn, float* outL, float* outR, int numSamples, const SpxSettings& s)
@@ -46,8 +43,6 @@ public:
 
     // Constant delay from input to output in host samples.
     int latencySamples() const { return latency; }
-
-    static float inputGain(float knob, bool minus20);
 
 private:
     void processDsp(int numDsp, const SpxSettings& s);
@@ -66,7 +61,7 @@ private:
     bool sendActive = false; // the send's chain is running, in step with the inputs
 
     // Smoothed at the DSP rate.
-    float gainIn = 1.0f, balance = 1.0f, outGain = 1.0f;
+    float balance = 1.0f;
     float wetPeak = 0.0f;
     float smoothCoeff = 0.0f;
     bool snapParameters = true; // jump straight to the settings after a reset
@@ -77,9 +72,6 @@ private:
     float bypassMix = 0.0f;
     float bypassStep = 0.0f;
     std::vector<float> scratchL, scratchR;
-
-    // Rear-panel output switch, analog: smoothed at the host rate (-1 = take the next setting as is).
-    float analogOut = -1.0f, analogCoeff = 0.0f;
 };
 
 } // namespace spx

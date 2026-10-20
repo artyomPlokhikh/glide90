@@ -2,6 +2,7 @@
 //
 //   glide90_render in=guitar.wav out=wet.wav program=17 rs=20 liv=4 delay=25 balance=1
 //   glide90_render in=impulse rate=44100 seconds=2 out=ir.wav program=17
+//   input=-6 output=0 (the plugin's INPUT and OUTPUT, in dB)
 //   sway=1 depth=30 period=333 shape=0 random=0.15 smooth=0.2 direction=0 twin=0 twinlevel=0
 //   (shape: index into sway::kShapePresetNames; direction: 0 down, 1 both, 2 up)
 
@@ -10,6 +11,7 @@
 #include "SwayProcessor.h"
 #include "Wav.h"
 
+#include <cmath>
 #include <cstdio>
 #include <map>
 #include <string>
@@ -27,7 +29,7 @@ int main(int argc, char** argv)
     auto num = [&](const char* k, double def) { return a.count(k) ? std::stod(a[k]) : def; };
     if (!a.count("in") || !a.count("out"))
     {
-        std::fprintf(stderr, "usage: glide90_render in=<file.wav|impulse> out=<file.wav> [program=17 rs= liv= delay= lpf= balance= sway=0|1 ...]\n");
+        std::fprintf(stderr, "usage: glide90_render in=<file.wav|impulse> out=<file.wav> [program=17 rs= liv= delay= lpf= balance= input=dB output=dB sway=0|1 ...]\n");
         return 1;
     }
 
@@ -62,8 +64,11 @@ int main(int argc, char** argv)
     s.er.delayMs = (float) num("delay", s.er.delayMs);
     s.er.lpfHz = (float) num("lpf", s.er.lpfHz);
     s.balance = (float) num("balance", 1.0);
-    s.outLevel = (float) num("outlvl", 1.0);
-    s.inputKnob = (float) num("input", 8.0);
+    // The plugin's INPUT and OUTPUT, in dB, around the engine.
+    const float inputGain = (float) std::pow(10.0, num("input", 0.0) / 20.0);
+    const float outputGain = (float) std::pow(10.0, num("output", 0.0) / 20.0);
+    for (auto& x : mono)
+        x *= inputGain;
 
     sway::SwaySettings w;
     const auto shape = sway::makeShape((sway::ShapePreset) (int) num("shape", 0));
@@ -91,6 +96,9 @@ int main(int argc, char** argv)
             swayProc.process(mono.data() + i, n, w);
         engine.process(mono.data() + i, out[0].data() + i, out[1].data() + i, n, s);
     }
+    for (auto& ch : out)
+        for (auto& x : ch)
+            x *= outputGain;
     if (!writeWav(a["out"], out, (int) rate))
         return 1;
     std::printf("wrote %s (%zu samples at %.0f Hz, engine latency %d)\n", a["out"].c_str(), mono.size(), rate,

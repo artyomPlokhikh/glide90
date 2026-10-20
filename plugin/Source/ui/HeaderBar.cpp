@@ -52,7 +52,7 @@ HeaderBar::HeaderBar(Glide90Processor& p) : proc(p)
     undoKey.onClick = [this] { proc.undoManager().undo(); };
     redoKey.onClick = [this] { proc.undoManager().redo(); };
 
-    setup.setTooltip("The levels of your rig, the window size and the look");
+    setup.setTooltip("Window size, look and motion");
     setup.onClick = [this] { showSetup(); };
 
     refreshUserFiles();
@@ -97,21 +97,6 @@ void HeaderBar::showSetup()
 {
     juce::PopupMenu menu;
     menu.setLookAndFeel(&getLookAndFeel());
-    // A choice parameter as a submenu.
-    auto choices = [this](const char* id) {
-        juce::PopupMenu sub;
-        auto* param = dynamic_cast<juce::AudioParameterChoice*>(proc.state().getParameter(id));
-        for (int i = 0; i < param->choices.size(); ++i)
-            sub.addItem(param->choices[i], true, i == param->getIndex(), [param, i] {
-                param->beginChangeGesture();
-                param->setValueNotifyingHost(param->convertTo0to1((float) i));
-                param->endChangeGesture();
-            });
-        return sub;
-    };
-    menu.addSectionHeader("Rig");
-    menu.addSubMenu("Input level", choices(ids::inputSwitch));
-    menu.addSubMenu("Output level", choices(ids::outputSwitch));
     menu.addSectionHeader("Window");
     juce::PopupMenu sizes;
     for (float s : { 0.75f, 1.0f, 1.25f, 1.5f, 1.75f })

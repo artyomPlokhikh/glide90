@@ -13,7 +13,7 @@ class Glide90Processor;
 namespace glide90::ui
 {
 
-// HOLD's screen. Open: MODE (arrows, or a click for the list) and FEED on its top line, the held
+// HOLD's screen. Open: MODE (arrows, or a click for the list) and DENSITY on its top line, the held
 // chord's waveform (in LIVE the last moments going by) with the grains playing it, the layer's level,
 // and SAMPLER and (in MIDI) ROOT on its bottom line. Folded into the title bar: what HOLD does in one
 // line, the waveform beside it.
@@ -41,7 +41,9 @@ private:
         ModeDown,
         Mode,
         ModeUp,
-        Feed,
+        DensityDown,
+        Density,
+        DensityUp,
         Character,
         RootDown,
         Root,
@@ -60,7 +62,7 @@ private:
     hold::HoldDisplay& source;
     std::array<float, 2 * hold::HoldDisplay::kColumns> wave {};
     std::array<float, hold::HoldDisplay::kGrains> grainPos {}, grainAmp {};
-    int shownVersion = -1, mode = 0, feed = 0, character = 0, root = 60;
+    int shownVersion = -1, mode = 0, feed = 0, density = 2, character = 0, root = 60;
     bool on = false, holding = false, latched = false, gateBypassed = false, compact = false;
     float heldSeconds = 0.0f, levelDb = -100.0f;
     Spot hover = Spot::Nowhere;
@@ -68,11 +70,12 @@ private:
     juce::VBlankAttachment vblank { this, [this](double seconds) { frame(seconds); } };
 };
 
-// The Hold strip, across the window under GLIDE and GATE: one row, so the window stays close to its
-// size without HOLD. Its title bar has FREEZE and ON; a click on the title folds the strip down to
-// the bar (a setting of the user, not of the sound), the screen then shrinking into it. Open: the
-// screen, then FOLLOW, the grains (size, density, smear, spread, reverse) and the mix (duck, decay,
-// level). PICK SENS is the glide's: the same picking feeds both.
+// The Hold strip, under GLIDE and GATE between IN and OUT: one row, so the window stays close to its
+// size without HOLD. Its title bar has FEED (where HOLD goes: into the gate or to the output), FREEZE
+// and ON; a click on the title folds the strip down to the bar (a setting of the user, not of the
+// sound), the screen then shrinking into it. Open: the screen, then FOLLOW, the grains (size, smear,
+// spread, reverse; density is on the screen) and the mix (duck, decay, level). PICK SENS is IN's:
+// the same picking feeds the glide and HOLD.
 class HoldPanel : public ModulePanel
 {
 public:
@@ -80,7 +83,7 @@ public:
     ~HoldPanel() override;
 
     static constexpr int kFoldedHeight = kTitleHeight, kOpenHeight = 156;
-    static constexpr int kRowTop = 46, kScreenWidth = 212;
+    static constexpr int kRowTop = 46, kScreenWidth = 208, kKnobs = 8;
 
     bool isFolded() const { return folded; }
     void setFolded(bool);
@@ -95,13 +98,17 @@ public:
 private:
     juce::Rectangle<int> titleArea() const;
     juce::Rectangle<int> freezeBounds() const;
+    juce::Rectangle<int> feedBounds() const;
 
     Glide90Processor& proc;
     ToggleKey on, freeze;
+    CycleKey feed;
     HoldDisplay display;
-    Knob follow, size, density, smear, spread, reverse, duck, decay, level;
+    Knob follow, size, smear, spread, reverse, duck, decay, level;
     bool folded = false;
-    juce::ParameterAttachment modeWatch; // FREEZE is lit only in LATCH
+    juce::ParameterAttachment modeWatch;  // FREEZE is lit only in LATCH
+    juce::ParameterAttachment gateWatch;  // with the gate off, FEED is OUT
+    juce::ParameterAttachment glideWatch; // with the glide off, the bar does not move: FOLLOW dims
 };
 
 } // namespace glide90::ui

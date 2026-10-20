@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <functional>
+#include <optional>
 
 namespace glide90::ui
 {
@@ -148,10 +149,21 @@ class CycleKey : public juce::TextButton
 public:
     CycleKey(juce::AudioProcessorValueTreeState& state, const char* paramId, int litChoice);
 
+    // Written before the choice's name on the key ("> " makes "> GATE").
+    void setLegendPrefix(const juce::String& prefix);
+    // Shows `choice` whatever the parameter says, dimmed and not clickable (something else decides
+    // for now); nothing goes back to the parameter.
+    void setForcedChoice(std::optional<int> choice);
+
 private:
+    void show();
+
     juce::AudioParameterChoice& param;
     juce::ParameterAttachment attachment;
     int lit;
+    int current = 0;
+    juce::String legendPrefix;
+    std::optional<int> forced;
 };
 
 // A small screen: text, optional step arrows at its ends, a menu on click.
@@ -182,6 +194,13 @@ public:
     // Reads the peak (linear, 1 = full scale) since the last call.
     explicit LevelMeter(std::function<float()> takePeak);
     ~LevelMeter() override;
+
+    // 12 segments: 11 from -40 dB up in even steps, the top one only at full scale (clipping).
+    static constexpr int kSegments = 12;
+    static constexpr float kFloorDb = -40.0f;
+    // Where a scale mark for `db` goes, in this meter's coordinates: at the edge where that segment
+    // lights; full scale at the middle of the top segment.
+    float markY(float db) const;
 
     void paint(juce::Graphics&) override;
 

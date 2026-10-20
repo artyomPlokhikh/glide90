@@ -41,8 +41,8 @@ private:
     juce::VBlankAttachment vblank { this, [this](double seconds) { frame(seconds); } };
 };
 
-// The Reverse Gate module: the screen, ROOM SIZE (what the reverse gate is about) two rows tall,
-// liveness and pre-delay, and below them the MIX group: low-pass and mix.
+// The Reverse Gate module: the screen across four columns, and under it ROOM SIZE (what the reverse
+// gate is about) two rows tall, liveness and pre-delay, and the MIX group: low-pass and mix.
 class GatePanel : public ModulePanel
 {
 public:
@@ -50,38 +50,76 @@ public:
     // What the sound does, for the screen's motion (the editor's, read every frame).
     void setMotion(const Motion* m) { display.motion = m; }
 
-    static constexpr int kColumns = 3;
+    static constexpr int kColumns = 4;
 
     void paint(juce::Graphics&) override;
     void resized() override;
 
 private:
+    // The knobs take three columns, centred under the screen.
+    static constexpr int knobX(int column) { return columnX(column) + Knob::kColumn / 2; }
+
     ToggleKey on;
     GateDisplay display;
     Knob roomSize, liveness, delay, lpf, mix;
 };
 
-// The input or the output: a key for its mode (MONO / STEREO ...) under the title, its meter down to
-// the end of the first row, with a dB scale, and its level knob on the second row.
+// A light that flashes on each pick attack heard; `picksHeard` counts them.
+class PickLight : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    explicit PickLight(std::function<int()> picksHeard);
+
+    void paint(juce::Graphics&) override;
+
+private:
+    void frame(double seconds);
+
+    std::function<int()> picksHeard;
+    int seen = -1;
+    double litUntil = 0.0;
+    bool lit = false;
+    juce::VBlankAttachment vblank { this, [this](double seconds) { frame(seconds); } };
+};
+
+// The plugin's input or output, down the window's side: a key for its mode (MONO / STEREO ...) under
+// the title, its meter with a dB scale, and its level knob at the bottom, level with the lowest row of
+// knobs beside it. The input also has PICK SENS and the pick light above its level knob: the pick
+// detector listens to the input, for GLIDE and HOLD alike.
 class IoColumn : public juce::Component
 {
 public:
-    IoColumn(juce::AudioProcessorValueTreeState& state, const char* paramId, const juce::String& title,
-             const juce::String& knobLabel, std::function<float()> takePeak, const char* modeParamId,
+    IoColumn(juce::AudioProcessorValueTreeState& state, const char* levelParamId, const juce::String& title,
+             const juce::String& levelLabel, std::function<float()> takePeak, const char* modeParamId,
              int stereoChoice);
 
     static constexpr int kWidth = 78;
 
+    // Adds PICK SENS for `paramId`, and the light, above the level knob. The meter's top mark then
+    // reads CLIP: what the input meter shows is the reverse gate's A/D.
+    void addPickSense(juce::AudioProcessorValueTreeState& state, const char* paramId, std::function<int()> picksHeard);
+    // The tops of the knobs, in this column: PICK SENS's (if any) and the level knob's.
+    void setKnobRows(int pickTop, int levelTop);
+
     void paint(juce::Graphics&) override;
     void resized() override;
 
+    // Where the meter's dB marks are drawn.
+    juce::Rectangle<float> scaleArea() const;
+
     CycleKey& modeKey() { return mode; }
+    Knob& levelKnob() { return knob; }
+    Knob* pickKnob() { return pick.get(); }
+    PickLight* pickLight() { return light.get(); }
 
 private:
     juce::String title;
     LevelMeter meter;
     Knob knob;
     CycleKey mode;
+    std::unique_ptr<Knob> pick;
+    std::unique_ptr<PickLight> light;
+    int pickRow = 0, levelRow = 0;
 };
 
 } // namespace glide90::ui

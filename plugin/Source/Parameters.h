@@ -9,21 +9,22 @@ namespace glide90
 
 namespace ids
 {
-// The reverse gate (the SPX90's program 17, the only one kept) and its mix and output level.
-inline constexpr const char* erRoomSize = "er_room_size";
-inline constexpr const char* erLiveness = "er_liveness";
-inline constexpr const char* erDelay = "er_delay";
-inline constexpr const char* erLpf = "er_lpf";
-inline constexpr const char* balance = "balance";
-inline constexpr const char* outLevel = "out_level";
-
-// Front-panel knob, rear-panel level switches and the BYPASS key.
+// The plugin's first and last stage: every sound passes through both. INPUT and the input mode
+// belong to the rig (presets and A/B leave them alone); OUTPUT is part of the sound.
 inline constexpr const char* input = "input";
-inline constexpr const char* inputSwitch = "input_switch";
-inline constexpr const char* outputSwitch = "output_switch";
-inline constexpr const char* bypass = "spx_bypass";
-inline constexpr const char* outputMode = "output_mode";
 inline constexpr const char* inputMode = "input_mode";
+inline constexpr const char* output = "output";
+inline constexpr const char* outputMode = "output_mode";
+// The pick detector both GLIDE (TRIGGER) and HOLD (STRIKE, MIDI) listen to.
+inline constexpr const char* pickSensitivity = "pick_sensitivity";
+
+// The reverse gate: the SPX90's program 17, the only one kept.
+inline constexpr const char* gateOn = "gate_on";
+inline constexpr const char* gateRoomSize = "gate_room_size";
+inline constexpr const char* gateLiveness = "gate_liveness";
+inline constexpr const char* gatePreDelay = "gate_pre_delay";
+inline constexpr const char* gateLpf = "gate_lpf";
+inline constexpr const char* gateMix = "gate_mix";
 
 // Glide: the vibrato bar.
 inline constexpr const char* glideOn = "glide_on";
@@ -36,7 +37,6 @@ inline constexpr const char* glideRandom = "glide_random";
 inline constexpr const char* glideSmooth = "glide_smooth";
 inline constexpr const char* glideShape = "glide_shape";
 inline constexpr const char* glideTriggerSource = "glide_trigger_source";
-inline constexpr const char* glideSensitivity = "glide_sensitivity";
 inline constexpr const char* glideDynamics = "glide_dynamics";
 inline constexpr const char* glideManualSource = "glide_manual_source";
 inline constexpr const char* glideBar = "glide_bar";
@@ -48,7 +48,7 @@ inline constexpr const char* glidePosition = "glide_position";
 // Hold: captures the chord and holds it, bent by the glide bar.
 inline constexpr const char* holdOn = "hold_on";
 inline constexpr const char* holdMode = "hold_mode";
-inline constexpr const char* holdLatch = "hold_latch";
+inline constexpr const char* holdFreeze = "hold_freeze";
 inline constexpr const char* holdFollow = "hold_follow";
 inline constexpr const char* holdSize = "hold_size";
 inline constexpr const char* holdDensity = "hold_density";
@@ -65,6 +65,17 @@ inline constexpr const char* holdRoot = "hold_root";
 
 // hold_decay at its top (and above this) holds forever.
 inline constexpr float kHoldDecayForever = 30.5f;
+
+// Levels in dB. A range that goes down to kOffDb is silent at its bottom ("-inf dB").
+inline constexpr float kOffDb = -60.0f;
+inline constexpr float kInputRangeDb = 24.0f;        // INPUT: -24 ... +24 dB
+inline constexpr float kOutputMaxDb = 12.0f;         // OUTPUT: off ... +12 dB
+inline constexpr float kHoldLevelMaxDb = 6.0f;       // HOLD LEVEL: off ... +6 dB
+// The gain of a level in dB; silence at kOffDb and below.
+inline float gainOf(float db)
+{
+    return juce::Decibels::decibelsToGain(db, kOffDb);
+}
 // MIDI note names as in most hosts: middle C (60) is C3.
 juce::String noteName(int note);
 
