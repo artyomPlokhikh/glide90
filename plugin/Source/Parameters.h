@@ -44,7 +44,30 @@ inline constexpr const char* glideTwinDetune = "glide_twin_detune";
 inline constexpr const char* glideTwinLevel = "glide_twin_level";
 inline constexpr const char* glideMix = "glide_mix";
 inline constexpr const char* glidePosition = "glide_position";
+
+// Hold: captures the chord and holds it, bent by the glide bar.
+inline constexpr const char* holdOn = "hold_on";
+inline constexpr const char* holdMode = "hold_mode";
+inline constexpr const char* holdLatch = "hold_latch";
+inline constexpr const char* holdSensitivity = "hold_sensitivity";
+inline constexpr const char* holdFollow = "hold_follow";
+inline constexpr const char* holdSize = "hold_size";
+inline constexpr const char* holdDensity = "hold_density";
+inline constexpr const char* holdSmear = "hold_smear";
+inline constexpr const char* holdSpread = "hold_spread";
+inline constexpr const char* holdReverse = "hold_reverse";
+inline constexpr const char* holdDuck = "hold_duck";
+inline constexpr const char* holdDecay = "hold_decay";
+inline constexpr const char* holdLevel = "hold_level";
+inline constexpr const char* holdFeed = "hold_feed";
+inline constexpr const char* holdCharacter = "hold_character";
+inline constexpr const char* holdRoot = "hold_root";
 } // namespace ids
+
+// hold_decay at its top (and above this) holds forever.
+inline constexpr float kHoldDecayForever = 30.5f;
+// MIDI note names as in most hosts: middle C (60) is C3.
+juce::String noteName(int note);
 
 enum class TriggerSource
 {

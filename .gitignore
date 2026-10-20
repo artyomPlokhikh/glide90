@@ -3,3 +3,4 @@
 /build/
 /tools/.venv/
 __pycache__/
+/docs

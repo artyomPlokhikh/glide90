@@ -2,6 +2,7 @@
 
 #include "BarGenerator.h"
 
+#include <array>
 #include <vector>
 
 namespace sway
@@ -60,7 +61,6 @@ public:
 private:
     void push(const float* in, int numChannels);
     const DelayLine& searchLine() const { return channels == 1 ? line[0] : sum; }
-    double correlation(int delayA, int delayB, int stride) const;
     void startSplice(double nominal, bool preferNominal);
 
     DelayLine line[kMaxChannels];
@@ -94,6 +94,15 @@ public:
     void process(float* const* channels, int numChannels, int numSamples, const SwaySettings& s,
                  const float* detector = nullptr);
 
+    // The same in two steps, for when something else follows the bar too (HOLD): first where the
+    // bar is, one value per sample in cents, from what the pick detector listens to; then the
+    // shifting, from those positions. Call computeBar() once per block, or for pieces of one with
+    // `continuing` set after the first.
+    void computeBar(const float* detector, int numSamples, const SwaySettings& s, float* centsOut,
+                    bool continuing = false);
+    void processWithBar(float* const* channels, int numChannels, int numSamples, const SwaySettings& s,
+                        const float* cents);
+
     // Constant delay of the dry path; the wet path is centred on it.
     int latencySamples() const { return latency; }
 
@@ -112,6 +121,9 @@ private:
     int latency = 0;
     float enabledMix = 0.0f, twinMix = 0.0f, mixStep = 0.0f;
     float lastCents = 0.0f;
+    // process(): the detector's input and the bar, a piece of the block at a time.
+    static constexpr int kPiece = 256;
+    std::array<float, kPiece> pieceDetector {}, pieceBar {};
 };
 
 } // namespace sway

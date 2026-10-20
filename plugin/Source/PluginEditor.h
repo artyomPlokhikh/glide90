@@ -4,6 +4,7 @@
 #include "ui/GatePanel.h"
 #include "ui/GlidePanel.h"
 #include "ui/HeaderBar.h"
+#include "ui/HoldPanel.h"
 #include "ui/PanelLookAndFeel.h"
 
 #include <array>
@@ -11,8 +12,9 @@
 namespace glide90
 {
 
-// The signal's way, left to right: IN, the two modules in the order they play, OUT. Dragging a
-// module by its title bar to the other place turns the order round.
+// The signal's way, left to right: IN, the two modules in the order they play, OUT; HOLD under the
+// two, across their width, as it plays beside them. Dragging GLIDE or GATE by its title bar to the
+// other place turns their order round; HOLD stays where it is.
 class Glide90Editor : public juce::AudioProcessorEditor
 {
 public:
@@ -21,7 +23,8 @@ public:
                                          + ui::GatePanel::widthFor(ui::GatePanel::kColumns);
     static constexpr int kWidth = 2 * ui::PanelLookAndFeel::kMargin + 2 * ui::IoColumn::kWidth + 2 * kGap + kModulesWidth;
     static constexpr int kHeaderHeight = 56, kBodyTop = 64;
-    static constexpr int kHeight = kBodyTop + ui::ModulePanel::kHeight + ui::PanelLookAndFeel::kMargin;
+    static constexpr int kHoldTop = kBodyTop + ui::ModulePanel::kHeight + kGap;
+    static constexpr int kHeight = kHoldTop + ui::ModulePanel::kHeight + ui::PanelLookAndFeel::kMargin;
 
     explicit Glide90Editor(Glide90Processor&);
     ~Glide90Editor() override;
@@ -34,6 +37,8 @@ public:
 
 private:
     void setZoom(float scale);
+    // `wanted`, or a smaller zoom if the window would not fit the screen at it.
+    float fittingZoom(float wanted) const;
     void setLook(int index);
     // Puts the modules in their places for the order the parameter says, sliding them there or not.
     void layoutModules(bool animate);
@@ -60,6 +65,7 @@ private:
     ui::IoColumn input, output;
     ui::GlidePanel glide;
     ui::GatePanel gate;
+    ui::HoldPanel holdPanel;
     juce::ParameterAttachment position;
     bool glideFirst = true;
     ui::ModulePanel* dragged = nullptr;

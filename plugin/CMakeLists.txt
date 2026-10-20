@@ -54,7 +54,8 @@ set(GLIDE90_PLUGIN_SOURCES
     Source/ui/Dialog.cpp
     Source/ui/GatePanel.cpp
     Source/ui/ShapeDisplay.cpp
-    Source/ui/GlidePanel.cpp)
+    Source/ui/GlidePanel.cpp
+    Source/ui/HoldPanel.cpp)
 set(GLIDE90_JUCE_DEFINITIONS
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0

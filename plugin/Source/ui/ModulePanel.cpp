@@ -22,7 +22,15 @@ juce::Rectangle<int> ModulePanel::onKeyBounds() const
 juce::Rectangle<int> ModulePanel::handleArea() const
 {
     // The title bar but its ON key.
+    if (!draggable)
+        return {};
     return { 0, 0, onKeyBounds().getX() - 8, kTitleHeight };
+}
+
+void ModulePanel::setDraggable(bool d)
+{
+    draggable = d;
+    repaint();
 }
 
 void ModulePanel::setLifted(bool l)
@@ -42,7 +50,7 @@ void ModulePanel::paint(juce::Graphics& g)
     // The grip: two columns of dots, brighter under the mouse.
     const float gx = 13.0f, gy = (float) kTitleHeight * 0.5f - 6.0f;
     g.setColour(t.textDim.withMultipliedAlpha(hover || lifted ? 1.0f : 0.6f));
-    for (int row = 0; row < 3; ++row)
+    for (int row = 0; row < 3 && draggable; ++row)
         for (int col = 0; col < 2; ++col)
             g.fillEllipse(gx + (float) col * 5.0f, gy + (float) row * 5.0f, 2.2f, 2.2f);
 

@@ -34,14 +34,21 @@ void SpxEngine::prepare(double rate, int maxBlockSize)
     hostRate = rate;
     downL.prepare(hostRate, kDspRate);
     downR.prepare(hostRate, kDspRate);
+    downSend.prepare(hostRate, kDspRate);
     const int lag = 8 + (int) std::ceil(kDspRate / hostRate); // block-to-block jitter margin
     upL.prepare(kDspRate, hostRate, lag);
     upR.prepare(kDspRate, hostRate, lag);
     er.prepare();
 
     const size_t dspMax = (size_t) std::ceil(maxBlockSize * kDspRate / hostRate) + 4;
-    for (auto* v : { &dspInL, &dspInR, &dspSum, &dspWetL, &dspWetR, &dspOutL, &dspOutR })
+    for (auto* v : { &dspInL, &dspInR, &dspSum, &dspWetL, &dspWetR, &dspOutL, &dspOutR, &dspSend })
         v->reserve(dspMax);
+    {
+        // Grow the send's history once here rather than on the audio thread.
+        const std::vector<float> silence((size_t) maxBlockSize, 0.0f);
+        downSend.process(silence.data(), maxBlockSize, dspSend);
+        dspSend.clear();
+    }
     scratchL.resize((size_t) maxBlockSize);
     scratchR.resize((size_t) maxBlockSize);
 
@@ -61,6 +68,9 @@ void SpxEngine::reset()
 {
     downL.reset();
     downR.reset();
+    downSend.reset();
+    adcFilterSend.reset();
+    sendActive = false;
     upL.reset();
     upR.reset();
     er.reset();
@@ -130,6 +140,9 @@ void SpxEngine::processDsp(int numDsp, const SpxSettings& s)
         dspInR[i] = quantise16(adcFilterR.process(dspInR[i] * gainIn));
         dspSum[i] = 0.5f * (dspInL[i] + dspInR[i]);
     }
+    if (sendActive)
+        for (int n = 0; n < numDsp; ++n)
+            dspSum[(size_t) n] += quantise16(adcFilterSend.process(dspSend[(size_t) n] * gainIn));
 
     dspWetL.resize((size_t) numDsp);
     dspWetR.resize((size_t) numDsp);
@@ -161,12 +174,24 @@ void SpxEngine::processDsp(int numDsp, const SpxSettings& s)
 }
 
 void SpxEngine::process(const float* inL, const float* inR, float* outL, float* outR, int numSamples,
-                        const SpxSettings& s)
+                        const SpxSettings& s, const float* send)
 {
+    if (send != nullptr && !sendActive)
+    {
+        downSend.restartAlongside(downL);
+        adcFilterSend.reset();
+        sendActive = true;
+    }
+    else if (send == nullptr)
+        sendActive = false;
+
     dspInL.clear();
     dspInR.clear();
+    dspSend.clear();
     downL.process(inL, numSamples, dspInL);
     downR.process(inR, numSamples, dspInR);
+    if (sendActive)
+        downSend.process(send, numSamples, dspSend);
     const int numDsp = (int) dspInL.size();
     processDsp(numDsp, s);
 

@@ -6,9 +6,9 @@
 namespace glide90::ui
 {
 
-// A module (Glide, Reverse Gate): a card with its name in a title bar, on the grid every module
+// A module (Glide, Reverse Gate, Hold): a card with its name in a title bar, on the grid every module
 // shares: the title bar, a screen, two rows of controls. The title bar is the handle to drag the
-// module to the other place; the owner moves it and decides where it lands.
+// module to the other place (unless it stays put); the owner moves it and decides where it lands.
 class ModulePanel : public juce::Component
 {
 public:
@@ -27,6 +27,8 @@ public:
     std::function<void(bool cancelled)> onDragEnd;
     // Drawn raised while it is dragged.
     void setLifted(bool);
+    // A module that stays in its place (HOLD) has no handle: no grip, no drag.
+    void setDraggable(bool);
 
     void paint(juce::Graphics&) override;
     void mouseMove(const juce::MouseEvent&) override;
@@ -45,7 +47,7 @@ private:
     void endDrag(bool cancelled);
 
     juce::String title;
-    bool hover = false, pressed = false, dragging = false, lifted = false;
+    bool hover = false, pressed = false, dragging = false, lifted = false, draggable = true;
     juce::Point<float> start; // in the parent
 };
 

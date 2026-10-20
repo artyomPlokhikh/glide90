@@ -32,7 +32,10 @@ public:
     void prepare(double hostRate, int maxBlockSize);
     void reset();
 
-    void process(const float* inL, const float* inR, float* outL, float* outR, int numSamples, const SpxSettings& s);
+    // `send`, when given, is heard by the effect only (added to what it hears, after the input gain
+    // and the A/D), never by the direct signal: a return from HOLD into the reverse gate.
+    void process(const float* inL, const float* inR, float* outL, float* outR, int numSamples, const SpxSettings& s,
+                 const float* send = nullptr);
     void process(const float* monoIn, float* outL, float* outR, int numSamples, const SpxSettings& s)
     {
         process(monoIn, monoIn, outL, outR, numSamples, s);
@@ -53,13 +56,14 @@ private:
     double hostRate = 48000.0;
     int latency = 0;
 
-    Downsampler downL, downR;
+    Downsampler downL, downR, downSend;
     Upsampler upL, upR;
-    ConverterFilter<tables::converterIn> adcFilterL, adcFilterR;
+    ConverterFilter<tables::converterIn> adcFilterL, adcFilterR, adcFilterSend;
     ConverterFilter<tables::converterOut> dacFilterL, dacFilterR;
     ErEngine er;
 
-    std::vector<float> dspInL, dspInR, dspSum, dspWetL, dspWetR, dspOutL, dspOutR;
+    std::vector<float> dspInL, dspInR, dspSum, dspWetL, dspWetR, dspOutL, dspOutR, dspSend;
+    bool sendActive = false; // the send's chain is running, in step with the inputs
 
     // Smoothed at the DSP rate.
     float gainIn = 1.0f, balance = 1.0f, outGain = 1.0f;

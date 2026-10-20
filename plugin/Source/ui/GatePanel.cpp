@@ -243,8 +243,11 @@ void IoColumn::resized()
 {
     mode.setBounds(6, ModulePanel::kScreenTop, getWidth() - 12, 28);
     const int meterTop = mode.getBottom() + 12;
-    meter.setBounds(26, meterTop, 14, ModulePanel::kRuleY - 14 - meterTop);
-    knob.setBounds((getWidth() - Knob::kColumn) / 2, ModulePanel::kRow2, Knob::kColumn, Knob::kHeight);
+    // The knob on the last row of controls (HOLD's, when the column runs down both rows of modules),
+    // the meter above it.
+    const int knobTop = getHeight() - (ModulePanel::kHeight - ModulePanel::kRow2);
+    meter.setBounds(26, meterTop, 14, knobTop - (ModulePanel::kRow2 - ModulePanel::kRuleY) - 14 - meterTop);
+    knob.setBounds((getWidth() - Knob::kColumn) / 2, knobTop, Knob::kColumn, Knob::kHeight);
 }
 
 } // namespace glide90::ui

@@ -24,10 +24,7 @@ const Shape& defaultShape()
 void BarGenerator::prepare(double sampleRate)
 {
     rate = sampleRate;
-    highPassCoeff = (float) (1.0 - std::exp(-2.0 * 3.141592653589793 * 3000.0 / sampleRate));
-    levelHistory.assign((size_t) std::max(1.0, 0.01 * sampleRate), 1e-6f);
-    attackCoeff = coeffForSeconds(0.0005, rate);
-    releaseCoeff = coeffForSeconds(0.02, rate);
+    detector.prepare(sampleRate);
     velocityCoeff = coeffForSeconds(0.01, rate);
     driftCoeff = coeffForSeconds(0.5 * blockCycles, rate);
     smoothCoeff = coeffForSeconds(0.002, rate);
@@ -41,13 +38,9 @@ void BarGenerator::reset()
     depthScale = rateScale = velocityScale = velocityTarget = 1.0f;
     drift = driftTarget = 0.0f;
     driftCountdown = 0;
-    envFast = highPassLow = highPassLow2 = 0.0f;
-    std::fill(levelHistory.begin(), levelHistory.end(), 1e-6f);
-    historyPos = 0;
-    refractory = 0;
+    detector.reset();
     strikeSamplesLeft = 0;
     strikePeak = 0.0f;
-    haveAverageStrike = false;
     smoothed = 0.0f;
 }
 
@@ -65,54 +58,6 @@ void BarGenerator::startCycle(bool freeTiming, float random)
     rateScale = freeTiming ? 1.0f + 0.35f * random * (2.0f * uniform() - 1.0f) : 1.0f;
 }
 
-bool BarGenerator::detectAttack(float input)
-{
-    // A pick attack is a sudden burst of top end. Follow only the highs (two high-pass stages at
-    // 3 kHz), where a chord that is still ringing has little left but the pick click is strong,
-    // and trigger when that level jumps by several dB within 10 ms.
-    highPassLow += highPassCoeff * (input - highPassLow);
-    const float stage1 = input - highPassLow;
-    highPassLow2 += highPassCoeff * (stage1 - highPassLow2);
-    const float level = std::abs(stage1 - highPassLow2);
-    envFast += (level > envFast ? attackCoeff : releaseCoeff) * (level - envFast);
-    const float now = envFast + 1e-6f;
-    const float past = levelHistory[(size_t) historyPos];
-    levelHistory[(size_t) historyPos] = now;
-    historyPos = (historyPos + 1) % (int) levelHistory.size();
-
-    if (refractory > 0)
-    {
-        --refractory;
-        return false;
-    }
-    if (now > past * jumpRatio && envFast > 0.0005f)
-    {
-        refractory = (int) (rate * 0.05); // sixteenths up to ~280 BPM
-        ++triggers;
-        return true;
-    }
-    return false;
-}
-
-float BarGenerator::strikeStrength(float peak)
-{
-    // Relative to the player's own recent strikes, so the input gain does not matter: a strike at
-    // the usual level is kTypicalStrike, 6 dB harder is full depth, 12 dB softer about a third.
-    const float db = 20.0f * std::log10(std::max(peak, 1e-6f));
-    if (!haveAverageStrike)
-    {
-        averageStrikeDb = db;
-        haveAverageStrike = true;
-    }
-    const float relative = db - averageStrikeDb;
-    // The usual level follows real strikes: it rises quickly, sinks slowly, and ignores anything far
-    // below it (a squeak or a muted scratch that the detector also caught).
-    if (relative > -20.0f)
-        averageStrikeDb += (relative > 0.0f ? 0.3f : 0.1f) * relative;
-    const float slope = relative >= 0.0f ? (1.0f - kTypicalStrike) / 6.0f : (kTypicalStrike - 0.33f) / 12.0f;
-    return std::clamp(kTypicalStrike + slope * relative, 0.15f, 1.0f);
-}
-
 void BarGenerator::beginBlock(const SwaySettings& s)
 {
     // Everything that only changes with the settings, once per block instead of per sample.
@@ -120,8 +65,7 @@ void BarGenerator::beginBlock(const SwaySettings& s)
                                             : std::max(s.cycleSeconds, 1e-3);
     driftCoeff = coeffForSeconds(0.5 * blockCycles, rate);
     smoothCoeff = coeffForSeconds(0.002 + 0.15 * std::clamp(s.smooth, 0.0f, 1.0f), rate);
-    const float jumpDb = 9.0f - 7.0f * std::clamp(s.sensitivity, 0.0f, 1.0f); // 5.5 dB at the default 0.5
-    jumpRatio = std::pow(10.0f, jumpDb / 20.0f);
+    detector.setSensitivity(s.sensitivity);
 
     if (s.mode == GlideMode::Sync && s.hostBeats >= 0.0)
     {
@@ -149,7 +93,7 @@ float BarGenerator::next(float input, int index, const SwaySettings& s)
         const float dynamics = std::clamp(s.dynamics, 0.0f, 1.0f);
         if (s.mode == GlideMode::Trigger)
         {
-            const bool attack = detectAttack(input);
+            const bool attack = detector.detect(input);
             if (s.triggerFromPick ? attack : index == s.midiTriggerAt)
             {
                 restart = true;
@@ -167,9 +111,9 @@ float BarGenerator::next(float input, int index, const SwaySettings& s)
             {
                 // The pick's own burst of top end (what the detector follows), not the ringing chord
                 // underneath it: a soft strike over a loud chord is still a soft strike.
-                strikePeak = std::max(strikePeak, envFast);
+                strikePeak = std::max(strikePeak, detector.envelope());
                 if (--strikeSamplesLeft == 0)
-                    velocityTarget = 1.0f - dynamics * (1.0f - strikeStrength(strikePeak));
+                    velocityTarget = 1.0f - dynamics * (1.0f - detector.strikeStrength(strikePeak));
             }
             // The measured strength arrives 8 ms into the shape: glide to it rather than step.
             velocityScale += velocityCoeff * (velocityTarget - velocityScale);

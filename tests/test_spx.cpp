@@ -401,3 +401,53 @@ TEST_CASE("stereo input: the reverb hears the sum, the direct signal keeps its s
         CHECK(energy(out[1]) == 0.0);
     }
 }
+
+TEST_CASE("the send reaches the effect only, and an unused one changes nothing")
+{
+    const double rate = 48000.0;
+    const int n = 48000;
+    // `sendFrom`: the first sample with a send (none before it, as when HOLD comes on mid-stream).
+    auto run = [&](const std::vector<float>& in, const std::vector<float>* send, const spx::SpxSettings& s,
+                   int sendFrom = 0, int block = 512) {
+        spx::SpxEngine engine;
+        engine.prepare(rate, block);
+        std::vector<std::vector<float>> out(2, std::vector<float>((size_t) n));
+        for (int start = 0; start < n; start += block)
+        {
+            const int num = std::min(block, n - start);
+            const float* sendNow = send != nullptr && start >= sendFrom ? send->data() + start : nullptr;
+            engine.process(in.data() + start, in.data() + start, out[0].data() + start, out[1].data() + start, num, s,
+                           sendNow);
+        }
+        return out;
+    };
+    auto energy = [](const std::vector<float>& v) {
+        return std::inner_product(v.begin(), v.end(), v.begin(), 0.0);
+    };
+    const auto signal = test::sine(700.0, rate, n, 0.3f);
+    const std::vector<float> silence((size_t) n, 0.0f);
+
+    // A silent send is no send at all, bit for bit.
+    for (float balance : { 0.0f, 0.5f, 1.0f })
+    {
+        const auto s = programSettings(17, balance);
+        CHECK(run(signal, &silence, s) == run(signal, nullptr, s));
+    }
+    // Direct only: the send is not heard. Effect only: it is, as from the input.
+    CHECK(energy(run(silence, &signal, programSettings(17, 0.0f))[0]) == 0.0);
+    const auto wet = run(silence, &signal, programSettings(17, 1.0f));
+    const auto fromInput = run(signal, nullptr, programSettings(17, 1.0f));
+    CHECK(energy(wet[0]) > 1.0);
+    double err = 0.0;
+    for (int ch = 0; ch < 2; ++ch)
+        for (size_t i = 0; i < (size_t) n; ++i)
+            err = std::max(err, (double) std::abs(wet[(size_t) ch][i] - fromInput[(size_t) ch][i]));
+    CHECK(err < 1e-4);
+    // A send that starts mid-stream, in odd blocks, stays in step with the input (no glitch, no crash).
+    for (int block : { 512, 37 })
+    {
+        CAPTURE(block);
+        const auto late = run(silence, &signal, programSettings(17, 1.0f), 9001, block);
+        CHECK(energy(late[0]) > 0.5);
+    }
+}

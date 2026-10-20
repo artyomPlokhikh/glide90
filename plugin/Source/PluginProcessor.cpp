@@ -4,6 +4,7 @@
 #include "RomPrograms.h"
 
 #include <cmath>
+#include <limits>
 #include <utility>
 
 namespace glide90
@@ -30,7 +31,8 @@ constexpr const char* kPresetExtension = ".glide90";
 // alone. Everything else is part of the sound: in each A/B slot, in presets and in undo.
 const juce::StringArray& instanceParameters()
 {
-    static const juce::StringArray ids { ids::inputSwitch, ids::outputSwitch };
+    // HOLD's FREEZE key is played, like a footswitch: presets, A/B and undo leave it as it is.
+    static const juce::StringArray ids { ids::inputSwitch, ids::outputSwitch, ids::holdLatch };
     return ids;
 }
 
@@ -99,6 +101,32 @@ const std::vector<FactoryPreset>& factoryPresets()
         { "Expression Bar", true,
           { { ids::erRoomSize, 20.0f }, { ids::erLiveness, 4.0f }, { ids::erDelay, 25.0f }, { ids::glideMode, 3.0f }, { ids::glideManualSource, (float) ManualSource::Expression },
             { ids::glideDepth, 100.0f }, { ids::glideSmooth, 0.3f } } },
+        // HOLD: each strum held and bent by the bar on the next one, swelling backwards through the gate.
+        { "Held Chord", true,
+          { { ids::erRoomSize, 20.0f }, { ids::erLiveness, 7.0f }, { ids::erDelay, 25.0f }, { ids::glideMode, 2.0f },
+            { ids::glidePeriod, 600.0f }, { ids::glideDepth, 40.0f }, { ids::glideShape, shape(ShapePreset::Dive) },
+            { ids::holdOn, 1.0f }, { ids::holdDuck, 0.7f }, { ids::holdLevel, 0.8f }, { ids::holdSpread, 6.0f } } },
+        // Strum to capture, then play the held chord from a keyboard and bend it with the wheel.
+        { "Sampled Feedback", true,
+          { { ids::erRoomSize, 20.0f }, { ids::erLiveness, 5.0f }, { ids::glideMode, 3.0f },
+            { ids::glideManualSource, (float) ManualSource::PitchBend }, { ids::glideDepth, 200.0f },
+            { ids::glideDirection, 1.0f }, { ids::glideSmooth, 0.15f }, { ids::glideMix, 0.0f }, { ids::holdOn, 1.0f },
+            { ids::holdMode, (float) hold::Mode::Midi }, { ids::holdDuck, 0.3f }, { ids::holdLevel, 0.9f },
+            { ids::holdSize, 250.0f }, { ids::holdDensity, 3.0f }, { ids::holdSpread, 4.0f } } },
+        // FREEZE a chord into a slow, thick wall that keeps drifting with the bar.
+        { "Frozen Wall", true,
+          { { ids::erRoomSize, 20.0f }, { ids::erLiveness, 8.0f }, { ids::erDelay, 50.0f }, { ids::glidePeriod, 2400.0f },
+            { ids::glideDepth, 20.0f }, { ids::glideRandom, 0.6f }, { ids::glideSmooth, 0.5f }, { ids::holdOn, 1.0f },
+            { ids::holdMode, (float) hold::Mode::Latch }, { ids::holdSize, 300.0f }, { ids::holdDensity, 6.0f },
+            { ids::holdSmear, 400.0f }, { ids::holdSpread, 20.0f }, { ids::holdReverse, 0.2f }, { ids::holdDuck, 0.2f },
+            { ids::holdLevel, 0.8f } } },
+        // Grains of the last moments trailing behind the guitar, some backwards.
+        { "Smear Trail", true,
+          { { ids::erRoomSize, 8.0f }, { ids::erLiveness, 5.0f }, { ids::erDelay, 10.0f }, { ids::balance, 0.6f },
+            { ids::glidePeriod, 1200.0f }, { ids::glideDepth, 15.0f }, { ids::glideRandom, 0.4f }, { ids::holdOn, 1.0f },
+            { ids::holdMode, (float) hold::Mode::Live }, { ids::holdSize, 120.0f }, { ids::holdDensity, 5.0f },
+            { ids::holdSmear, 500.0f }, { ids::holdSpread, 12.0f }, { ids::holdReverse, 0.4f }, { ids::holdDuck, 0.5f },
+            { ids::holdFeed, 1.0f }, { ids::holdLevel, 0.6f } } },
         { "Reverse Gate Only", true, { { ids::glideOn, 0.0f } } },
         { "Short Reverse", true,
           { { ids::erRoomSize, 8.0f }, { ids::erLiveness, 5.0f }, { ids::erDelay, 10.0f }, { ids::glideOn, 0.0f } } },
@@ -203,7 +231,11 @@ Glide90Processor::Glide90Processor()
             p(ids::glideDirection),   p(ids::glideRandom),       p(ids::glideSmooth),    p(ids::glideShape),
             p(ids::glideTriggerSource), p(ids::glideSensitivity), p(ids::glideManualSource), p(ids::glideBar),
             p(ids::glideTwinDetune),  p(ids::glideTwinLevel),    p(ids::glideMix),       p(ids::glidePosition),
-            p(ids::outputMode),       p(ids::glideDynamics),     p(ids::inputMode) };
+            p(ids::outputMode),       p(ids::glideDynamics),     p(ids::inputMode),
+            p(ids::holdOn),           p(ids::holdMode),          p(ids::holdLatch),      p(ids::holdSensitivity),
+            p(ids::holdFollow),       p(ids::holdSize),          p(ids::holdDensity),    p(ids::holdSmear),
+            p(ids::holdSpread),       p(ids::holdReverse),       p(ids::holdDuck),       p(ids::holdDecay),
+            p(ids::holdLevel),        p(ids::holdFeed),          p(ids::holdCharacter),  p(ids::holdRoot) };
     for (size_t i = 0; i < presetShapes.size(); ++i)
         presetShapes[i] = sway::makeShape((sway::ShapePreset) i);
     customShape = audioCustomShape = presetShapes[0];
@@ -231,7 +263,9 @@ void Glide90Processor::prepareToPlay(double sampleRate, int samplesPerBlock)
     maxBlock = juce::jmax(1, samplesPerBlock);
     spxEngine.prepare(sampleRate, maxBlock);
     glideProcessor.prepare(sampleRate);
-    work.setSize(4, maxBlock); // the inputs, their sum, a stand-in for a missing right output
+    holdEngine.prepare(sampleRate);
+    // The inputs, their sum, a stand-in for a missing right output; the bar; HOLD's send and output.
+    work.setSize(8, maxBlock);
     const int latency = spxEngine.latencySamples() + glideProcessor.latencySamples();
     setLatencySamples(latency);
     bypassDelay.setSize(2, latency + 1);
@@ -247,6 +281,7 @@ void Glide90Processor::reset()
     stereoMix = choice(raw.inputMode) == (int) InputMode::Stereo ? 1.0f : 0.0f;
     spxEngine.reset();
     glideProcessor.reset();
+    holdEngine.reset();
     bypassDelay.clear();
     bypassPos = 0;
     wasBypassed = false;
@@ -288,6 +323,7 @@ void Glide90Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
         // can take over.
         spxEngine.reset();
         glideProcessor.reset();
+        holdEngine.reset();
         inputRampLeft = fadeLength;
         wasBypassed = false;
         bypassFadeLeft = 0;
@@ -314,9 +350,12 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
 
     int noteAt = -1;
     float noteVelocity = 1.0f;
+    numHoldMidi = 0;
     for (const auto meta : midi)
     {
         const auto m = meta.getMessage();
+        if ((m.isNoteOn() || m.isNoteOff()) && numHoldMidi < kMaxHoldMidi)
+            holdMidi[(size_t) numHoldMidi++] = { meta.samplePosition, m.getNoteNumber(), m.isNoteOn() };
         if (m.isPitchWheel())
             pitchBend = (float) (m.getPitchWheelValue() - 8192) / 8192.0f;
         else if (m.isControllerOfType(1))
@@ -401,6 +440,27 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
     else
         w.shape = &presetShapes[(size_t) juce::jmax(0, shapeIndex)];
 
+    hold::HoldSettings h;
+    h.enabled = raw.holdOn->load() > 0.5f;
+    h.mode = (hold::Mode) choice(raw.holdMode);
+    h.latched = raw.holdLatch->load() > 0.5f;
+    h.sensitivity = raw.holdSensitivity->load();
+    h.follow = raw.holdFollow->load();
+    h.followBar = w.enabled;
+    h.sizeMs = raw.holdSize->load();
+    h.density = choice(raw.holdDensity);
+    h.smearMs = raw.holdSmear->load();
+    h.spreadCents = raw.holdSpread->load();
+    h.reverse = raw.holdReverse->load();
+    h.duck = raw.holdDuck->load();
+    const float decay = raw.holdDecay->load();
+    h.decaySeconds = decay >= kHoldDecayForever ? std::numeric_limits<float>::infinity() : decay;
+    h.level = raw.holdLevel->load();
+    // With the reverse gate bypassed there is no gate to feed: HOLD goes to the output instead.
+    h.feed = s.bypass ? hold::Feed::Out : (hold::Feed) choice(raw.holdFeed);
+    h.character = (hold::Character) choice(raw.holdCharacter);
+    h.rootNote = choice(raw.holdRoot);
+
     const double beatsPerSample = bpm / 60.0 / currentRate;
     const bool wantPost = (GlidePosition) choice(raw.glidePosition) == GlidePosition::Post;
     for (int start = 0; start < n;)
@@ -421,7 +481,15 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
         sway::SwaySettings chunk = w;
         if (hostBeats >= 0.0)
             chunk.hostBeats = hostBeats + start * beatsPerSample;
-        processChunk(buffer, start, num, s, chunk, noteAt >= start && noteAt < start + num ? noteAt - start : -1);
+        hold::HoldSettings holdChunk = h;
+        int chunkNotes = 0;
+        for (int i = 0; i < numHoldMidi; ++i)
+            if (const auto& e = holdMidi[(size_t) i]; e.sample >= start && (e.sample < start + num || start + num == n))
+                chunkMidi[(size_t) chunkNotes++] = { e.sample - start, e.note, e.on };
+        holdChunk.midi = chunkMidi.data();
+        holdChunk.numMidi = chunkNotes;
+        processChunk(buffer, start, num, s, chunk, noteAt >= start && noteAt < start + num ? noteAt - start : -1,
+                     holdChunk);
 
         if (orderFadeLeft > 0)
         {
@@ -456,7 +524,7 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
 }
 
 void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start, int num, const spx::SpxSettings& s,
-                                    sway::SwaySettings w, int midiNoteAt)
+                                    sway::SwaySettings w, int midiNoteAt, const hold::HoldSettings& h)
 {
     w.midiTriggerAt = midiNoteAt;
     const int numIn = juce::jmin(getTotalNumInputChannels(), buffer.getNumChannels());
@@ -507,12 +575,24 @@ void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start,
         sum[i] *= g;
     }
 
+    // The bar first, from the dry guitar whichever order plays: the glide and HOLD both follow it.
+    float* bar = work.getWritePointer(4);
+    glideProcessor.computeBar(sum, num, w, bar);
+    // HOLD hears the dry guitar too, and plays beside the chain: into the gate, or to the output.
+    float* holdGate = work.getWritePointer(5);
+    float* holdL = work.getWritePointer(6);
+    float* holdR = work.getWritePointer(7);
+    // Heard in this piece if it was at its start or is at its end (fading in or out).
+    const bool holdWasHeard = holdEngine.audible();
+    holdEngine.process(sum, bar, num, h, holdGate, holdL, holdR);
+    const bool holdHeard = holdWasHeard || holdEngine.audible();
+
     const bool post = activePost;
     if (!post)
     {
         // One channel from a mono track; two (one bar for both) from a stereo one, in either mode.
         float* channels[] = { inL, inR };
-        glideProcessor.process(channels, twoInputs ? 2 : 1, num, w, twoInputs ? sum : nullptr);
+        glideProcessor.processWithBar(channels, twoInputs ? 2 : 1, num, w, bar);
     }
 
     const float gain = spx::SpxEngine::inputGain(s.inputKnob, s.inputMinus20);
@@ -524,14 +604,18 @@ void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start,
 
     float* l = buffer.getWritePointer(0, start);
     float* r = buffer.getNumChannels() > 1 ? buffer.getWritePointer(1, start) : work.getWritePointer(3);
-    spxEngine.process(inL, inR, l, r, num, s);
+    spxEngine.process(inL, inR, l, r, num, s, holdHeard ? holdGate : nullptr);
     raiseTo(wetPeak, s.bypass ? 0.0f : spxEngine.takeWetPeak());
 
     if (post)
     {
         float* channels[] = { l, r };
-        // The pick detector listens to the guitar, not to the reverse swell coming out of the reverb.
-        glideProcessor.process(channels, 2, num, w, sum);
+        glideProcessor.processWithBar(channels, 2, num, w, bar);
+    }
+    if (holdHeard)
+    {
+        juce::FloatVectorOperations::add(l, holdL, num);
+        juce::FloatVectorOperations::add(r, holdR, num);
     }
 
     switch ((OutputMode) choice(raw.outputMode))
@@ -549,6 +633,19 @@ void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start,
         raiseTo(outputPeak, juce::FloatVectorOperations::findMaximum(ch, num));
         raiseTo(outputPeak, -juce::FloatVectorOperations::findMinimum(ch, num));
     }
+}
+
+double Glide90Processor::getTailLengthSeconds() const
+{
+    double tail = 2.2; // ROOM SIZE 20 plus 400 ms delay
+    if (raw.holdOn->load() > 0.5f)
+    {
+        // A held chord dies away over DECAY (three of them to silence), or never: then as long as a
+        // host will sensibly wait.
+        const float decay = raw.holdDecay->load();
+        tail += decay >= kHoldDecayForever ? 20.0 : std::min(20.0, 3.0 * (double) decay);
+    }
+    return tail;
 }
 
 void Glide90Processor::processBlockBypassed(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
@@ -823,7 +920,13 @@ bool Glide90Processor::isPresetModified() const
 
 juce::ValueTree Glide90Processor::editState()
 {
-    return presetState(true);
+    // FREEZE is played, not set: pressing it is not a step to undo.
+    auto state = presetState(true);
+    auto params = state.getChildWithName(apvts.state.getType());
+    for (int i = params.getNumChildren(); --i >= 0;)
+        if (params.getChild(i).getProperty("id").toString() == ids::holdLatch)
+            params.removeChild(i, nullptr);
+    return state;
 }
 
 void Glide90Processor::beginEdit()

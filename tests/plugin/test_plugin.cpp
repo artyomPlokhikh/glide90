@@ -9,6 +9,7 @@
 #include "ui/Dialog.h"
 #include "ui/GatePanel.h"
 #include "ui/GlidePanel.h"
+#include "ui/HoldPanel.h"
 #include "ui/PanelLookAndFeel.h"
 
 #include <juce_events/juce_events.h>
@@ -751,7 +752,7 @@ namespace
 {
 bool isInstanceParameter(const juce::String& id)
 {
-    return id == ids::inputSwitch || id == ids::outputSwitch;
+    return id == ids::inputSwitch || id == ids::outputSwitch || id == ids::holdLatch;
 }
 
 std::vector<juce::RangedAudioParameter*> allParameters(Glide90Processor& p)
@@ -789,7 +790,7 @@ void checkEveryParameter(Glide90Processor& p, const std::map<juce::String, float
 }
 } // namespace
 
-TEST_CASE("A and B each keep every parameter but the level switches, which they share")
+TEST_CASE("A and B each keep every parameter but the level switches and FREEZE, which they share")
 {
     auto p = make();
     const auto a = setEveryParameter(*p, 0);
@@ -858,7 +859,7 @@ TEST_CASE("A and B each keep their preset: its name, whether it is a user one, a
     p->deleteUserPreset(file);
 }
 
-TEST_CASE("a user preset keeps every parameter but the level switches")
+TEST_CASE("a user preset keeps every parameter but the level switches and FREEZE")
 {
     auto p = make();
     const auto saved = setEveryParameter(*p, 0);
@@ -1269,4 +1270,200 @@ TEST_CASE("the save dialog opens inside the plugin window, and closing the windo
     editor.reset(); // the host closes the window
     juce::MessageManager::getInstance()->runDispatchLoopUntil(100); // the dialog's callback arrives now
     CHECK(p->currentPresetName() == "Glide Guitar");
+}
+
+namespace
+{
+// A string struck every `every` seconds (the first at 0.1 s): a decaying tone with a pick click.
+juce::AudioBuffer<float> strummed(double seconds, double every = 10.0)
+{
+    juce::AudioBuffer<float> in(2, (int) (seconds * kRate));
+    uint32_t seed = 3;
+    for (int i = 0; i < in.getNumSamples(); ++i)
+    {
+        const double t = (double) i / kRate - 0.1;
+        double v = 0.0;
+        if (t >= 0.0)
+        {
+            const double since = std::fmod(t, every);
+            v = 0.3 * std::sin(2.0 * juce::MathConstants<double>::pi * 220.0 * since) * std::exp(-since / 0.4);
+            if (since < 0.002)
+            {
+                seed = seed * 1664525u + 1013904223u;
+                v += 0.6 * ((double) (seed >> 8) / 8388608.0 - 1.0);
+            }
+        }
+        in.setSample(0, i, (float) v);
+        in.setSample(1, i, (float) v);
+    }
+    return in;
+}
+
+juce::AudioBuffer<float> render(Glide90Processor& p, const juce::AudioBuffer<float>& in)
+{
+    p.prepareToPlay(kRate, kBlock);
+    juce::AudioBuffer<float> out(in), block(2, kBlock);
+    juce::MidiBuffer midi;
+    for (int start = 0; start + kBlock <= in.getNumSamples(); start += kBlock)
+    {
+        for (int ch = 0; ch < 2; ++ch)
+            block.copyFrom(ch, 0, in, ch, start, kBlock);
+        p.processBlock(block, midi);
+        for (int ch = 0; ch < 2; ++ch)
+            out.copyFrom(ch, start, block, ch, 0, kBlock);
+    }
+    return out;
+}
+
+double difference(const juce::AudioBuffer<float>& a, const juce::AudioBuffer<float>& b, int from)
+{
+    double acc = 0.0;
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = from; i < a.getNumSamples(); ++i)
+            acc += std::pow((double) a.getSample(ch, i) - b.getSample(ch, i), 2.0);
+    return acc;
+}
+} // namespace
+
+// A fresh processor (the glide's randomness starts the same in each), set up, playing `in`.
+juce::AudioBuffer<float> renderFresh(const juce::AudioBuffer<float>& in, const std::function<void(Glide90Processor&)>& setUp)
+{
+    auto p = make();
+    setUp(*p);
+    return render(*p, in);
+}
+
+TEST_CASE("HOLD is off in new instances and old projects, and while off its controls change nothing")
+{
+    CHECK(plain(*make(), ids::holdOn) < 0.5f);
+    const auto in = strummed(3.0, 1.0);
+    const auto before = renderFresh(in, [](Glide90Processor&) {});
+    const auto after = renderFresh(in, [](Glide90Processor& p) {
+        for (const char* id : { ids::holdMode, ids::holdLatch, ids::holdFollow, ids::holdSize, ids::holdDensity,
+                                ids::holdSmear, ids::holdSpread, ids::holdReverse, ids::holdDuck, ids::holdDecay,
+                                ids::holdLevel, ids::holdFeed, ids::holdCharacter, ids::holdRoot, ids::holdSensitivity })
+        {
+            auto* param = p.state().getParameter(id);
+            param->setValueNotifyingHost(param->getValue() > 0.5f ? 0.1f : 0.9f);
+        }
+    });
+    CHECK(difference(before, after, 0) == 0.0);
+}
+
+TEST_CASE("HOLD holds the strum into the gate, adds no latency, and goes to the output when the gate is bypassed")
+{
+    const auto in = strummed(4.0);
+    {
+        auto p = make();
+        const int latency = p->getLatencySamples();
+        set(*p, ids::holdOn, 1.0f);
+        p->prepareToPlay(kRate, kBlock);
+        CHECK(p->getLatencySamples() == latency);
+        CHECK(p->getTailLengthSeconds() > 2.2);
+    }
+    // The gate's effect silent: only the direct signal comes out.
+    auto dryOnly = [](float holdOn, float feed) {
+        return [holdOn, feed](Glide90Processor& p) {
+            set(p, ids::balance, 0.0f);
+            set(p, ids::holdOn, holdOn);
+            set(p, ids::holdFeed, feed);
+        };
+    };
+    const auto off = renderFresh(in, dryOnly(0.0f, 0.0f));
+    // Into the gate, with the gate's effect at 0: not heard.
+    CHECK(difference(off, renderFresh(in, dryOnly(1.0f, 0.0f)), 0) == 0.0);
+    // To the output: heard, long after the string has died.
+    CHECK(difference(off, renderFresh(in, dryOnly(1.0f, 1.0f)), (int) (3.0 * kRate)) > 1.0);
+    // Into a bypassed gate: to the output instead.
+    auto bypassed = [](float holdOn) {
+        return [holdOn](Glide90Processor& p) {
+            set(p, ids::bypass, 1.0f);
+            set(p, ids::holdOn, holdOn);
+        };
+    };
+    CHECK(difference(renderFresh(in, bypassed(0.0f)), renderFresh(in, bypassed(1.0f)), (int) (3.0 * kRate)) > 1.0);
+}
+
+TEST_CASE("FREEZE is played, not part of the sound: presets, A/B and undo leave it alone")
+{
+    auto p = make();
+    auto* freeze = p->state().getParameter(ids::holdLatch);
+    freeze->beginChangeGesture();
+    freeze->setValueNotifyingHost(1.0f);
+    freeze->endChangeGesture();
+    CHECK_FALSE(p->undoManager().canUndo());
+    p->loadFactoryPreset(1);
+    CHECK(plain(*p, ids::holdLatch) > 0.5f);
+    p->selectAB(1);
+    CHECK(plain(*p, ids::holdLatch) > 0.5f);
+}
+
+TEST_CASE("HOLD's typed values are read the way they are shown")
+{
+    auto p = make();
+    auto typed = [&](const char* id, const char* text) {
+        auto* param = p->state().getParameter(id);
+        return param->convertFrom0to1(param->getValueForText(text));
+    };
+    CHECK(typed(ids::holdSize, "250 ms") == doctest::Approx(250.0f));
+    CHECK(typed(ids::holdSmear, "0.4 s") == doctest::Approx(400.0f));
+    CHECK(typed(ids::holdDecay, "inf") >= glide90::kHoldDecayForever);
+    CHECK(typed(ids::holdDecay, "4.5") == doctest::Approx(4.5f));
+    CHECK(typed(ids::holdDecay, "800 ms") == doctest::Approx(0.8f));
+    CHECK(typed(ids::holdFollow, "150") == doctest::Approx(1.5f));
+    CHECK(typed(ids::holdSpread, "0.2 st") == doctest::Approx(20.0f));
+    CHECK(typed(ids::holdRoot, "C4") == doctest::Approx(72.0f));
+    CHECK(typed(ids::holdRoot, "eb2") == doctest::Approx(51.0f));
+    CHECK(typed(ids::holdRoot, "64") == doctest::Approx(64.0f));
+    CHECK(p->state().getParameter(ids::holdRoot)->getCurrentValueAsText() == "C3");
+    CHECK(p->state().getParameter(ids::holdDecay)->getCurrentValueAsText() == "INF");
+}
+
+TEST_CASE("HOLD sits under the glide and the gate, stays put, and shows what it holds")
+{
+    auto p = make();
+    set(*p, ids::holdOn, 1.0f);
+    set(*p, ids::holdSpread, 20.0f);
+    render(*p, strummed(1.5));
+    std::unique_ptr<juce::AudioProcessorEditor> editor(p->createEditor());
+    glide90::ui::HoldPanel* holdPanel = nullptr;
+    glide90::ui::GlidePanel* glidePanel = nullptr;
+    glide90::ui::GatePanel* gatePanel = nullptr;
+    std::function<void(juce::Component&)> find = [&](juce::Component& c) {
+        if (auto* h = dynamic_cast<glide90::ui::HoldPanel*>(&c))
+            holdPanel = h;
+        if (auto* g = dynamic_cast<glide90::ui::GlidePanel*>(&c))
+            glidePanel = g;
+        if (auto* g = dynamic_cast<glide90::ui::GatePanel*>(&c))
+            gatePanel = g;
+        for (auto* child : c.getChildren())
+            find(*child);
+    };
+    find(*editor);
+    REQUIRE(holdPanel != nullptr);
+    CHECK(holdPanel->getY() >= glidePanel->getBottom());
+    CHECK(holdPanel->getX() == glidePanel->getX());
+    CHECK(holdPanel->getRight() == gatePanel->getRight());
+    CHECK(holdPanel->getBottom() <= glide90::Glide90Editor::kHeight);
+
+    // Its title bar is no handle.
+    bool started = false;
+    holdPanel->onDragStart = [&] { started = true; };
+    juce::MouseEvent press(juce::Desktop::getInstance().getMainMouseSource(), { 120.0f, 20.0f }, {}, 1.0f, 0.0f, 0.0f,
+                           0.0f, 0.0f, holdPanel, holdPanel, juce::Time::getCurrentTime(), { 120.0f, 20.0f },
+                           juce::Time::getCurrentTime(), 1, false);
+    holdPanel->mouseDown(press.withNewPosition(juce::Point<float>(120.0f, 20.0f)));
+    holdPanel->mouseDrag(press.withNewPosition(juce::Point<float>(300.0f, 20.0f)));
+    holdPanel->mouseUp(press);
+    CHECK_FALSE(started);
+
+    if (const auto path = juce::SystemStats::getEnvironmentVariable("GLIDE90_SNAPSHOT", {}); path.isNotEmpty())
+    {
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+        const auto image = editor->createComponentSnapshot(editor->getLocalBounds(), true, 2.0f);
+        juce::File file(juce::File(path).getSiblingFile(juce::File(path).getFileNameWithoutExtension() + "-hold.png"));
+        file.deleteFile();
+        juce::FileOutputStream out(file);
+        REQUIRE(juce::PNGImageFormat().writeImageToStream(image, out));
+    }
 }

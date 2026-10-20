@@ -1,5 +1,7 @@
 #include "SwayProcessor.h"
 
+#include "Splice.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -101,66 +103,20 @@ void DualHeadShifter::push(const float* in, int numChannels)
         sum.push(total);
 }
 
-double DualHeadShifter::correlation(int delayA, int delayB, int stride) const
-{
-    // The recent past of a head at delayB against the active head's, normalised by delayB's energy
-    // (delayA's is the same for every candidate).
-    const auto& l = searchLine();
-    double ab = 0.0, bb = 1e-12;
-    for (int k = 0; k < corrLength; k += stride)
-    {
-        const float a = l.at(delayA + k), b = l.at(delayB + k);
-        ab += (double) a * b;
-        bb += (double) b * b;
-    }
-    return ab / std::sqrt(bb);
-}
-
 void DualHeadShifter::startSplice(double nominal, bool preferNominal)
 {
     // Search around `nominal` for the start whose recent past matches the active head's: coarse on
     // the search grid, then refined. Delays are whole samples here; the new head keeps the active
     // one's fraction, so the alignment found is the alignment heard.
-    const int a = (int) std::lround(active);
-    const int centre = (int) std::lround(nominal);
-    const int lo = (int) std::ceil(minDelay), hi = (int) std::floor(maxDelay);
-    searchCost = 0;
-    int best = std::clamp(centre, lo, hi);
-    double bestScore = -1e30;
-    auto consider = [&](int d, int stride) {
-        if (d < lo || d > hi)
-            return;
-        double score = correlation(a, d, stride);
-        searchCost += (corrLength + stride - 1) / stride;
-        // Bringing the head back to rest: of two good matches, take the one nearer to rest.
-        if (preferNominal)
-            score -= 0.5 * std::abs(score) * std::abs(d - centre) / searchRadius;
-        if (score > bestScore)
-        {
-            bestScore = score;
-            best = d;
-        }
-    };
-    for (int off = -searchRadius; off <= searchRadius; off += searchStep)
-        consider(centre + off, searchStep);
-    const int coarse = best;
-    const int refineStride = std::max(1, searchStep / 4);
-    for (int d = coarse - searchStep + 1; d <= coarse + searchStep - 1; ++d)
-        if (d != coarse)
-            consider(d, refineStride);
-    incoming = std::clamp(active + (best - a), minDelay, maxDelay);
-
     const auto& l = searchLine();
-    const int b = (int) std::lround(incoming);
-    double aa = 1e-12, ab = 0.0, bb = 1e-12;
-    for (int k = 0; k < corrLength; k += refineStride)
-    {
-        const float x = l.at(a + k), y = l.at(b + k);
-        aa += (double) x * x;
-        ab += (double) x * y;
-        bb += (double) y * y;
-    }
-    splicedCorrelation = (float) std::clamp(ab / std::sqrt(aa * bb), 0.0, 1.0);
+    const auto at = [&l](int delay) { return l.at(delay); };
+    const int a = (int) std::lround(active);
+    const int lo = (int) std::ceil(minDelay), hi = (int) std::floor(maxDelay);
+    const Splice found = findSplice(at, a, (int) std::lround(nominal), lo, hi, searchRadius, corrLength, searchStep,
+                                    preferNominal);
+    searchCost = found.cost;
+    incoming = std::clamp(active + (found.start - a), minDelay, maxDelay);
+    splicedCorrelation = similarity(at, a, (int) std::lround(incoming), corrLength, std::max(1, searchStep / 4));
     fadeLeft = fadeLength;
 }
 
@@ -252,27 +208,62 @@ void SwayProcessor::process(float* const* channels, int numChannels, int numSamp
                             const float* detector)
 {
     numChannels = std::clamp(numChannels, 1, kMaxChannels);
+    for (int start = 0; start < numSamples; start += kPiece)
+    {
+        const int num = std::min(kPiece, numSamples - start);
+        for (int n = 0; n < num; ++n)
+        {
+            if (detector != nullptr)
+                pieceDetector[(size_t) n] = detector[start + n];
+            else
+            {
+                float total = 0.0f;
+                for (int ch = 0; ch < numChannels; ++ch)
+                    total += channels[ch][start + n];
+                pieceDetector[(size_t) n] = total / (float) numChannels;
+            }
+        }
+        SwaySettings piece = s;
+        piece.midiTriggerAt = s.midiTriggerAt - start; // the bar counts samples from the piece's start
+        computeBar(pieceDetector.data(), num, piece, pieceBar.data(), start > 0);
+        float* shifted[kMaxChannels] {};
+        for (int ch = 0; ch < numChannels; ++ch)
+            shifted[ch] = channels[ch] + start;
+        processWithBar(shifted, numChannels, num, s, pieceBar.data());
+    }
+}
+
+void SwayProcessor::computeBar(const float* detector, int numSamples, const SwaySettings& s, float* centsOut,
+                               bool continuing)
+{
+    if (!continuing)
+        bar.beginBlock(s);
+    for (int n = 0; n < numSamples; ++n)
+        centsOut[n] = bar.next(detector[n], n, s);
+}
+
+void SwayProcessor::processWithBar(float* const* channels, int numChannels, int numSamples, const SwaySettings& s,
+                                   const float* barCents)
+{
+    numChannels = std::clamp(numChannels, 1, kMaxChannels);
     const float targetMix = s.enabled ? std::clamp(s.mix, 0.0f, 1.0f) : 0.0f;
     const float targetTwin = std::clamp(s.twinLevel, 0.0f, 1.0f);
     // The twin string responds a little differently to the same bar movement.
     constexpr float kTwinBarScale = 0.85f;
 
-    bar.beginBlock(s);
     for (int n = 0; n < numSamples; ++n)
     {
         float x[kMaxChannels] {}, dry[kMaxChannels] {}, wet[kMaxChannels] {}, second[kMaxChannels] {};
-        float total = 0.0f;
         for (int ch = 0; ch < numChannels; ++ch)
         {
             x[ch] = channels[ch][n];
-            total += x[ch];
             dryDelay[ch].push(x[ch]);
             dry[ch] = dryDelay[ch].read((double) latency);
         }
 
         enabledMix += std::clamp(targetMix - enabledMix, -mixStep, mixStep);
         twinMix += std::clamp(targetTwin - twinMix, -mixStep, mixStep);
-        const float cents = bar.next(detector != nullptr ? detector[n] : total / (float) numChannels, n, s);
+        const float cents = barCents[n];
         lastCents = cents * enabledMix; // what is actually applied: 0 while off
 
         // Voices that are not heard keep their delay lines filled, so they come in seamlessly.

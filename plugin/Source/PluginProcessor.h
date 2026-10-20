@@ -2,6 +2,7 @@
 
 #include "Parameters.h"
 
+#include "HoldEngine.h"
 #include "Shape.h"
 #include "SpxEngine.h"
 #include "SwayProcessor.h"
@@ -14,9 +15,10 @@
 namespace glide90
 {
 
-// Glide90: a vibrato-bar glide (before or after) and the SPX90's reverse gate. Mono or stereo in,
-// stereo out. The reverb hears the sum of the inputs, as the unit's one input would; in STEREO the
-// direct signal keeps its sides.
+// Glide90: a vibrato-bar glide (before or after) and the SPX90's reverse gate, with HOLD beside
+// them: the chord captured and held, bent by the same bar, into the gate or to the output. Mono or
+// stereo in, stereo out. The reverb hears the sum of the inputs, as the unit's one input would; in
+// STEREO the direct signal keeps its sides.
 class Glide90Processor : public juce::AudioProcessor, private juce::AudioProcessorParameter::Listener
 {
 public:
@@ -41,7 +43,8 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 2.2; } // ROOM SIZE 20 plus 400 ms delay
+    // ROOM SIZE 20 plus 400 ms delay, and what HOLD still plays (a held chord lasts DECAY).
+    double getTailLengthSeconds() const override;
 
     // Host programs are the factory presets.
     int getNumPrograms() override;
@@ -105,6 +108,8 @@ public:
     // Picking attacks detected so far (they restart the glide in TRIGGER mode).
     int pickAttacks() const { return lastPickAttacks.load(); }
     double hostBpm() const { return lastBpm.load(); }
+    // What HOLD holds and plays, for its screen.
+    hold::HoldDisplay& holdDisplay() { return holdEngine.display(); }
 
 private:
     struct Batch;
@@ -133,7 +138,7 @@ private:
     void applySlotState(const juce::ValueTree& slot, bool missingToDefault, bool gestures);
     void captureBaseline();
     void processChunk(juce::AudioBuffer<float>& buffer, int start, int num, const spx::SpxSettings& spxSettings,
-                      sway::SwaySettings glide, int midiNoteAt);
+                      sway::SwaySettings glide, int midiNoteAt, const hold::HoldSettings& holdSettings);
 
     std::array<juce::UndoManager, 2> undos;
     int openEdits = 0;  // gestures (or beginEdit) under way
@@ -157,6 +162,11 @@ private:
 
     spx::SpxEngine spxEngine;
     sway::SwayProcessor glideProcessor;
+    hold::HoldEngine holdEngine;
+    // MIDI notes of the block for HOLD, and those of the piece being processed.
+    static constexpr int kMaxHoldMidi = 64;
+    std::array<hold::MidiEvent, kMaxHoldMidi> holdMidi {}, chunkMidi {};
+    int numHoldMidi = 0;
     juce::AudioBuffer<float> work;
     // Where the input stands between MONO (0) and STEREO (1), gliding when the mode changes.
     float stereoMix = 1.0f;
@@ -189,7 +199,9 @@ private:
             *outputSwitch, *bypass, *glideOn, *glideMode, *glidePeriod, *glideDivision, *glideDepth, *glideDirection,
             *glideRandom, *glideSmooth, *glideShape, *glideTriggerSource, *glideSensitivity, *glideManualSource,
             *glideBar, *glideTwinDetune, *glideTwinLevel, *glideMix, *glidePosition, *outputMode, *glideDynamics,
-            *inputMode;
+            *inputMode, *holdOn, *holdMode, *holdLatch, *holdSensitivity, *holdFollow, *holdSize, *holdDensity,
+            *holdSmear, *holdSpread, *holdReverse, *holdDuck, *holdDecay, *holdLevel, *holdFeed, *holdCharacter,
+            *holdRoot;
     } raw;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Glide90Processor)

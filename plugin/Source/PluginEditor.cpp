@@ -14,7 +14,7 @@ Glide90Editor::Glide90Editor(Glide90Processor& p)
             (int) InputMode::Stereo),
       output(p.state(), ids::outLevel, "Out", "LEVEL", [&p] { return p.takeOutputPeak(); }, ids::outputMode,
              (int) OutputMode::Stereo),
-      glide(p), gate(p),
+      glide(p), gate(p), holdPanel(p),
       position(*p.state().getParameter(ids::glidePosition), [this](float v) {
           glideFirst = (GlidePosition) juce::roundToInt(v) == GlidePosition::Pre;
           if (dragged == nullptr)
@@ -25,7 +25,7 @@ Glide90Editor::Glide90Editor(Glide90Processor& p)
     lookAndFeel.applyTheme();
     setLookAndFeel(&lookAndFeel);
     addAndMakeVisible(content);
-    for (auto* c : std::initializer_list<juce::Component*> { &header, &input, &glide, &gate, &output })
+    for (auto* c : std::initializer_list<juce::Component*> { &header, &input, &glide, &gate, &holdPanel, &output })
         content.addAndMakeVisible(c);
     content.setSize(kWidth, kHeight);
     input.modeKey().setTooltip("Stereo: the direct sound keeps its sides, the reverse gate hears both. "
@@ -35,7 +35,7 @@ Glide90Editor::Glide90Editor(Glide90Processor& p)
 
     // Each unit is kept as a picture: moving one, or repainting the moving background behind it,
     // copies the picture instead of drawing every knob again.
-    for (auto* c : std::initializer_list<juce::Component*> { &header, &input, &glide, &gate, &output })
+    for (auto* c : std::initializer_list<juce::Component*> { &header, &input, &glide, &gate, &holdPanel, &output })
         c->setBufferedToImage(true);
 
     gate.setMotion(&motion);
@@ -49,7 +49,23 @@ Glide90Editor::Glide90Editor(Glide90Processor& p)
     position.sendInitialUpdate();
     header.onZoom = [this](float s) { setZoom(s); };
     header.onTheme = [this](int i) { setLook(i); };
-    setZoom(proc.uiScale());
+    setZoom(fittingZoom(proc.uiScale()));
+}
+
+float Glide90Editor::fittingZoom(float wanted) const
+{
+    // The window is tall: on a small screen open it at the largest zoom that fits (never larger
+    // than the one saved). The zoom menu still offers every size.
+    const auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+    if (display == nullptr)
+        return wanted;
+    const double room = display->userBounds.getHeight() - 80.0; // the host's own window frame and title
+    if (kHeight * (double) wanted <= room)
+        return wanted;
+    for (float s : { 1.75f, 1.5f, 1.25f, 1.0f })
+        if (s < wanted && kHeight * (double) s <= room)
+            return s;
+    return 0.75f;
 }
 
 Glide90Editor::~Glide90Editor()
@@ -169,8 +185,10 @@ void Glide90Editor::resized()
 {
     const int m = ui::PanelLookAndFeel::kMargin, h = ui::ModulePanel::kHeight;
     header.setBounds(0, 0, kWidth, kHeaderHeight);
-    input.setBounds(m, kBodyTop, ui::IoColumn::kWidth, h);
-    output.setBounds(kWidth - m - ui::IoColumn::kWidth, kBodyTop, ui::IoColumn::kWidth, h);
+    // IN and OUT run down both rows.
+    input.setBounds(m, kBodyTop, ui::IoColumn::kWidth, kHeight - m - kBodyTop);
+    output.setBounds(kWidth - m - ui::IoColumn::kWidth, kBodyTop, ui::IoColumn::kWidth, kHeight - m - kBodyTop);
+    holdPanel.setBounds(modulesLeft(), kHoldTop, kModulesWidth, h);
     if (dragged == nullptr)
         layoutModules(false);
 }
