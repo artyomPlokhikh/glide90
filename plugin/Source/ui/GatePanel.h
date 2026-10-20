@@ -61,23 +61,27 @@ private:
     Knob roomSize, liveness, delay, lpf, mix;
 };
 
-// The input or the output: its meter, the full height of the screens and the first row, with a dB
-// scale, and its level knob on the second row.
+// The input or the output: a key for its mode (MONO / STEREO ...) under the title, its meter down to
+// the end of the first row, with a dB scale, and its level knob on the second row.
 class IoColumn : public juce::Component
 {
 public:
     IoColumn(juce::AudioProcessorValueTreeState& state, const char* paramId, const juce::String& title,
-             const juce::String& knobLabel, std::function<float()> takePeak);
+             const juce::String& knobLabel, std::function<float()> takePeak, const char* modeParamId,
+             int stereoChoice);
 
     static constexpr int kWidth = 78;
 
     void paint(juce::Graphics&) override;
     void resized() override;
 
+    CycleKey& modeKey() { return mode; }
+
 private:
     juce::String title;
     LevelMeter meter;
     Knob knob;
+    CycleKey mode;
 };
 
 } // namespace glide90::ui

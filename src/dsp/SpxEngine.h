@@ -22,7 +22,8 @@ struct SpxSettings
     bool bypass = false;      // analog bypass: full bandwidth, INPUT knob still applies
 };
 
-// The whole SPX90: mono in, stereo out, at the host rate. Internally the signal is resampled to
+// The whole SPX90: mono or stereo in, stereo out, at the host rate. The unit has one input: with two,
+// the effect hears their sum and the direct signal keeps its sides. Internally the signal is resampled to
 // the DSP rate, filtered by the measured converter response, quantised to 16 bits, processed by
 // the selected program and mixed with the (equally band-limited) direct signal, as in the unit.
 class SpxEngine
@@ -31,7 +32,11 @@ public:
     void prepare(double hostRate, int maxBlockSize);
     void reset();
 
-    void process(const float* monoIn, float* outL, float* outR, int numSamples, const SpxSettings& s);
+    void process(const float* inL, const float* inR, float* outL, float* outR, int numSamples, const SpxSettings& s);
+    void process(const float* monoIn, float* outL, float* outR, int numSamples, const SpxSettings& s)
+    {
+        process(monoIn, monoIn, outL, outR, numSamples, s);
+    }
 
     // Peak of the effect alone (before BALANCE) since the last call: how loud the reverse swell is.
     float takeWetPeak() { return std::exchange(wetPeak, 0.0f); }
@@ -48,13 +53,13 @@ private:
     double hostRate = 48000.0;
     int latency = 0;
 
-    Downsampler down;
+    Downsampler downL, downR;
     Upsampler upL, upR;
-    ConverterFilter<tables::converterIn> adcFilter;
+    ConverterFilter<tables::converterIn> adcFilterL, adcFilterR;
     ConverterFilter<tables::converterOut> dacFilterL, dacFilterR;
     ErEngine er;
 
-    std::vector<float> dspIn, dspWetL, dspWetR, dspOutL, dspOutR;
+    std::vector<float> dspInL, dspInR, dspSum, dspWetL, dspWetR, dspOutL, dspOutR;
 
     // Smoothed at the DSP rate.
     float gainIn = 1.0f, balance = 1.0f, outGain = 1.0f;
@@ -63,7 +68,7 @@ private:
     bool snapParameters = true; // jump straight to the settings after a reset
 
     // Bypass: the analog path, delayed to stay aligned with the processed one.
-    std::vector<float> bypassDelay;
+    std::vector<float> bypassDelayL, bypassDelayR;
     int bypassPos = 0;
     float bypassMix = 0.0f;
     float bypassStep = 0.0f;

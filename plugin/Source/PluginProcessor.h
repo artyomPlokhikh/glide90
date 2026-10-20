@@ -14,8 +14,9 @@
 namespace glide90
 {
 
-// Glide90: a vibrato-bar glide (before or after) and the SPX90's reverse gate. Mono in (stereo
-// inputs are summed), stereo out, like the unit.
+// Glide90: a vibrato-bar glide (before or after) and the SPX90's reverse gate. Mono or stereo in,
+// stereo out. The reverb hears the sum of the inputs, as the unit's one input would; in STEREO the
+// direct signal keeps its sides.
 class Glide90Processor : public juce::AudioProcessor, private juce::AudioProcessorParameter::Listener
 {
 public:
@@ -74,7 +75,7 @@ public:
     juce::String currentPresetName() const { return presetName; }
     // True when the current preset is a user preset file (whatever its name), false for a factory one.
     bool currentPresetIsUser() const { return presetIsUser; }
-    // True once anything (but the rig's input gain) differs from the preset as loaded.
+    // True once anything (but the level switches) differs from the preset as loaded.
     bool isPresetModified() const;
 
     // --- Editing (message thread) ---
@@ -85,7 +86,7 @@ public:
     juce::UndoManager& undoManager() { return undos[(size_t) abIndex]; }
     void beginEdit();
     void endEdit();
-    // A/B: two working copies of the whole setting; switching keeps the one you leave.
+    // A/B: two working copies of the whole setting (see slotState()); switching keeps the one you leave.
     int abSlot() const { return abIndex; }
     void selectAB(int slot);
     // Editor zoom, stored with the project.
@@ -112,7 +113,7 @@ private:
     void parameterValueChanged(int, float) override {}
     void parameterGestureChanged(int, bool starting) override;
     void commitEdit(const juce::ValueTree& before);
-    juce::ValueTree editState(); // presetState() with the rig's settings
+    juce::ValueTree editState(); // presetState() with the level switches
     void processInternal(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi);
     // The input, delayed by the latency, into `dryOut` (the host-bypass path, kept current always).
     void delayDry(const juce::AudioBuffer<float>& buffer, int numSamples);
@@ -121,8 +122,15 @@ private:
     juce::ValueTree shapeToTree() const;
     void shapeFromTree(const juce::ValueTree& tree);
     void setParametersExactly(const juce::ValueTree& paramsTree, bool missingToDefault, bool gestures = true);
-    juce::ValueTree presetState(bool withRig = false);
-    void applyPresetState(const juce::ValueTree& preset);
+    // The sound: every parameter but the instance's own (or with them) and the drawn shape. A user
+    // preset file holds this.
+    juce::ValueTree presetState(bool withInstance = false, const juce::Identifier& type = {});
+    void applyPresetState(const juce::ValueTree& preset, bool missingToDefault = false, bool gestures = true);
+    // One A/B slot: presetState() and which preset it is (name, factory or user), with that preset as
+    // loaded (for the * mark). The project is saved from slots alone, so this is the one place for
+    // anything the sound gains that is not a parameter; a new parameter is in it already.
+    juce::ValueTree slotState();
+    void applySlotState(const juce::ValueTree& slot, bool missingToDefault, bool gestures);
     void captureBaseline();
     void processChunk(juce::AudioBuffer<float>& buffer, int start, int num, const spx::SpxSettings& spxSettings,
                       sway::SwaySettings glide, int midiNoteAt);
@@ -135,8 +143,7 @@ private:
     int currentFactoryPreset = 0;
     juce::String presetName { "Glide Guitar" };
     bool presetIsUser = false;
-    std::vector<float> baseline; // normalised parameter values of the preset as loaded
-    juce::ValueTree baselineShape;
+    juce::ValueTree baselineState; // the preset as loaded: presetState() at that moment
     std::array<juce::ValueTree, 2> abStates;
     int abIndex = 0;
     float scale = 1.0f;
@@ -150,7 +157,9 @@ private:
 
     spx::SpxEngine spxEngine;
     sway::SwayProcessor glideProcessor;
-    juce::AudioBuffer<float> mono;
+    juce::AudioBuffer<float> work;
+    // Where the input stands between MONO (0) and STEREO (1), gliding when the mode changes.
+    float stereoMix = 1.0f;
     int maxBlock = 0;
     double currentRate = 48000.0;
 
@@ -179,7 +188,8 @@ private:
         std::atomic<float>*erRoomSize, *erLiveness, *erDelay, *erLpf, *balance, *outLevel, *input, *inputSwitch,
             *outputSwitch, *bypass, *glideOn, *glideMode, *glidePeriod, *glideDivision, *glideDepth, *glideDirection,
             *glideRandom, *glideSmooth, *glideShape, *glideTriggerSource, *glideSensitivity, *glideManualSource,
-            *glideBar, *glideTwinDetune, *glideTwinLevel, *glideMix, *glidePosition, *outputMode, *glideDynamics;
+            *glideBar, *glideTwinDetune, *glideTwinLevel, *glideMix, *glidePosition, *outputMode, *glideDynamics,
+            *inputMode;
     } raw;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Glide90Processor)

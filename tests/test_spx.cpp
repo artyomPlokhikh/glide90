@@ -331,3 +331,73 @@ TEST_CASE("programs 5, 6, 16 and 17 match impulse responses of the real SPX90")
         CHECK(cmp.worstBandDb < 0.5);
     }
 }
+
+TEST_CASE("stereo input: the reverb hears the sum, the direct signal keeps its sides")
+{
+    const double rate = 48000.0;
+    const int n = 48000;
+    auto run = [&](const std::vector<float>& inL, const std::vector<float>& inR, const spx::SpxSettings& s) {
+        spx::SpxEngine engine;
+        engine.prepare(rate, 512);
+        std::vector<std::vector<float>> out(2, std::vector<float>((size_t) n));
+        for (int start = 0; start < n; start += 512)
+        {
+            const int num = std::min(512, n - start);
+            engine.process(inL.data() + start, inR.data() + start, out[0].data() + start, out[1].data() + start, num, s);
+        }
+        return out;
+    };
+    auto energy = [](const std::vector<float>& v) {
+        return std::inner_product(v.begin(), v.end(), v.begin(), 0.0);
+    };
+    const auto signal = test::sine(700.0, rate, n, 0.3f);
+    const std::vector<float> silence((size_t) n, 0.0f);
+
+    SUBCASE("the same signal on both inputs is exactly the mono input")
+    {
+        for (float balance : { 0.0f, 0.5f, 1.0f })
+        {
+            const auto s = programSettings(17, balance);
+            const auto stereo = run(signal, signal, s);
+            spx::SpxEngine engine;
+            engine.prepare(rate, 512);
+            std::vector<std::vector<float>> mono(2, std::vector<float>((size_t) n));
+            for (int start = 0; start < n; start += 512)
+                engine.process(signal.data() + start, mono[0].data() + start, mono[1].data() + start, std::min(512, n - start), s);
+            CHECK(stereo[0] == mono[0]);
+            CHECK(stereo[1] == mono[1]);
+        }
+    }
+
+    SUBCASE("a signal on the left alone")
+    {
+        // Direct only: nothing on the right.
+        const auto dry = run(signal, silence, programSettings(17, 0.0f));
+        CHECK(energy(dry[0]) > 1.0);
+        CHECK(energy(dry[1]) == 0.0);
+        // Effect only: the swell on both sides, as from the sum (half the signal) into the unit.
+        const auto wet = run(signal, silence, programSettings(17, 1.0f));
+        const std::vector<float> half = [&] {
+            auto h = signal;
+            for (auto& v : h)
+                v *= 0.5f;
+            return h;
+        }();
+        const auto fromSum = run(half, half, programSettings(17, 1.0f));
+        CHECK(energy(wet[1]) > 1.0);
+        double err = 0.0;
+        for (int ch = 0; ch < 2; ++ch)
+            for (size_t i = 0; i < (size_t) n; ++i)
+                err = std::max(err, (double) std::abs(wet[(size_t) ch][i] - fromSum[(size_t) ch][i]));
+        CHECK(err < 1e-4); // the two 16-bit quantisations round apart by a step at most
+    }
+
+    SUBCASE("the analog bypass keeps the sides too")
+    {
+        auto s = programSettings(17);
+        s.bypass = true;
+        const auto out = run(signal, silence, s);
+        CHECK(energy(out[0]) > 1.0);
+        CHECK(energy(out[1]) == 0.0);
+    }
+}

@@ -17,16 +17,20 @@ const juce::Identifier kPresetProp { "preset" },
     kPresetNameProp { "presetName" }, kVersionProp { "version" }, kScaleProp { "uiScale" };
 // 2: the Glide parameters. Older states had a different bar (Sway) and no glide_* values worth keeping.
 constexpr int kStateVersion = 2;
+// The preset as loaded, kept with each A/B slot: what the * after the preset's name compares against.
+const juce::Identifier kBaselineTree { "BASELINE" };
 const juce::Identifier kShapeTree { "SHAPE" }, kPointTree { "POINT" }, kXProp { "x" }, kYProp { "y" };
 const juce::Identifier kPresetFileTree { "GLIDE90_PRESET" };
 const juce::Identifier kPresetIsUserProp { "presetIsUser" };
 const juce::Identifier kAbTree { "AB" }, kAbSlotProp { "slot" }, kAbIndexProp { "selected" };
 constexpr const char* kPresetExtension = ".glide90";
 
-// Parameters a preset leaves alone: the gain staging of the user's own rig.
-const juce::StringArray& rigParameters()
+// The only parameters that belong to the plugin instance rather than to the sound: the rear-panel
+// level switches, which match the unit to the user's rig. A and B share them and presets leave them
+// alone. Everything else is part of the sound: in each A/B slot, in presets and in undo.
+const juce::StringArray& instanceParameters()
 {
-    static const juce::StringArray ids { ids::input, ids::inputSwitch, ids::outputSwitch };
+    static const juce::StringArray ids { ids::inputSwitch, ids::outputSwitch };
     return ids;
 }
 
@@ -199,7 +203,7 @@ Glide90Processor::Glide90Processor()
             p(ids::glideDirection),   p(ids::glideRandom),       p(ids::glideSmooth),    p(ids::glideShape),
             p(ids::glideTriggerSource), p(ids::glideSensitivity), p(ids::glideManualSource), p(ids::glideBar),
             p(ids::glideTwinDetune),  p(ids::glideTwinLevel),    p(ids::glideMix),       p(ids::glidePosition),
-            p(ids::outputMode),       p(ids::glideDynamics) };
+            p(ids::outputMode),       p(ids::glideDynamics),     p(ids::inputMode) };
     for (size_t i = 0; i < presetShapes.size(); ++i)
         presetShapes[i] = sway::makeShape((sway::ShapePreset) i);
     customShape = audioCustomShape = presetShapes[0];
@@ -227,7 +231,7 @@ void Glide90Processor::prepareToPlay(double sampleRate, int samplesPerBlock)
     maxBlock = juce::jmax(1, samplesPerBlock);
     spxEngine.prepare(sampleRate, maxBlock);
     glideProcessor.prepare(sampleRate);
-    mono.setSize(2, maxBlock); // channel 1 stands in for a missing right output
+    work.setSize(4, maxBlock); // the inputs, their sum, a stand-in for a missing right output
     const int latency = spxEngine.latencySamples() + glideProcessor.latencySamples();
     setLatencySamples(latency);
     bypassDelay.setSize(2, latency + 1);
@@ -240,6 +244,7 @@ void Glide90Processor::reset()
 {
     activePost = (GlidePosition) choice(raw.glidePosition) == GlidePosition::Post;
     orderFadeLeft = 0;
+    stereoMix = choice(raw.inputMode) == (int) InputMode::Stereo ? 1.0f : 0.0f;
     spxEngine.reset();
     glideProcessor.reset();
     bypassDelay.clear();
@@ -455,40 +460,78 @@ void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start,
 {
     w.midiTriggerAt = midiNoteAt;
     const int numIn = juce::jmin(getTotalNumInputChannels(), buffer.getNumChannels());
-    float* m = mono.getWritePointer(0);
-    if (numIn >= 2)
+    const bool twoInputs = numIn >= 2;
+    float* inL = work.getWritePointer(0);
+    float* inR = work.getWritePointer(1);
+    float* sum = work.getWritePointer(2);
+    if (twoInputs)
     {
+        // MONO sends the sum on both sides, STEREO each input on its own; switching glides between
+        // them. The reverb hears the sum either way.
         const float* a = buffer.getReadPointer(0, start);
         const float* b = buffer.getReadPointer(1, start);
         for (int i = 0; i < num; ++i)
-            m[i] = 0.5f * (a[i] + b[i]);
+            sum[i] = 0.5f * (a[i] + b[i]);
+        const float target = choice(raw.inputMode) == (int) InputMode::Stereo ? 1.0f : 0.0f;
+        if (juce::exactlyEqual(stereoMix, target))
+        {
+            juce::FloatVectorOperations::copy(inL, target > 0.5f ? a : sum, num);
+            juce::FloatVectorOperations::copy(inR, target > 0.5f ? b : sum, num);
+        }
+        else
+        {
+            const float step = 1.0f / (float) fadeLength;
+            for (int i = 0; i < num; ++i)
+            {
+                stereoMix = target > stereoMix ? juce::jmin(target, stereoMix + step) : juce::jmax(target, stereoMix - step);
+                inL[i] = sum[i] + stereoMix * (a[i] - sum[i]);
+                inR[i] = sum[i] + stereoMix * (b[i] - sum[i]);
+            }
+        }
     }
-    else if (numIn == 1)
-        juce::FloatVectorOperations::copy(m, buffer.getReadPointer(0, start), num);
     else
-        juce::FloatVectorOperations::clear(m, num);
+    {
+        if (numIn == 1)
+            juce::FloatVectorOperations::copy(sum, buffer.getReadPointer(0, start), num);
+        else
+            juce::FloatVectorOperations::clear(sum, num);
+        juce::FloatVectorOperations::copy(inL, sum, num);
+        juce::FloatVectorOperations::copy(inR, sum, num);
+    }
     // Into cleared engines the input fades in: a sudden start would come back from every reflection.
     for (int i = 0; i < num && inputRampLeft > 0; ++i, --inputRampLeft)
-        m[i] *= (float) (fadeLength - inputRampLeft) / (float) fadeLength;
+    {
+        const float g = (float) (fadeLength - inputRampLeft) / (float) fadeLength;
+        inL[i] *= g;
+        inR[i] *= g;
+        sum[i] *= g;
+    }
 
     const bool post = activePost;
     if (!post)
-        glideProcessor.process(&m, 1, num, w);
+    {
+        // One channel from a mono track; two (one bar for both) from a stereo one, in either mode.
+        float* channels[] = { inL, inR };
+        glideProcessor.process(channels, twoInputs ? 2 : 1, num, w, twoInputs ? sum : nullptr);
+    }
 
     const float gain = spx::SpxEngine::inputGain(s.inputKnob, s.inputMinus20);
-    raiseTo(inputPeak, juce::FloatVectorOperations::findMaximum(m, num) * gain);
-    raiseTo(inputPeak, -juce::FloatVectorOperations::findMinimum(m, num) * gain);
+    for (const float* ch : { inL, inR })
+    {
+        raiseTo(inputPeak, juce::FloatVectorOperations::findMaximum(ch, num) * gain);
+        raiseTo(inputPeak, -juce::FloatVectorOperations::findMinimum(ch, num) * gain);
+    }
 
     float* l = buffer.getWritePointer(0, start);
-    float* r = buffer.getNumChannels() > 1 ? buffer.getWritePointer(1, start) : mono.getWritePointer(1);
-    spxEngine.process(m, l, r, num, s);
+    float* r = buffer.getNumChannels() > 1 ? buffer.getWritePointer(1, start) : work.getWritePointer(3);
+    spxEngine.process(inL, inR, l, r, num, s);
     raiseTo(wetPeak, s.bypass ? 0.0f : spxEngine.takeWetPeak());
 
     if (post)
     {
         float* channels[] = { l, r };
         // The pick detector listens to the guitar, not to the reverse swell coming out of the reverb.
-        glideProcessor.process(channels, 2, num, w, m);
+        glideProcessor.process(channels, 2, num, w, sum);
     }
 
     switch ((OutputMode) choice(raw.outputMode))
@@ -625,10 +668,10 @@ juce::StringArray Glide90Processor::factoryPresetNames() const
 
 void Glide90Processor::resetForPreset()
 {
-    // Everything but the rig's gain staging back to its default.
+    // Everything but the instance's own settings back to its default.
     for (auto* param : getParameters())
         if (auto* p = dynamic_cast<juce::RangedAudioParameter*>(param))
-            if (!rigParameters().contains(p->getParameterID()))
+            if (!instanceParameters().contains(p->getParameterID()))
             {
                 p->beginChangeGesture();
                 p->setValueNotifyingHost(p->getDefaultValue());
@@ -674,22 +717,45 @@ juce::Array<juce::File> Glide90Processor::userPresetFiles() const
     return files;
 }
 
-juce::ValueTree Glide90Processor::presetState(bool withRig)
+juce::ValueTree Glide90Processor::presetState(bool withInstance, const juce::Identifier& type)
 {
-    juce::ValueTree preset(kPresetFileTree);
-    auto params = apvts.copyState();
-    for (int i = params.getNumChildren(); --i >= 0;)
-        if (!withRig && rigParameters().contains(params.getChild(i).getProperty("id").toString()))
-            params.removeChild(i, nullptr);
+    juce::ValueTree preset(type.isValid() ? type : kPresetFileTree);
+    juce::ValueTree params(apvts.state.getType());
+    for (const auto& child : apvts.copyState()) // the parameters only, not what a restored state left on it
+        if (child.hasProperty("id") && (withInstance || !instanceParameters().contains(child.getProperty("id").toString())))
+            params.appendChild(child.createCopy(), nullptr);
     preset.appendChild(params, nullptr);
     preset.appendChild(shapeToTree(), nullptr);
     return preset;
 }
 
-void Glide90Processor::applyPresetState(const juce::ValueTree& preset)
+void Glide90Processor::applyPresetState(const juce::ValueTree& preset, bool missingToDefault, bool gestures)
 {
     shapeFromTree(preset.getChildWithName(kShapeTree));
-    setParametersExactly(preset.getChildWithName(apvts.state.getType()), false);
+    setParametersExactly(preset.getChildWithName(apvts.state.getType()), missingToDefault, gestures);
+}
+
+juce::ValueTree Glide90Processor::slotState()
+{
+    auto slot = presetState();
+    slot.setProperty(kPresetProp, currentFactoryPreset, nullptr)
+        .setProperty(kPresetNameProp, presetName, nullptr)
+        .setProperty(kPresetIsUserProp, presetIsUser, nullptr);
+    slot.appendChild(baselineState.createCopy(), nullptr);
+    return slot;
+}
+
+void Glide90Processor::applySlotState(const juce::ValueTree& slot, bool missingToDefault, bool gestures)
+{
+    applyPresetState(slot, missingToDefault, gestures);
+    // A slot saved before it had these keeps what is there now.
+    currentFactoryPreset = juce::jlimit(0, getNumPrograms() - 1, (int) slot.getProperty(kPresetProp, currentFactoryPreset));
+    presetName = slot.getProperty(kPresetNameProp, presetName).toString();
+    presetIsUser = (bool) slot.getProperty(kPresetIsUserProp, presetIsUser);
+    if (const auto base = slot.getChildWithName(kBaselineTree); base.isValid())
+        baselineState = base.createCopy();
+    else
+        captureBaseline();
 }
 
 bool Glide90Processor::saveUserPreset(const juce::String& name)
@@ -735,23 +801,24 @@ bool Glide90Processor::deleteUserPreset(const juce::File& file)
 
 void Glide90Processor::captureBaseline()
 {
-    baseline.clear();
-    for (auto* p : getParameters())
-        baseline.push_back(p->getValue());
-    baselineShape = shapeToTree();
+    baselineState = presetState(false, kBaselineTree);
 }
 
 bool Glide90Processor::isPresetModified() const
 {
-    const auto& params = getParameters();
-    if (baseline.size() != (size_t) params.size())
-        return false;
-    for (int i = 0; i < params.size(); ++i)
-        if (auto* p = dynamic_cast<juce::RangedAudioParameter*>(params[i]))
-            if (!rigParameters().contains(p->getParameterID()) && std::abs(p->getValue() - baseline[(size_t) i]) > 1e-4f)
-                return true;
+    const auto params = baselineState.getChildWithName(apvts.state.getType());
+    for (auto* param : getParameters())
+        if (auto* p = dynamic_cast<juce::RangedAudioParameter*>(param))
+            if (!instanceParameters().contains(p->getParameterID()))
+            {
+                const auto stored = params.getChildWithProperty("id", p->getParameterID());
+                const float loaded = stored.isValid() ? p->convertTo0to1((float) stored.getProperty("value")) : p->getDefaultValue();
+                if (std::abs(p->getValue() - loaded) > 1e-4f)
+                    return true;
+            }
     // A redrawn custom shape is a change too (while it is the one that plays).
-    return choice(raw.glideShape) == (int) presetShapes.size() && !shapeToTree().isEquivalentTo(baselineShape);
+    return choice(raw.glideShape) == (int) presetShapes.size()
+           && !shapeToTree().isEquivalentTo(baselineState.getChildWithName(kShapeTree));
 }
 
 juce::ValueTree Glide90Processor::editState()
@@ -798,12 +865,12 @@ void Glide90Processor::selectAB(int slot)
     if (slot == abIndex)
         return;
     const Batch quiet(*this, false); // a comparison, not an edit
-    abStates[(size_t) abIndex] = presetState();
+    abStates[(size_t) abIndex] = slotState();
     abIndex = slot;
     if (abStates[(size_t) slot].isValid())
-        applyPresetState(abStates[(size_t) slot]);
+        applySlotState(abStates[(size_t) slot], false, true);
     else
-        abStates[(size_t) slot] = presetState(); // B starts as a copy of A
+        abStates[(size_t) slot] = slotState(); // B starts as a copy of A
 }
 
 void Glide90Processor::setParametersExactly(const juce::ValueTree& paramsTree, bool missingToDefault, bool gestures)
@@ -837,21 +904,29 @@ void Glide90Processor::setParameter(const char* id, float plainValue)
 
 void Glide90Processor::getStateInformation(juce::MemoryBlock& destData)
 {
-    auto st = apvts.copyState();
-    st.removeChild(st.getChildWithName(kShapeTree), nullptr);
-    st.appendChild(shapeToTree(), nullptr);
-    st.setProperty(kPresetProp, currentFactoryPreset, nullptr);
-    st.setProperty(kPresetNameProp, presetName, nullptr);
-    st.setProperty(kPresetIsUserProp, presetIsUser, nullptr);
+    // The project is made of A/B slots only, plus the instance's own settings: the slot that plays,
+    // laid out on the parameter tree (as older versions read it, the level switches included), and
+    // both slots again under AB. What a slot holds is saved with no further step.
+    const auto active = slotState();
+    juce::ValueTree st(apvts.state.getType());
+    for (const auto& child : presetState(true).getChildWithName(st.getType()))
+        st.appendChild(child.createCopy(), nullptr);
+    for (int i = 0; i < active.getNumProperties(); ++i)
+        st.setProperty(active.getPropertyName(i), active.getProperty(active.getPropertyName(i)), nullptr);
+    for (const auto& child : active)
+        if (!child.hasType(st.getType()))
+            st.appendChild(child.createCopy(), nullptr);
+
     st.setProperty(kVersionProp, kStateVersion, nullptr);
     st.setProperty(kScaleProp, scale, nullptr);
-    // Both compare slots, so B is still there after the project is reopened.
     juce::ValueTree ab(kAbTree);
     ab.setProperty(kAbIndexProp, abIndex, nullptr);
     for (int i = 0; i < (int) abStates.size(); ++i)
-        if (abStates[(size_t) i].isValid())
-            ab.appendChild(abStates[(size_t) i].createCopy().setProperty(kAbSlotProp, i, nullptr), nullptr);
-    st.removeChild(st.getChildWithName(kAbTree), nullptr);
+    {
+        const auto& slot = i == abIndex ? active : abStates[(size_t) i];
+        if (slot.isValid())
+            ab.appendChild(slot.createCopy().setProperty(kAbSlotProp, i, nullptr), nullptr);
+    }
     st.appendChild(ab, nullptr);
     if (auto xml = st.createXml())
         copyXmlToBinary(*xml, destData);
@@ -866,7 +941,9 @@ void Glide90Processor::setStateInformation(const void* data, int sizeInBytes)
     if (!st.hasType(apvts.state.getType()))
         return;
 
-    shapeFromTree(st.getChildWithName(kShapeTree));
+    // The instance's own settings.
+    setUiScale((float) st.getProperty(kScaleProp, 1.0f));
+    const int version = (int) st.getProperty(kVersionProp, 1);
     abStates = {};
     abIndex = 0;
     if (const auto ab = st.getChildWithName(kAbTree); ab.isValid())
@@ -876,27 +953,41 @@ void Glide90Processor::setStateInformation(const void* data, int sizeInBytes)
             if (slot.hasType(kPresetFileTree))
                 abStates[(size_t) juce::jlimit(0, 1, (int) slot.getProperty(kAbSlotProp, 0))] = slot.createCopy();
     }
-    for (const auto& type : { kMemoriesTree, kShapeTree, kAbTree })
+
+    // What older versions left.
+    for (const auto& type : { kMemoriesTree, kAbTree })
         st.removeChild(st.getChildWithName(type), nullptr);
-    st.removeProperty(kAlgorithmProp, nullptr);
-    st.removeProperty(kLoadedProp, nullptr);
+    for (const auto& prop : { kAlgorithmProp, kLoadedProp, kVersionProp, kScaleProp })
+        st.removeProperty(prop, nullptr);
     removeRetiredParameters(st);
-    currentFactoryPreset = juce::jlimit(0, getNumPrograms() - 1, (int) st.getProperty(kPresetProp, 0));
-    presetName = st.getProperty(kPresetNameProp, "Init").toString();
-    presetIsUser = (bool) st.getProperty(kPresetIsUserProp, false);
-    setUiScale((float) st.getProperty(kScaleProp, 1.0f));
-    if ((int) st.getProperty(kVersionProp, 1) < kStateVersion)
+    // A state from before the input had two modes: it summed its inputs, and keeps doing so.
+    if (!st.getChildWithProperty("id", ids::inputMode).isValid())
+    {
+        juce::ValueTree mode("PARAM");
+        mode.setProperty("id", ids::inputMode, nullptr);
+        mode.setProperty("value", (float) InputMode::Mono, nullptr);
+        st.appendChild(mode, nullptr);
+    }
+    if (version < 2)
         for (int i = st.getNumChildren(); --i >= 0;)
             if (st.getChild(i).getProperty("id").toString().startsWith("glide_"))
                 st.removeChild(i, nullptr);
-    const auto saved = st.createCopy(); // replaceState shares `st` and adds the missing parameters to it
-    apvts.replaceState(st);
+
+    // The rest is the slot that plays: the parameters (the level switches too), and the slot's
+    // other parts beside them.
+    juce::ValueTree active(kPresetFileTree), params(st.getType());
+    for (int i = 0; i < st.getNumProperties(); ++i)
+        active.setProperty(st.getPropertyName(i), st.getProperty(st.getPropertyName(i)), nullptr);
+    for (const auto& child : st)
+        (child.hasProperty("id") ? params : active).appendChild(child.createCopy(), nullptr);
+    active.appendChild(params, nullptr);
+    apvts.replaceState(params.createCopy());
 
     // replaceState skips parameters whose stored value already maps to the current one (a bool left
     // at a raw 0.57 stays there instead of the stored 1), and leaves parameters missing from older
-    // states at whatever they were. Set every value exactly, missing ones to their default.
-    setParametersExactly(saved, true, false);
-    captureBaseline();
+    // states at whatever they were. Set every value exactly, missing ones to their default; not as
+    // edits, so a host in touch or latch mode records nothing.
+    applySlotState(active, true, false);
     for (auto& u : undos)
         u.clearUndoHistory();
 }

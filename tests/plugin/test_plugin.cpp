@@ -12,6 +12,7 @@
 #include "ui/PanelLookAndFeel.h"
 
 #include <juce_events/juce_events.h>
+#include <map>
 #include <juce_gui_basics/juce_gui_basics.h>
 
 using glide90::Glide90Processor;
@@ -110,6 +111,8 @@ TEST_CASE("a project saved with the SPX90 memories opens with its reverse gate s
     xml->createNewChildElement("MEMORIES")->createNewChildElement("MEMORY")->setAttribute("number", 31);
     xml->setAttribute("algorithm", 16);
     xml->setAttribute("loadedMemory", 16);
+    // ...and not yet: the preset as loaded, so what it opens with counts as unchanged.
+    xml->deleteAllChildElementsWithTagName("BASELINE");
     juce::MemoryBlock old;
     juce::AudioProcessor::copyXmlToBinary(*xml, old);
 
@@ -162,11 +165,13 @@ TEST_CASE("factory presets set the reverse gate and the glide")
     CHECK(plain(*p, ids::glideOn) > 0.5f);
     CHECK(juce::roundToInt(plain(*p, ids::glideMode)) == (int) sway::GlideMode::Trigger);
 
-    // A preset leaves the rig's input gain alone and resets what it does not set.
+    // A preset leaves the level switches alone and resets what it does not set, the INPUT knob too.
+    set(*p, ids::inputSwitch, 1.0f);
     set(*p, ids::input, 6.0f);
     set(*p, ids::glideTwinLevel, 0.9f);
     p->setCurrentProgram(1);
-    CHECK(plain(*p, ids::input) == doctest::Approx(6.0f));
+    CHECK(plain(*p, ids::inputSwitch) == doctest::Approx(1.0f));
+    CHECK(plain(*p, ids::input) == doctest::Approx(8.0f));
     CHECK(plain(*p, ids::glideTwinLevel) == doctest::Approx(0.0f));
 }
 
@@ -573,6 +578,335 @@ TEST_CASE("output mode: left only copies the left output, mono sums them")
     CHECK(monoErr < 1e-6);
 }
 
+TEST_CASE("input mode: new instances are stereo, older projects open in mono")
+{
+    auto a = make();
+    CHECK(juce::roundToInt(plain(*a, ids::inputMode)) == (int) glide90::InputMode::Stereo);
+
+    // A project from before the input had a mode: it summed its inputs, and still does.
+    auto xml = juce::AudioProcessor::getXmlFromBinary(saveState(*a).getData(), (int) saveState(*a).getSize());
+    REQUIRE(xml != nullptr);
+    for (auto* child = xml->getFirstChildElement(); child != nullptr; child = child->getNextElement())
+        if (child->getStringAttribute("id") == ids::inputMode)
+        {
+            xml->removeChildElement(child, true);
+            break;
+        }
+    juce::MemoryBlock old;
+    juce::AudioProcessor::copyXmlToBinary(*xml, old);
+    auto b = make();
+    b->setStateInformation(old.getData(), (int) old.getSize());
+    CHECK(juce::roundToInt(plain(*b, ids::inputMode)) == (int) glide90::InputMode::Mono);
+}
+
+namespace
+{
+// The plugin's output for `in` (two channels), glide off, at `balance`, in `inputMode`.
+juce::AudioBuffer<float> renderInput(const juce::AudioBuffer<float>& in, float balance, glide90::InputMode inputMode,
+                                     std::function<void(Glide90Processor&, int block)> perBlock = {})
+{
+    auto p = make();
+    set(*p, ids::glideOn, 0.0f);
+    set(*p, ids::balance, balance);
+    set(*p, ids::inputMode, (float) inputMode);
+    p->reset();
+    juce::AudioBuffer<float> buffer(2, kBlock), out(2, in.getNumSamples());
+    juce::MidiBuffer midi;
+    for (int start = 0, b = 0; start + kBlock <= in.getNumSamples(); start += kBlock, ++b)
+    {
+        if (perBlock)
+            perBlock(*p, b);
+        for (int ch = 0; ch < 2; ++ch)
+            buffer.copyFrom(ch, 0, in, ch, start, kBlock);
+        p->processBlock(buffer, midi);
+        for (int ch = 0; ch < 2; ++ch)
+            out.copyFrom(ch, start, buffer, ch, 0, kBlock);
+    }
+    return out;
+}
+
+juce::AudioBuffer<float> guitar(bool rightToo)
+{
+    juce::AudioBuffer<float> in(2, 64 * kBlock);
+    in.clear();
+    for (int i = 0; i < in.getNumSamples(); ++i)
+    {
+        const float v = 0.3f * (float) std::sin(0.05 * i) * (float) std::exp(-0.0001 * (i % 8000));
+        in.setSample(0, i, v);
+        if (rightToo)
+            in.setSample(1, i, v);
+    }
+    return in;
+}
+
+double peakOf(const juce::AudioBuffer<float>& b, int ch)
+{
+    return b.getMagnitude(ch, 0, b.getNumSamples());
+}
+} // namespace
+
+TEST_CASE("input mode: STEREO keeps a one-sided guitar on its side, MONO centres it")
+{
+    const auto left = guitar(false);
+    const auto dryStereo = renderInput(left, 0.0f, glide90::InputMode::Stereo);
+    CHECK(peakOf(dryStereo, 0) > 0.1);
+    CHECK(peakOf(dryStereo, 1) < 1e-6);
+
+    const auto dryMono = renderInput(left, 0.0f, glide90::InputMode::Mono);
+    CHECK(peakOf(dryMono, 1) > 0.05);
+    double differ = 0.0;
+    for (int i = 0; i < dryMono.getNumSamples(); ++i)
+        differ = juce::jmax(differ, (double) std::abs(dryMono.getSample(0, i) - dryMono.getSample(1, i)));
+    CHECK(differ < 1e-6);
+
+    // The reverse gate hears both inputs in either mode: its swell is on both sides.
+    const auto wet = renderInput(left, 1.0f, glide90::InputMode::Stereo);
+    MESSAGE("swell peaks " << peakOf(wet, 0) << " / " << peakOf(wet, 1));
+    CHECK(peakOf(wet, 0) > 0.002);
+    CHECK(peakOf(wet, 1) > 0.5 * peakOf(wet, 0));
+}
+
+TEST_CASE("input mode: a centred source sounds the same in both modes")
+{
+    const auto centred = guitar(true);
+    for (float balance : { 0.0f, 0.5f, 1.0f })
+    {
+        CAPTURE(balance);
+        const auto stereo = renderInput(centred, balance, glide90::InputMode::Stereo);
+        const auto mono = renderInput(centred, balance, glide90::InputMode::Mono);
+        double err = 0.0;
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < stereo.getNumSamples(); ++i)
+                err = juce::jmax(err, (double) std::abs(stereo.getSample(ch, i) - mono.getSample(ch, i)));
+        CHECK(err == 0.0);
+    }
+}
+
+TEST_CASE("input mode: switching it while playing does not click")
+{
+    // A one-sided guitar, direct only, flipped between the modes: each flip may not jump further
+    // than the signal itself does.
+    const auto left = guitar(false);
+    auto worstStep = [](const juce::AudioBuffer<float>& b) {
+        float worst = 0.0f;
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 20 * kBlock; i < b.getNumSamples(); ++i)
+                worst = juce::jmax(worst, std::abs(b.getSample(ch, i) - b.getSample(ch, i - 1)));
+        return worst;
+    };
+    const float steady = worstStep(renderInput(left, 0.0f, glide90::InputMode::Stereo));
+    const float flipped = worstStep(renderInput(left, 0.0f, glide90::InputMode::Stereo, [](Glide90Processor& p, int b) {
+        if (b == 30 || b == 45)
+            set(p, ids::inputMode, (float) (b == 30 ? glide90::InputMode::Mono : glide90::InputMode::Stereo));
+    }));
+    MESSAGE("largest step " << flipped << ", without flips " << steady);
+    CHECK(flipped <= steady * 1.1f + 0.005f);
+}
+
+TEST_CASE("the IN and OUT keys switch the input and output modes")
+{
+    auto p = make();
+    std::unique_ptr<juce::AudioProcessorEditor> editor(p->createEditor());
+    auto keyFor = [&](const char* id) {
+        std::function<juce::Button*(juce::Component&)> search = [&](juce::Component& c) -> juce::Button* {
+            for (auto* child : c.getChildren())
+            {
+                if (auto* b = dynamic_cast<juce::Button*>(child); b != nullptr && child->getComponentID() == id)
+                    return b;
+                if (auto* b = search(*child))
+                    return b;
+            }
+            return nullptr;
+        };
+        return search(*editor);
+    };
+    auto* in = keyFor(ids::inputMode);
+    auto* out = keyFor(ids::outputMode);
+    REQUIRE(in != nullptr);
+    REQUIRE(out != nullptr);
+    CHECK(in->getButtonText() == "STEREO");
+    CHECK(in->getToggleState());
+
+    in->triggerClick();
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+    CHECK(juce::roundToInt(plain(*p, ids::inputMode)) == (int) glide90::InputMode::Mono);
+    CHECK(in->getButtonText() == "MONO");
+    CHECK_FALSE(in->getToggleState());
+
+    const char* expected[] { "L ONLY", "MONO", "STEREO" };
+    for (int i = 0; i < 3; ++i)
+    {
+        out->triggerClick();
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+        CHECK(juce::roundToInt(plain(*p, ids::outputMode)) == (i + 1) % 3);
+        CHECK(out->getButtonText() == expected[i]);
+        CHECK(out->getToggleState() == (i == 2));
+    }
+}
+
+// --- A/B, presets and the project: checked for every parameter there is, so a new one is covered
+// without a test of its own. Only the level switches belong to the instance rather than the sound.
+
+namespace
+{
+bool isInstanceParameter(const juce::String& id)
+{
+    return id == ids::inputSwitch || id == ids::outputSwitch;
+}
+
+std::vector<juce::RangedAudioParameter*> allParameters(Glide90Processor& p)
+{
+    std::vector<juce::RangedAudioParameter*> out;
+    for (auto* param : p.getParameters())
+        if (auto* r = dynamic_cast<juce::RangedAudioParameter*>(param))
+            out.push_back(r);
+    return out;
+}
+
+// Sets every parameter to one of two values (`which` 0 or 1) that differ for each of them, and
+// returns what each one reads afterwards (normalised, on its own grid).
+std::map<juce::String, float> setEveryParameter(Glide90Processor& p, int which)
+{
+    std::map<juce::String, float> values;
+    for (auto* r : allParameters(p))
+    {
+        r->setValueNotifyingHost(r->convertTo0to1(r->convertFrom0to1(which == 0 ? 0.2f : 0.8f)));
+        values[r->getParameterID()] = r->getValue();
+    }
+    return values;
+}
+
+// Every parameter as `sound` has it, the level switches as `instance` has them.
+void checkEveryParameter(Glide90Processor& p, const std::map<juce::String, float>& sound,
+                         const std::map<juce::String, float>& instance)
+{
+    for (auto* r : allParameters(p))
+    {
+        const auto id = r->getParameterID();
+        CAPTURE(id);
+        CHECK(r->getValue() == doctest::Approx((isInstanceParameter(id) ? instance : sound).at(id)).epsilon(1e-4));
+    }
+}
+} // namespace
+
+TEST_CASE("A and B each keep every parameter but the level switches, which they share")
+{
+    auto p = make();
+    const auto a = setEveryParameter(*p, 0);
+    p->selectAB(1);
+    const auto b = setEveryParameter(*p, 1);
+    for (auto* r : allParameters(*p))
+    {
+        CAPTURE(r->getParameterID());
+        CHECK(a.at(r->getParameterID()) != doctest::Approx(b.at(r->getParameterID()))); // or the test proves nothing
+    }
+    p->selectAB(0);
+    checkEveryParameter(*p, a, b);
+    p->selectAB(1);
+    checkEveryParameter(*p, b, b);
+
+    // ...and a project keeps both.
+    const auto state = saveState(*p);
+    auto q = make();
+    q->setStateInformation(state.getData(), (int) state.getSize());
+    CHECK(q->abSlot() == 1);
+    checkEveryParameter(*q, b, b);
+    q->selectAB(0);
+    checkEveryParameter(*q, a, b);
+}
+
+TEST_CASE("A and B each keep their preset: its name, whether it is a user one, and its changes")
+{
+    auto p = make();
+    p->setCurrentProgram(1);
+    set(*p, ids::glideDepth, 123.0f); // A: preset 1, changed
+    p->selectAB(1);                    // B starts as a copy of A
+    CHECK(p->currentPresetName() == p->getProgramName(1));
+    CHECK(p->isPresetModified());
+    p->setCurrentProgram(2); // B: preset 2 as it is
+    CHECK_FALSE(p->isPresetModified());
+
+    p->selectAB(0);
+    CHECK(p->currentPresetName() == p->getProgramName(1));
+    CHECK(p->getCurrentProgram() == 1);
+    CHECK(p->isPresetModified());
+    p->selectAB(1);
+    CHECK(p->currentPresetName() == p->getProgramName(2));
+    CHECK(p->getCurrentProgram() == 2);
+    CHECK_FALSE(p->isPresetModified());
+
+    // B as a user preset; A stays the factory one.
+    const juce::String name = "glide90 test " + juce::Uuid().toString();
+    REQUIRE(p->saveUserPreset(name));
+    const auto file = Glide90Processor::userPresetDirectory().getChildFile(name + Glide90Processor::presetExtension());
+    CHECK(p->currentPresetIsUser());
+    p->selectAB(0);
+    CHECK_FALSE(p->currentPresetIsUser());
+
+    // A project keeps all of it.
+    const auto state = saveState(*p);
+    auto q = make();
+    q->setStateInformation(state.getData(), (int) state.getSize());
+    CHECK(q->abSlot() == 0);
+    CHECK(q->currentPresetName() == p->getProgramName(1));
+    CHECK(q->isPresetModified());
+    CHECK_FALSE(q->currentPresetIsUser());
+    q->selectAB(1);
+    CHECK(q->currentPresetName() == name);
+    CHECK(q->currentPresetIsUser());
+    CHECK_FALSE(q->isPresetModified());
+    p->deleteUserPreset(file);
+}
+
+TEST_CASE("a user preset keeps every parameter but the level switches")
+{
+    auto p = make();
+    const auto saved = setEveryParameter(*p, 0);
+    const juce::String name = "glide90 test " + juce::Uuid().toString();
+    REQUIRE(p->saveUserPreset(name));
+    const auto file = Glide90Processor::userPresetDirectory().getChildFile(name + Glide90Processor::presetExtension());
+    const auto other = setEveryParameter(*p, 1);
+    REQUIRE(p->loadUserPreset(file));
+    checkEveryParameter(*p, saved, other);
+    CHECK_FALSE(p->isPresetModified());
+    p->deleteUserPreset(file);
+}
+
+TEST_CASE("a project reopens exactly as it was saved, both A/B slots included")
+{
+    // Changes to a preset are still changes after reopening.
+    {
+        auto a = make();
+        set(*a, ids::glideDepth, 99.0f);
+        const auto state = saveState(*a);
+        auto b = make();
+        b->setStateInformation(state.getData(), (int) state.getSize());
+        CHECK(b->isPresetModified());
+    }
+
+    auto p = make();
+    setEveryParameter(*p, 0);
+    p->selectAB(1);
+    p->setCurrentProgram(3);
+    setEveryParameter(*p, 1);
+    const sway::ShapePoint points[] { { 0.0f, 0.0f }, { 0.4f, 0.8f }, { 0.7f, 0.1f } };
+    sway::Shape shape;
+    shape.setPoints(points, 3);
+    p->setCustomShape(shape);
+
+    const auto first = saveState(*p);
+    auto q = make();
+    q->setStateInformation(first.getData(), (int) first.getSize());
+    const auto second = saveState(*q);
+    auto x1 = juce::AudioProcessor::getXmlFromBinary(first.getData(), (int) first.getSize());
+    auto x2 = juce::AudioProcessor::getXmlFromBinary(second.getData(), (int) second.getSize());
+    REQUIRE(x1 != nullptr);
+    REQUIRE(x2 != nullptr);
+    CHECK(x1->isEquivalentTo(x2.get(), true));
+    if (!x1->isEquivalentTo(x2.get(), true))
+        MESSAGE(x1->toString() << "\n---\n" << x2->toString());
+}
+
 int main(int argc, char** argv)
 {
    #if JUCE_LINUX
@@ -881,9 +1215,9 @@ TEST_CASE("undo takes the editor's edits back, one gesture at a time, and never 
     p->endEdit();
     p->setCurrentProgram(0); // the custom shape stays custom...
     set(*p, ids::glideShape, (float) sway::kShapePresetNames.size());
-    juce::MemoryBlock keep;
-    p->getStateInformation(keep);
-    p->setStateInformation(keep.getData(), (int) keep.getSize()); // ...and is now the baseline
+    const juce::String name = "glide90 test " + juce::Uuid().toString();
+    REQUIRE(p->saveUserPreset(name)); // ...and is now the preset as loaded
+    p->deleteUserPreset(Glide90Processor::userPresetDirectory().getChildFile(name + Glide90Processor::presetExtension()));
     CHECK_FALSE(p->isPresetModified());
     shape.setPoints(second, 3);
     p->beginEdit();

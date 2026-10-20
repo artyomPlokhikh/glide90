@@ -540,6 +540,28 @@ ToggleKey::ToggleKey(juce::AudioProcessorValueTreeState& state, const char* para
     attachment.sendInitialUpdate();
 }
 
+// --- CycleKey ---
+
+CycleKey::CycleKey(juce::AudioProcessorValueTreeState& state, const char* paramId, int litChoice)
+    : param(*dynamic_cast<juce::AudioParameterChoice*>(&parameter(state, paramId))),
+      attachment(param, [this](float v) {
+          const int index = juce::jlimit(0, param.choices.size() - 1, juce::roundToInt(v));
+          setButtonText(param.choices[index]);
+          setToggleState(index == lit, juce::dontSendNotification);
+          repaint();
+      }),
+      lit(litChoice)
+{
+    getProperties().set(PanelLookAndFeel::kLed, true);
+    onClick = [this] {
+        if (wantsDefault(juce::ModifierKeys::currentModifiers))
+            attachment.setValueAsCompleteGesture(defaultOf(param));
+        else
+            attachment.setValueAsCompleteGesture((float) ((param.getIndex() + 1) % param.choices.size()));
+    };
+    attachment.sendInitialUpdate();
+}
+
 // --- GlassSelector ---
 
 GlassSelector::GlassSelector(bool withArrows, bool largeText) : arrows(withArrows), large(largeText)

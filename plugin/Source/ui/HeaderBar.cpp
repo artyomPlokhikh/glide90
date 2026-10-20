@@ -52,7 +52,7 @@ HeaderBar::HeaderBar(Glide90Processor& p) : proc(p)
     undoKey.onClick = [this] { proc.undoManager().undo(); };
     redoKey.onClick = [this] { proc.undoManager().redo(); };
 
-    setup.setTooltip("The levels of your rig, the outputs, the window size and the look");
+    setup.setTooltip("The levels of your rig, the window size and the look");
     setup.onClick = [this] { showSetup(); };
 
     refreshUserFiles();
@@ -112,7 +112,6 @@ void HeaderBar::showSetup()
     menu.addSectionHeader("Rig");
     menu.addSubMenu("Input level", choices(ids::inputSwitch));
     menu.addSubMenu("Output level", choices(ids::outputSwitch));
-    menu.addSubMenu("Outputs", choices(ids::outputMode));
     menu.addSectionHeader("Window");
     juce::PopupMenu sizes;
     for (float s : { 0.75f, 1.0f, 1.25f, 1.5f, 1.75f })

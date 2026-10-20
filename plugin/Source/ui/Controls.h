@@ -137,6 +137,19 @@ private:
     bool inverted;
 };
 
+// A key for a choice parameter that reads its current choice; a click takes the next one (after the
+// last, the first). Its light is on while the choice is `litChoice`.
+class CycleKey : public juce::TextButton
+{
+public:
+    CycleKey(juce::AudioProcessorValueTreeState& state, const char* paramId, int litChoice);
+
+private:
+    juce::AudioParameterChoice& param;
+    juce::ParameterAttachment attachment;
+    int lit;
+};
+
 // A small screen: text, optional step arrows at its ends, a menu on click.
 class GlassSelector : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
 {

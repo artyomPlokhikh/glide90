@@ -243,6 +243,7 @@ Layout createParameterLayout()
     layout.add(choiceParam(ids::outputSwitch, "Output Level Switch", { "+4 dBm", "-20 dBm" }, 0));
     layout.add(std::make_unique<AudioParameterBool>(ParameterID { ids::bypass, kVersion }, "SPX Bypass", false));
     layout.add(choiceParam(ids::outputMode, "Output Mode", { "STEREO", "L ONLY", "MONO" }, 0));
+    layout.add(choiceParam(ids::inputMode, "Input Mode", { "MONO", "STEREO" }, (int) InputMode::Stereo));
 
     layout.add(std::make_unique<AudioParameterBool>(ParameterID { ids::glideOn, kVersion }, "Glide On", true));
     layout.add(choiceParam(ids::glideMode, "Glide Mode", { "FREE", "SYNC", "TRIGGER", "MANUAL" }, 2));

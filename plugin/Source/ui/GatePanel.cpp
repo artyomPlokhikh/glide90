@@ -204,11 +204,14 @@ void GatePanel::resized()
 // --- IoColumn ---
 
 IoColumn::IoColumn(juce::AudioProcessorValueTreeState& state, const char* paramId, const juce::String& text,
-                   const juce::String& knobLabel, std::function<float()> takePeak)
-    : title(text), meter(std::move(takePeak)), knob(state, paramId, knobLabel)
+                   const juce::String& knobLabel, std::function<float()> takePeak, const char* modeParamId,
+                   int stereoChoice)
+    : title(text), meter(std::move(takePeak)), knob(state, paramId, knobLabel), mode(state, modeParamId, stereoChoice)
 {
+    mode.setComponentID(modeParamId);
     addAndMakeVisible(meter);
     addAndMakeVisible(knob);
+    addAndMakeVisible(mode);
 }
 
 namespace
@@ -238,7 +241,9 @@ void IoColumn::paint(juce::Graphics& g)
 
 void IoColumn::resized()
 {
-    meter.setBounds(26, ModulePanel::kScreenTop + 10, 14, ModulePanel::kRuleY - ModulePanel::kScreenTop - 24);
+    mode.setBounds(6, ModulePanel::kScreenTop, getWidth() - 12, 28);
+    const int meterTop = mode.getBottom() + 12;
+    meter.setBounds(26, meterTop, 14, ModulePanel::kRuleY - 14 - meterTop);
     knob.setBounds((getWidth() - Knob::kColumn) / 2, ModulePanel::kRow2, Knob::kColumn, Knob::kHeight);
 }
 

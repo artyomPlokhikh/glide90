@@ -10,8 +10,11 @@ constexpr int kLift = 3; // a dragged module rises this far
 
 Glide90Editor::Glide90Editor(Glide90Processor& p)
     : AudioProcessorEditor(p), proc(p), header(p),
-      input(p.state(), ids::input, "In", "INPUT", [&p] { return p.takeInputPeak(); }),
-      output(p.state(), ids::outLevel, "Out", "LEVEL", [&p] { return p.takeOutputPeak(); }), glide(p), gate(p),
+      input(p.state(), ids::input, "In", "INPUT", [&p] { return p.takeInputPeak(); }, ids::inputMode,
+            (int) InputMode::Stereo),
+      output(p.state(), ids::outLevel, "Out", "LEVEL", [&p] { return p.takeOutputPeak(); }, ids::outputMode,
+             (int) OutputMode::Stereo),
+      glide(p), gate(p),
       position(*p.state().getParameter(ids::glidePosition), [this](float v) {
           glideFirst = (GlidePosition) juce::roundToInt(v) == GlidePosition::Pre;
           if (dragged == nullptr)
@@ -25,6 +28,9 @@ Glide90Editor::Glide90Editor(Glide90Processor& p)
     for (auto* c : std::initializer_list<juce::Component*> { &header, &input, &glide, &gate, &output })
         content.addAndMakeVisible(c);
     content.setSize(kWidth, kHeight);
+    input.modeKey().setTooltip("Stereo: the direct sound keeps its sides, the reverse gate hears both. "
+                               "Mono: one input, like the SPX90's");
+    output.modeKey().setTooltip("Stereo, the left output on both sides (one amp), or both outputs summed");
     content.themeChanged();
 
     // Each unit is kept as a picture: moving one, or repainting the moving background behind it,
@@ -141,6 +147,9 @@ void Glide90Editor::showMotion(const ui::Motion& m)
 void Glide90Editor::frame(double seconds)
 {
     updateMotion(seconds);
+    // A mono track has nothing to keep apart.
+    if (const bool twoInputs = proc.getTotalNumInputChannels() >= 2; input.modeKey().isEnabled() != twoInputs)
+        input.modeKey().setEnabled(twoInputs);
     for (auto& s : slides)
     {
         if (s.module == nullptr)

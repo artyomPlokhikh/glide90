@@ -23,6 +23,7 @@ inline constexpr const char* inputSwitch = "input_switch";
 inline constexpr const char* outputSwitch = "output_switch";
 inline constexpr const char* bypass = "spx_bypass";
 inline constexpr const char* outputMode = "output_mode";
+inline constexpr const char* inputMode = "input_mode";
 
 // Glide: the vibrato bar.
 inline constexpr const char* glideOn = "glide_on";
@@ -57,6 +58,14 @@ enum class ManualSource
     PitchBend,
     ModWheel,
     Expression // CC 11
+};
+
+// What comes in: the sum of both inputs, as into the unit's one input, or both, the direct signal
+// keeping its sides (the effect hears their sum either way).
+enum class InputMode
+{
+    Mono,
+    Stereo
 };
 
 // What leaves the plugin: both SPX outputs, the left one on both channels (one output of the unit

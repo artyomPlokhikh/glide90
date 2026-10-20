@@ -32,14 +32,15 @@ float SpxEngine::inputGain(float knob, bool minus20)
 void SpxEngine::prepare(double rate, int maxBlockSize)
 {
     hostRate = rate;
-    down.prepare(hostRate, kDspRate);
+    downL.prepare(hostRate, kDspRate);
+    downR.prepare(hostRate, kDspRate);
     const int lag = 8 + (int) std::ceil(kDspRate / hostRate); // block-to-block jitter margin
     upL.prepare(kDspRate, hostRate, lag);
     upR.prepare(kDspRate, hostRate, lag);
     er.prepare();
 
     const size_t dspMax = (size_t) std::ceil(maxBlockSize * kDspRate / hostRate) + 4;
-    for (auto* v : { &dspIn, &dspWetL, &dspWetR, &dspOutL, &dspOutR })
+    for (auto* v : { &dspInL, &dspInR, &dspSum, &dspWetL, &dspWetR, &dspOutL, &dspOutR })
         v->reserve(dspMax);
     scratchL.resize((size_t) maxBlockSize);
     scratchR.resize((size_t) maxBlockSize);
@@ -48,22 +49,27 @@ void SpxEngine::prepare(double rate, int maxBlockSize)
     bypassStep = (float) (1.0 / (kBypassFadeMs * 0.001 * hostRate));
     analogCoeff = (float) (1.0 - std::exp(-1.0 / (kSmoothingMs * 0.001 * hostRate)));
 
-    bypassDelay.assign(1, 0.0f); // the measurement below runs process()
+    for (auto* line : { &bypassDelayL, &bypassDelayR })
+        line->assign(1, 0.0f); // the measurement below runs process()
     latency = measureLatency();
-    bypassDelay.assign((size_t) latency + 1, 0.0f);
+    for (auto* line : { &bypassDelayL, &bypassDelayR })
+        line->assign((size_t) latency + 1, 0.0f);
     reset();
 }
 
 void SpxEngine::reset()
 {
-    down.reset();
+    downL.reset();
+    downR.reset();
     upL.reset();
     upR.reset();
     er.reset();
-    adcFilter.reset();
+    adcFilterL.reset();
+    adcFilterR.reset();
     dacFilterL.reset();
     dacFilterR.reset();
-    std::fill(bypassDelay.begin(), bypassDelay.end(), 0.0f);
+    std::fill(bypassDelayL.begin(), bypassDelayL.end(), 0.0f);
+    std::fill(bypassDelayR.begin(), bypassDelayR.end(), 0.0f);
     bypassPos = 0;
     snapParameters = true;
     analogOut = -1.0f;
@@ -113,11 +119,16 @@ void SpxEngine::processDsp(int numDsp, const SpxSettings& s)
         snapParameters = false;
     }
 
-    // Input stage: analog gain and anti-alias filter, then the 16-bit A/D.
+    // Input stage: analog gain and anti-alias filter, then the 16-bit A/D. The effect hears the sum
+    // of the two inputs (the unit has one); with the same signal on both, that is the signal itself.
+    dspSum.resize((size_t) numDsp);
     for (int n = 0; n < numDsp; ++n)
     {
         gainIn += smoothCoeff * (targetIn - gainIn);
-        dspIn[(size_t) n] = quantise16(adcFilter.process(dspIn[(size_t) n] * gainIn));
+        const auto i = (size_t) n;
+        dspInL[i] = quantise16(adcFilterL.process(dspInL[i] * gainIn));
+        dspInR[i] = quantise16(adcFilterR.process(dspInR[i] * gainIn));
+        dspSum[i] = 0.5f * (dspInL[i] + dspInR[i]);
     }
 
     dspWetL.resize((size_t) numDsp);
@@ -125,14 +136,14 @@ void SpxEngine::processDsp(int numDsp, const SpxSettings& s)
     if (useEr)
     {
         er.setSettings(s.er);
-        er.process(dspIn.data(), dspWetL.data(), dspWetR.data(), numDsp);
+        er.process(dspSum.data(), dspWetL.data(), dspWetR.data(), numDsp);
         for (int n = 0; n < numDsp; ++n)
             wetPeak = std::max({ wetPeak, std::abs(dspWetL[(size_t) n]), std::abs(dspWetR[(size_t) n]) });
     }
     else
     {
-        std::copy(dspIn.begin(), dspIn.begin() + numDsp, dspWetL.begin());
-        std::copy(dspIn.begin(), dspIn.begin() + numDsp, dspWetR.begin());
+        std::copy(dspInL.begin(), dspInL.begin() + numDsp, dspWetL.begin());
+        std::copy(dspInR.begin(), dspInR.begin() + numDsp, dspWetR.begin());
     }
 
     // BALANCE and OUT LVL are digital; the direct signal also comes out of the D/A.
@@ -142,19 +153,21 @@ void SpxEngine::processDsp(int numDsp, const SpxSettings& s)
     {
         balance += smoothCoeff * (targetBal - balance);
         outGain += smoothCoeff * (targetOut - outGain);
-        const float dry = dspIn[(size_t) n] * (1.0f - balance);
-        const float l = (dry + dspWetL[(size_t) n] * balance) * outGain;
-        const float r = (dry + dspWetR[(size_t) n] * balance) * outGain;
+        const float l = (dspInL[(size_t) n] * (1.0f - balance) + dspWetL[(size_t) n] * balance) * outGain;
+        const float r = (dspInR[(size_t) n] * (1.0f - balance) + dspWetR[(size_t) n] * balance) * outGain;
         dspOutL[(size_t) n] = dacFilterL.process(quantise16(l));
         dspOutR[(size_t) n] = dacFilterR.process(quantise16(r));
     }
 }
 
-void SpxEngine::process(const float* monoIn, float* outL, float* outR, int numSamples, const SpxSettings& s)
+void SpxEngine::process(const float* inL, const float* inR, float* outL, float* outR, int numSamples,
+                        const SpxSettings& s)
 {
-    dspIn.clear();
-    down.process(monoIn, numSamples, dspIn);
-    const int numDsp = (int) dspIn.size();
+    dspInL.clear();
+    dspInR.clear();
+    downL.process(inL, numSamples, dspInL);
+    downR.process(inR, numSamples, dspInR);
+    const int numDsp = (int) dspInL.size();
     processDsp(numDsp, s);
 
     upL.push(dspOutL.data(), numDsp);
@@ -168,19 +181,20 @@ void SpxEngine::process(const float* monoIn, float* outL, float* outR, int numSa
     // bypass) without costing resolution.
     const float analogTarget = s.outputMinus20 ? dbToGain(-kLevelSwitchDb) : 1.0f;
     const float target = s.bypass ? 1.0f : 0.0f;
-    const int size = (int) bypassDelay.size();
+    const int size = (int) bypassDelayL.size();
     if (analogOut < 0.0f)
         analogOut = analogTarget; // first block after a reset
     for (int n = 0; n < numSamples; ++n)
     {
-        bypassDelay[(size_t) bypassPos] = monoIn[n] * bypassGain;
+        bypassDelayL[(size_t) bypassPos] = inL[n] * bypassGain;
+        bypassDelayR[(size_t) bypassPos] = inR[n] * bypassGain;
         bypassPos = (bypassPos + 1) % size;
-        const float delayed = bypassDelay[(size_t) bypassPos];
+        const float delayedL = bypassDelayL[(size_t) bypassPos], delayedR = bypassDelayR[(size_t) bypassPos];
         bypassMix = target > bypassMix ? std::min(target, bypassMix + bypassStep) : std::max(target, bypassMix - bypassStep);
         if (bypassMix > 0.0f)
         {
-            outL[n] = outL[n] * (1.0f - bypassMix) + delayed * bypassMix;
-            outR[n] = outR[n] * (1.0f - bypassMix) + delayed * bypassMix;
+            outL[n] = outL[n] * (1.0f - bypassMix) + delayedL * bypassMix;
+            outR[n] = outR[n] * (1.0f - bypassMix) + delayedR * bypassMix;
         }
         analogOut += analogCoeff * (analogTarget - analogOut);
         outL[n] *= analogOut;
