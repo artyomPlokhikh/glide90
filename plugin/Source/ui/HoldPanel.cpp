@@ -124,7 +124,7 @@ void HoldDisplay::setCompact(bool c)
 
 int HoldDisplay::choice(const char* id) const
 {
-    return juce::roundToInt(proc.state().getRawParameterValue(id)->load());
+    return juce::roundToInt(proc.value(id));
 }
 
 void HoldDisplay::frame(double seconds)

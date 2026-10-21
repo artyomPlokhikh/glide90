@@ -11,6 +11,7 @@
 
 #include <array>
 #include <atomic>
+#include <deque>
 
 namespace glide90
 {
@@ -57,6 +58,8 @@ public:
     void setStateInformation(const void* data, int sizeInBytes) override;
 
     juce::AudioProcessorValueTreeState& state() { return apvts; }
+    // A parameter's plain value now, or what this product fixes it to when it lacks it (Product.h).
+    float value(const char* id) const;
 
     // --- Glide shape (message thread) ---
     // The shape selected by the glide_shape parameter (a preset or the custom one).
@@ -130,6 +133,11 @@ private:
     void commitEdit(const juce::ValueTree& before);
     juce::ValueTree editState(); // presetState() with INPUT and the input mode (not FREEZE)
     void processInternal(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi);
+    // The routing that plays: GLIDE90's choice, or LITE's module order as one.
+    const Routing& currentRouting() const;
+    // DRY and the reverse gate into OUT: their levels in dB, or LITE's MIX.
+    float dryLevelGain() const;
+    float gateLevelGain() const;
     // The input, delayed by the latency, into `dryOut` (the host-bypass path, kept current always).
     void delayDry(const juce::AudioBuffer<float>& buffer, int numSamples);
     void setParameter(const char* id, float plainValue);
@@ -161,6 +169,8 @@ private:
     int quietEdits = 0; // inside a Batch: single parameter gestures are not steps of their own
     juce::ValueTree editBefore;
     juce::AudioProcessorValueTreeState apvts;
+    // What the parameters this product lacks stand at (raw points into it).
+    std::deque<std::atomic<float>> fixedParams;
     int currentFactoryPreset = 0;
     juce::String presetName { "Glide Guitar" };
     bool presetIsUser = false;
@@ -240,7 +250,7 @@ private:
             *glideBar, *routing, *outputMode, *glideDynamics,
             *inputMode, *holdOn, *holdMode, *holdFreeze, *holdSize, *holdDensity,
             *holdSmear, *holdSpread, *holdReverse, *holdDuck, *holdDecay, *holdLevel, *holdCharacter,
-            *holdRoot, *holdSwell, *holdTail, *holdVoices, *dryLevel;
+            *holdRoot, *holdSwell, *holdTail, *holdVoices, *dryLevel, *gateMix, *glidePosition;
     } raw;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Glide90Processor)

@@ -153,70 +153,82 @@ jobs:
             "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/${{ matrix.pluginval }}"
           unzip -q pluginval.zip -d pluginval
 
+      # Two plugins from one tree: GLIDE90 (target Glide90) and GLIDE90 LITE (target Glide90Lite).
       - name: pluginval (VST3)
         shell: bash
         run: |
-          vst3="build/plugin/Glide90_artefacts/Release/VST3/GLIDE90.vst3"
-          case "$RUNNER_OS" in
-            Linux)   xvfb-run -a ./pluginval/pluginval --strictness-level 8 --validate-in-process --validate "$vst3" ;;
-            Windows) ./pluginval/pluginval.exe --strictness-level 8 --validate-in-process --validate "$vst3" ;;
-            macOS)   ./pluginval/pluginval.app/Contents/MacOS/pluginval --strictness-level 8 --validate-in-process --validate "$vst3" ;;
-          esac
+          for vst3 in "build/plugin/Glide90_artefacts/Release/VST3/GLIDE90.vst3" \
+                      "build/plugin/Glide90Lite_artefacts/Release/VST3/GLIDE90 LITE.vst3"; do
+            case "$RUNNER_OS" in
+              Linux)   xvfb-run -a ./pluginval/pluginval --strictness-level 8 --validate-in-process --validate "$vst3" ;;
+              Windows) ./pluginval/pluginval.exe --strictness-level 8 --validate-in-process --validate "$vst3" ;;
+              macOS)   ./pluginval/pluginval.app/Contents/MacOS/pluginval --strictness-level 8 --validate-in-process --validate "$vst3" ;;
+            esac
+          done
 
       - name: auval (AU)
         if: runner.os == 'macOS'
         run: |
           mkdir -p ~/Library/Audio/Plug-Ins/Components
           cp -R build/plugin/Glide90_artefacts/Release/AU/GLIDE90.component ~/Library/Audio/Plug-Ins/Components/
+          cp -R "build/plugin/Glide90Lite_artefacts/Release/AU/GLIDE90 LITE.component" ~/Library/Audio/Plug-Ins/Components/
           killall -9 AudioComponentRegistrar || true
           auval -v aumf G90s Gl9d
+          auval -v aumf G90l Gl9d
 
+      # One zip per plugin and system.
       - name: Package
         shell: bash
         run: |
           sccache --show-stats || true
-          out=build/plugin/Glide90_artefacts/Release
-          if [ "$RELEASE" = true ]; then name="Glide90-$VERSION-${{ matrix.name }}"; else name="Glide90-${GITHUB_SHA::7}-${{ matrix.name }}"; fi
-          dir="dist/$name"
-          mkdir -p "$dir"
-          cp -R "$out/VST3/GLIDE90.vst3" "$dir/"
-          case "$RUNNER_OS" in
-            Linux)
-              cp -R "$out/LV2/GLIDE90.lv2" "$dir/"
-              cp "$out/Standalone/GLIDE90" "$dir/"
-              printf '%s\n' "GLIDE90 $VERSION for Linux (x86_64)" "" \
-                "VST3: copy GLIDE90.vst3 to ~/.vst3/" \
-                "LV2: copy GLIDE90.lv2 to ~/.lv2/" \
-                "Standalone: run ./GLIDE90" > "$dir/INSTALL.txt" ;;
-            Windows)
-              cp "$out/Standalone/GLIDE90.exe" "$dir/"
-              printf '%s\r\n' "GLIDE90 $VERSION for Windows (64-bit)" "" \
-                "VST3: copy the GLIDE90.vst3 folder to C:\\Program Files\\Common Files\\VST3\\" \
-                "Standalone: run GLIDE90.exe" > "$dir/INSTALL.txt" ;;
-            macOS)
-              cp -R "$out/AU/GLIDE90.component" "$dir/"
-              cp -R "$out/Standalone/GLIDE90.app" "$dir/"
-              printf '%s\n' "GLIDE90 $VERSION for macOS 11+ (Apple Silicon and Intel)" "" \
-                "VST3: copy GLIDE90.vst3 to ~/Library/Audio/Plug-Ins/VST3/" \
-                "AU: copy GLIDE90.component to ~/Library/Audio/Plug-Ins/Components/" \
-                "Standalone: copy GLIDE90.app to Applications" "" \
-                "The plugin is not signed by Apple. If macOS refuses to open it, run in Terminal:" \
-                "  xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/GLIDE90.vst3 \\" \
-                "    ~/Library/Audio/Plug-Ins/Components/GLIDE90.component /Applications/GLIDE90.app" > "$dir/INSTALL.txt" ;;
-          esac
-          cd dist
-          case "$RUNNER_OS" in
-            macOS)   ditto -c -k --keepParent "$name" "$name.zip" ;;
-            Windows) 7z a -tzip -bso0 "$name.zip" "$name" ;;
-            Linux)   zip -qry "$name.zip" "$name" ;;
-          esac
-          echo "PACKAGE=dist/$name.zip" >> "$GITHUB_ENV"
+          if [ "$RELEASE" = true ]; then tag="$VERSION"; else tag="${GITHUB_SHA::7}"; fi
+          package() { # target, product name, zip prefix
+            local out="build/plugin/$1_artefacts/Release" product="$2"
+            local name="$3-$tag-${{ matrix.name }}"
+            local dir="dist/$name"
+            mkdir -p "$dir"
+            cp -R "$out/VST3/$product.vst3" "$dir/"
+            case "$RUNNER_OS" in
+              Linux)
+                cp -R "$out/LV2/$product.lv2" "$dir/"
+                cp "$out/Standalone/$product" "$dir/"
+                printf '%s\n' "$product $VERSION for Linux (x86_64)" "" \
+                  "VST3: copy $product.vst3 to ~/.vst3/" \
+                  "LV2: copy $product.lv2 to ~/.lv2/" \
+                  "Standalone: run ./$product" > "$dir/INSTALL.txt" ;;
+              Windows)
+                cp "$out/Standalone/$product.exe" "$dir/"
+                printf '%s\r\n' "$product $VERSION for Windows (64-bit)" "" \
+                  "VST3: copy the $product.vst3 folder to C:\\Program Files\\Common Files\\VST3\\" \
+                  "Standalone: run $product.exe" > "$dir/INSTALL.txt" ;;
+              macOS)
+                cp -R "$out/AU/$product.component" "$dir/"
+                cp -R "$out/Standalone/$product.app" "$dir/"
+                printf '%s\n' "$product $VERSION for macOS 11+ (Apple Silicon and Intel)" "" \
+                  "VST3: copy $product.vst3 to ~/Library/Audio/Plug-Ins/VST3/" \
+                  "AU: copy $product.component to ~/Library/Audio/Plug-Ins/Components/" \
+                  "Standalone: copy $product.app to Applications" "" \
+                  "The plugin is not signed by Apple. If macOS refuses to open it, run in Terminal:" \
+                  "  xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/\"$product.vst3\" \\" \
+                  "    ~/Library/Audio/Plug-Ins/Components/\"$product.component\" /Applications/\"$product.app\"" > "$dir/INSTALL.txt" ;;
+            esac
+            (
+              cd dist
+              case "$RUNNER_OS" in
+                macOS)   ditto -c -k --keepParent "$name" "$name.zip" ;;
+                Windows) 7z a -tzip -bso0 "$name.zip" "$name" ;;
+                Linux)   zip -qry "$name.zip" "$name" ;;
+              esac
+            )
+          }
+          package Glide90 "GLIDE90" "Glide90"
+          package Glide90Lite "GLIDE90 LITE" "Glide90-Lite"
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: Glide90-${{ matrix.name }}
-          path: ${{ env.PACKAGE }}
+          path: dist/*.zip
           compression-level: 0 # a zip already
           if-no-files-found: error
 
@@ -255,9 +267,12 @@ jobs:
           {
             echo "## Download"
             echo
-            echo "One zip per system, each with an INSTALL.txt:"
+            echo "Two plugins, one zip per plugin and system, each with an INSTALL.txt:"
             echo
-            echo "- **Windows** (64-bit): VST3 and the standalone GLIDE90.exe"
+            echo "- **GLIDE90**: GLIDE, REVERSE GATE and HOLD, with the routing between them"
+            echo "- **GLIDE90 LITE**: GLIDE and REVERSE GATE; drag a module by its title bar to change their order"
+            echo
+            echo "- **Windows** (64-bit): VST3 and the standalone app (.exe)"
             echo "- **macOS** 11+ (Apple Silicon and Intel): VST3, AU and the standalone app. Not signed by Apple: see INSTALL.txt if macOS refuses to open it"
             echo "- **Linux** (x86_64): VST3, LV2 and the standalone app"
             echo

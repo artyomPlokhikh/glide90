@@ -4,6 +4,7 @@
 #include "Shape.h"
 
 #include <cmath>
+#include <map>
 
 namespace glide90
 {
@@ -174,7 +175,7 @@ std::optional<float> parseText(const juce::String& id, const juce::String& text,
     double v = n->value;
 
     // Shown as percentages, typed as percentages: "50" and "50 %" are both one half.
-    if (isOneOf(id, { ids::glideRandom, ids::glideSmooth, ids::pickSensitivity, ids::glideDynamics,
+    if (isOneOf(id, { ids::gateMix, ids::glideRandom, ids::glideSmooth, ids::pickSensitivity, ids::glideDynamics,
                       ids::glideBar, ids::holdReverse, ids::holdDuck }))
         return (float) (v / 100.0);
     // Milliseconds, or seconds when said so ("1.2 s").
@@ -292,9 +293,22 @@ std::optional<float> parseParameterText(const juce::RangedAudioParameter& p, con
     return parseText(p.getParameterID(), text, choices);
 }
 
-Layout createParameterLayout()
+namespace
 {
-    Layout layout;
+// Hands each parameter, made afresh, to `take`.
+struct Collect
+{
+    std::function<void(std::unique_ptr<juce::RangedAudioParameter>)> take;
+    template <typename P>
+    void add(std::unique_ptr<P> p)
+    {
+        take(std::move(p));
+    }
+};
+
+// Every parameter of both products (GLIDE90's and LITE's own two).
+void buildParameters(Collect& layout)
+{
     const auto& rom17 = spx::romProgram(17).er;
     const auto oneDecimal = [](float v) { return juce::String(v, 1); };
 
@@ -321,6 +335,7 @@ Layout createParameterLayout()
         lpfNames.add(lpfLabel(hz));
     layout.add(choiceParam(ids::gateLpf, "Gate LPF", lpfNames, lpfNames.size() - 1));
     layout.add(dbParam(ids::gateLevel, "Gate Level", kOffDb, kGateLevelMaxDb, 0.0f));
+    layout.add(percentParam(ids::gateMix, "Gate Mix", 1.0f));
 
     layout.add(boolParam(ids::glideOn, "Glide On", true));
     layout.add(choiceParam(ids::glideMode, "Glide Mode", { "FREE", "SYNC", "TRIGGER", "MANUAL" }, 2));
@@ -345,6 +360,7 @@ Layout createParameterLayout()
     layout.add(choiceParam(ids::glideManualSource, "Glide Manual Source",
                            { "BAR KNOB", "PITCH BEND", "MOD WHEEL", "EXPRESSION (CC11)" }, 0));
     layout.add(percentParam(ids::glideBar, "Glide Bar", 0.0f, 0.001f));
+    layout.add(choiceParam(ids::glidePosition, "Glide Position", { "PRE", "POST" }, (int) GlidePosition::Pre));
     juce::StringArray routings;
     for (const auto& r : kRoutings)
         routings.add(r.name);
@@ -378,7 +394,41 @@ Layout createParameterLayout()
         voices.add(glide >= 1000.0f ? "GLIDE " + juce::String(glide / 1000.0f, 0) + " S"
                                     : "GLIDE " + juce::String(juce::roundToInt(glide)) + " MS");
     layout.add(choiceParam(ids::holdVoices, "Hold Voices", voices, 0));
+}
+} // namespace
+
+bool inProduct(const juce::String& id)
+{
+    const bool glideOnly = id == ids::gateMix || id == ids::glidePosition;
+    if constexpr (kLite)
+        return !id.startsWith("hold_") && !isOneOf(id, { ids::routing, ids::dryLevel, ids::gateLevel });
+    return !glideOnly;
+}
+
+Layout createParameterLayout()
+{
+    Layout layout;
+    Collect collect { [&layout](std::unique_ptr<juce::RangedAudioParameter> p) {
+        if (inProduct(p->getParameterID()))
+            layout.add(std::move(p));
+    } };
+    buildParameters(collect);
     return layout;
+}
+
+float fixedValue(const juce::String& id)
+{
+    static const std::map<juce::String, float> fixed = [] {
+        std::map<juce::String, float> m;
+        Collect collect { [&m](std::unique_ptr<juce::RangedAudioParameter> p) {
+            m[p->getParameterID()] = p->convertFrom0to1(p->getDefaultValue());
+        } };
+        buildParameters(collect);
+        m[ids::holdOn] = 0.0f; // LITE has no HOLD
+        return m;
+    }();
+    const auto it = fixed.find(id);
+    return it != fixed.end() ? it->second : 0.0f;
 }
 
 } // namespace glide90

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Product.h"
+
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <iterator>
@@ -28,6 +30,8 @@ inline constexpr const char* gateLiveness = "gate_liveness";
 inline constexpr const char* gatePreDelay = "gate_pre_delay";
 inline constexpr const char* gateLpf = "gate_lpf";
 inline constexpr const char* gateLevel = "gate_level";
+// LITE only: the unit's BALANCE between the direct guitar and the reverse gate (GLIDE90 has DRY and LEVEL).
+inline constexpr const char* gateMix = "gate_mix";
 
 // Glide: the vibrato bar.
 inline constexpr const char* glideOn = "glide_on";
@@ -43,6 +47,8 @@ inline constexpr const char* glideTriggerSource = "glide_trigger_source";
 inline constexpr const char* glideDynamics = "glide_dynamics";
 inline constexpr const char* glideManualSource = "glide_manual_source";
 inline constexpr const char* glideBar = "glide_bar";
+// LITE only: GLIDE before or after the reverse gate (the modules' order, dragged by their title bars).
+inline constexpr const char* glidePosition = "glide_position";
 
 // The ROUTING: where HOLD goes and how GLIDE bends the reverse gate, one of kRoutings.
 inline constexpr const char* routing = "routing";
@@ -117,6 +123,13 @@ enum class OutputMode
     Stereo,
     LeftOnly,
     MonoSum
+};
+
+// LITE: the bar before the reverse gate (it bends what goes in) or after it (it bends what comes out).
+enum class GlidePosition
+{
+    Pre,
+    Post
 };
 
 // Where the glide bar bends the reverse gate. IN: what goes into it, so the reflections repeat each
@@ -194,7 +207,13 @@ inline constexpr int kDefaultDivision = 6; // 1/4
 // The glide_shape choice after the preset shapes.
 inline constexpr const char* kCustomShapeName = "Custom";
 
+// This product's parameters (kProduct): GLIDE90 has them all but LITE's own two (gate MIX, glide
+// position); LITE has no HOLD, no ROUTING and no DRY / gate LEVEL.
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+bool inProduct(const juce::String& id);
+// What a parameter this product lacks stands at (plain): its default, or what this product fixes it to
+// (HOLD off in LITE).
+float fixedValue(const juce::String& id);
 
 // A value typed by the user, as a plain value of `p`: "50" on a percentage is 50 %, "1.2 s" is 1200 ms,
 // "2.5" on the LPF is 2.5 kHz, "thru", "1/4d". Nothing when the text names no value.

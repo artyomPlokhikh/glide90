@@ -2,6 +2,7 @@
 
 #include "Controls.h"
 #include "ModulePanel.h"
+#include "Product.h"
 
 #include "ErEngine.h"
 
@@ -50,14 +51,15 @@ public:
     // What the sound does, for the screen's motion (the editor's, read every frame).
     void setMotion(const Motion* m) { display.motion = m; }
 
-    static constexpr int kColumns = 4;
+    // LITE: three, the screen as wide as the knobs.
+    static constexpr int kColumns = kLite ? 3 : 4;
 
     void paint(juce::Graphics&) override;
     void resized() override;
 
 private:
     // The knobs take three columns, centred under the screen.
-    static constexpr int knobX(int column) { return columnX(column) + Knob::kColumn / 2; }
+    static constexpr int knobX(int column) { return columnX(column) + (kColumns - 3) * Knob::kColumn / 2; }
 
     ToggleKey on;
     GateDisplay display;

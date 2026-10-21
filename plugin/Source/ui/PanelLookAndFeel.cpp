@@ -441,7 +441,7 @@ void strokeGlowing(juce::Graphics& g, const juce::Path& path, juce::Colour colou
 
 // --- Panels ---
 
-void drawCard(juce::Graphics& g, juce::Rectangle<float> r)
+void drawCard(juce::Graphics& g, juce::Rectangle<float> r, bool lifted)
 {
     const auto& t = theme();
     if (t.backdrop == Theme::Backdrop::Duotone)
@@ -456,6 +456,11 @@ void drawCard(juce::Graphics& g, juce::Rectangle<float> r)
     {
         g.setColour(t.cardEdge);
         g.drawRoundedRectangle(r.reduced(0.5f), t.cardCorner, t.backdrop == Theme::Backdrop::Duotone ? 1.5f : 1.0f);
+    }
+    if (lifted)
+    {
+        g.setColour(t.accent.withAlpha(0.45f));
+        g.drawRoundedRectangle(r.reduced(0.5f), t.cardCorner, 1.0f);
     }
 }
 
@@ -685,9 +690,37 @@ void drawKnob(juce::Graphics& g, juce::Rectangle<float> area, float position, bo
 
 // --- Backdrop ---
 
+namespace
+{
+constexpr int kShadowRadius = 26, kShadowDrop = 12;
+} // namespace
+
 Backdrop::Backdrop()
 {
     setOpaque(true);
+}
+
+void Backdrop::setDragGuides(juce::Rectangle<int> landingArea, juce::Rectangle<int> liftedArea)
+{
+    auto dirty = [this] {
+        return landing.expanded(4).getUnion(
+            lifted.expanded(kShadowRadius + 4).withBottom(lifted.getBottom() + kShadowRadius + kShadowDrop + 4));
+    };
+    if (!landing.isEmpty() || !lifted.isEmpty())
+        repaint(dirty());
+    // The shadow is the same all through a drag: blurred once.
+    if (!liftedArea.isEmpty() && (shadow.isNull() || liftedArea.getWidth() + 2 * kShadowRadius != shadow.getWidth()))
+    {
+        shadow = juce::Image(juce::Image::ARGB, liftedArea.getWidth() + 2 * kShadowRadius,
+                             liftedArea.getHeight() + 2 * kShadowRadius, true);
+        juce::Graphics g(shadow);
+        juce::DropShadow(juce::Colours::black.withAlpha(0.6f), kShadowRadius, {})
+            .drawForRectangle(g, liftedArea.withPosition(kShadowRadius, kShadowRadius));
+    }
+    landing = landingArea;
+    lifted = liftedArea;
+    if (!landing.isEmpty() || !lifted.isEmpty())
+        repaint(dirty());
 }
 
 void Backdrop::themeChanged()
@@ -809,6 +842,19 @@ void Backdrop::paint(juce::Graphics& g)
         // A deep bend flushes the picture.
         g.setColour(C(0xffff2a6d).withAlpha(juce::jmin(0.22f, std::abs(motion.cents) / 400.0f)));
         g.fillRect(getLocalBounds());
+    }
+
+    // A module being dragged: its shadow, and where it will land.
+    if (!lifted.isEmpty() && shadow.isValid())
+        g.drawImageAt(shadow, lifted.getX() - kShadowRadius, lifted.getY() - kShadowRadius + kShadowDrop);
+    if (!landing.isEmpty())
+    {
+        juce::Path outline, dashed;
+        outline.addRoundedRectangle(landing.toFloat().reduced(0.5f), juce::jmax(2.0f, theme().cardCorner));
+        const float dashes[] { 5.0f, 4.0f };
+        juce::PathStrokeType(1.2f).createDashedStroke(dashed, outline, dashes, 2);
+        g.setColour(theme().accent.withAlpha(0.5f));
+        g.fillPath(dashed);
     }
 }
 

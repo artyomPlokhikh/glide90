@@ -201,9 +201,20 @@ void HeaderBar::timerCallback()
 void HeaderBar::paint(juce::Graphics& g)
 {
     const bool big = !theme().matrix;
-    g.setFont(legendFont(big ? 30.0f : 26.0f, !big || theme().face == Theme::Face::Courier).withExtraKerningFactor(big ? -0.01f : 0.03f));
+    const auto logo = legendFont(big ? 30.0f : 26.0f, !big || theme().face == Theme::Face::Courier).withExtraKerningFactor(big ? -0.01f : 0.03f);
+    const auto name = themed("GLIDE90");
+    g.setFont(logo);
     g.setColour(theme().text);
-    g.drawText(themed("GLIDE90"), PanelLookAndFeel::kMargin + 2, 0, 140, getHeight(), juce::Justification::centredLeft);
+    g.drawText(name, PanelLookAndFeel::kMargin + 2, 0, 140, getHeight(), juce::Justification::centredLeft);
+    if constexpr (kLite)
+    {
+        // LITE: small after the name.
+        const float x = (float) PanelLookAndFeel::kMargin + 2.0f + juce::GlyphArrangement::getStringWidth(logo, name) + 5.0f;
+        g.setFont(legendFont(12.0f, true).withExtraKerningFactor(0.16f));
+        g.setColour(theme().textDim);
+        g.drawText(themed("LITE"), juce::Rectangle<float>(x, (float) getHeight() * 0.5f - 1.0f, 154.0f - x, 13.0f),
+                   juce::Justification::centredLeft, false);
+    }
 }
 
 void HeaderBar::resized()

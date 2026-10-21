@@ -20,6 +20,13 @@ GlidePanel::GlidePanel(Glide90Processor& p)
     for (auto* c : std::initializer_list<juce::Component*> { &on, &mode, &source, &display, &period, &division, &bar,
                                                              &depth, &random, &smooth, &dynamics, &direction })
         addAndMakeVisible(c);
+    if constexpr (kLite)
+    {
+        pickSense.emplace(p.state(), ids::pickSensitivity, [&p] { return p.picksHeard(); });
+        addAndMakeVisible(*pickSense);
+        pickSense->knob().setTooltip("How easily a pick attack is heard: in TRIGGER from PICK it restarts the shape. "
+                                     "Its pointer flashes on each pick heard. At 0 it is off: no pick is heard");
+    }
 
     // Names that fit the window: these where the look has room, the shorter ones where it has not (the
     // dot matrix takes eight characters). The menu has the full ones.
@@ -86,7 +93,7 @@ GlidePanel::~GlidePanel()
 
 int GlidePanel::choice(const char* id) const
 {
-    return juce::roundToInt(proc.state().getRawParameterValue(id)->load());
+    return juce::roundToInt(proc.value(id));
 }
 
 void GlidePanel::timerCallback()
@@ -115,6 +122,8 @@ void GlidePanel::updateForMode()
     const bool trigger = glideMode == sway::GlideMode::Trigger;
     source.setEnabled(trigger || manual);
     dynamics.setEnabled(trigger);
+    if (pickSense)
+        pickSense->setEnabled(trigger && (TriggerSource) t == TriggerSource::Pick);
     controlGroupActive = trigger || manual;
     repaint();
 }
@@ -125,9 +134,11 @@ void GlidePanel::paint(juce::Graphics& g)
     // SOURCE has no knob to carry its name.
     g.setFont(legendFont(13.5f));
     g.setColour(source.isEnabled() ? theme().text : theme().textDim.withMultipliedAlpha(kDimmedAlpha));
-    g.drawFittedText(themed("SOURCE"), juce::Rectangle<int>(columnX(0), kRow2, Knob::kColumn, 15), juce::Justification::centred, 1);
+    const int control = kLite ? 1 : 0; // CONTROL's first column
+    g.drawFittedText(themed("SOURCE"), juce::Rectangle<int>(columnX(control), kRow2, Knob::kColumn, 15), juce::Justification::centred, 1);
 
-    drawGroupRule(g, "Control", (float) columnX(0), (float) (2 * Knob::kColumn - 8), (float) kRuleY, !controlGroupActive);
+    drawGroupRule(g, "Control", (float) columnX(control) + (kLite ? 4.0f : 0.0f), (float) ((pickSense ? 3 : 2) * Knob::kColumn - 8),
+                  (float) kRuleY, !controlGroupActive);
 }
 
 void GlidePanel::resized()
@@ -135,6 +146,22 @@ void GlidePanel::resized()
     const int h = Knob::kHeight, w = Knob::kColumn;
     on.setBounds(onKeyBounds());
     display.setBounds(columnX(0), kScreenTop, kColumns * w, kScreenHeight);
+
+    if constexpr (kLite)
+    {
+        // MOTION's knobs in a row; DIRECTION under MODE, CONTROL beside it.
+        mode.setBounds(columnX(0), kRow1, w, h);
+        for (auto* k : { &period, &division, &bar })
+            k->setBounds(columnX(1), kRow1, w, h);
+        depth.setBounds(columnX(2), kRow1, w, h);
+        random.setBounds(columnX(3), kRow1, w, h);
+        smooth.setBounds(columnX(4), kRow1, w, h);
+        direction.setBounds(columnX(0), kRow2, w, h);
+        source.setBounds(juce::Rectangle<int>(Knob::kColumn, 26).withCentre({ columnX(1) + w / 2, kRow2 + 50 }));
+        dynamics.setBounds(columnX(2), kRow2, w, h);
+        pickSense->setBounds(columnX(3), kRow2, w, h);
+        return;
+    }
 
     // MOTION.
     mode.setBounds(columnX(0), kRow1, w, h);

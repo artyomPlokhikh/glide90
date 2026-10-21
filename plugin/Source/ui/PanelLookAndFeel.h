@@ -137,7 +137,8 @@ float readoutWidth(const juce::String& text, bool large = false);
 void strokeGlowing(juce::Graphics&, const juce::Path&, juce::Colour, float width);
 
 // A module's backing.
-void drawCard(juce::Graphics&, juce::Rectangle<float> area);
+// A module's backing; `lifted` while it is being dragged (GLIDE90).
+void drawCard(juce::Graphics&, juce::Rectangle<float> area, bool lifted = false);
 void drawCardTitle(juce::Graphics&, const juce::String& title, juce::Rectangle<float> area);
 // A rule across a group of controls with the group's name in a gap in the middle (`quiet`: the
 // group does nothing in the current mode).
@@ -163,6 +164,8 @@ public:
 
     // Once per frame: what the sound does now (SMEAR's wash follows the bar).
     void setMotion(const Motion& m);
+    // GLIDE90: where a dragged module will land and where it is now (empty: no drag).
+    void setDragGuides(juce::Rectangle<int> landing, juce::Rectangle<int> lifted);
     // Call after the theme changed.
     void themeChanged();
 
@@ -176,10 +179,11 @@ private:
     float smearOffset() const;
     juce::String motionKey() const;
 
-    juce::Image composite, streaks;
+    juce::Image composite, streaks, shadow;
     float compositeScale = 0.0f;
     Motion motion;
     juce::String shownKey;
+    juce::Rectangle<int> landing, lifted;
 };
 
 class PanelLookAndFeel : public juce::LookAndFeel_V4

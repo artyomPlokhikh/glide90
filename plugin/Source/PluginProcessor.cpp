@@ -58,7 +58,8 @@ const std::vector<std::pair<const char*, float>>& plainBase()
     return base;
 }
 
-const std::vector<FactoryPreset>& factoryPresets()
+// GLIDE90's presets: GLIDE, the reverse gate and HOLD.
+const std::vector<FactoryPreset>& rackPresets()
 {
     using sway::ShapePreset;
     auto shape = [](ShapePreset p) { return (float) p; };
@@ -126,6 +127,55 @@ const std::vector<FactoryPreset>& factoryPresets()
         { "Short Reverse", true,
           { { ids::gateRoomSize, 8.0f }, { ids::gateLiveness, 5.0f }, { ids::gatePreDelay, 10.0f }, { ids::glideOn, 0.0f } } },
     };
+    return presets;
+}
+
+bool usesHold(const FactoryPreset& p)
+{
+    for (const auto& [id, value] : p.values)
+        if (juce::String(id) == ids::holdOn && value > 0.5f)
+            return true;
+    return false;
+}
+
+// This product's presets: GLIDE90's own, or for LITE those without HOLD, the routing as the modules'
+// order and DRY / LEVEL as MIX.
+const std::vector<FactoryPreset>& factoryPresets()
+{
+    static const std::vector<FactoryPreset> presets = [] {
+        if constexpr (!kLite)
+            return rackPresets();
+        std::vector<FactoryPreset> out;
+        for (const auto& p : rackPresets())
+        {
+            if (usesHold(p))
+                continue;
+            FactoryPreset own { p.name, p.onPlainBase, {} };
+            float dry = -1.0f, gate = -1.0f;
+            for (const auto& [id, value] : p.values)
+            {
+                const juce::String key(id);
+                if (key == ids::routing)
+                    own.values.push_back({ ids::glidePosition, (float) (routingAt(juce::roundToInt(value)).gate == GateBend::Out
+                                                                            ? GlidePosition::Post : GlidePosition::Pre) });
+                else if (key == ids::dryLevel)
+                    dry = gainOf(value);
+                else if (key == ids::gateLevel)
+                    gate = gainOf(value);
+                else if (inProduct(key))
+                    own.values.push_back({ id, value });
+            }
+            if (dry >= 0.0f || gate >= 0.0f)
+            {
+                // GLIDE90's defaults: DRY off, the gate at 0 dB.
+                dry = juce::jmax(0.0f, dry);
+                gate = gate < 0.0f ? 1.0f : gate;
+                own.values.push_back({ ids::gateMix, gate / juce::jmax(1.0e-6f, dry + gate) });
+            }
+            out.push_back(std::move(own));
+        }
+        return out;
+    }();
     return presets;
 }
 
@@ -210,7 +260,11 @@ Glide90Processor::Glide90Processor()
                          .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       apvts(*this, nullptr, "GLIDE90", createParameterLayout())
 {
-    auto p = [this](const char* id) { return apvts.getRawParameterValue(id); };
+    auto p = [this](const char* id) {
+        if (auto* v = apvts.getRawParameterValue(id))
+            return v;
+        return &fixedParams.emplace_back(fixedValue(id));
+    };
     raw = { p(ids::gateRoomSize),        p(ids::gateLiveness),     p(ids::gatePreDelay),
             p(ids::gateLpf),          p(ids::gateLevel),           p(ids::output),         p(ids::input),
             p(ids::gateOn),           p(ids::glideOn),
@@ -223,12 +277,13 @@ Glide90Processor::Glide90Processor()
             p(ids::holdSize),         p(ids::holdDensity),       p(ids::holdSmear),      p(ids::holdSpread),
             p(ids::holdReverse),      p(ids::holdDuck),          p(ids::holdDecay),      p(ids::holdLevel),
             p(ids::holdCharacter),     p(ids::holdRoot),          p(ids::holdSwell),      p(ids::holdTail),
-            p(ids::holdVoices),       p(ids::dryLevel) };
+            p(ids::holdVoices),       p(ids::dryLevel),          p(ids::gateMix),        p(ids::glidePosition) };
     for (size_t i = 0; i < presetShapes.size(); ++i)
         presetShapes[i] = sway::makeShape((sway::ShapePreset) i);
     customShape = audioCustomShape = presetShapes[0];
     for (auto* param : getParameters())
         param->addListener(this);
+    presetName = factoryPresets().front().name; // the defaults
     captureBaseline();
 }
 
@@ -276,14 +331,14 @@ void Glide90Processor::prepareToPlay(double sampleRate, int samplesPerBlock)
 
 void Glide90Processor::reset()
 {
-    gateBenderAfter = routingAt(choice(raw.routing)).gate == GateBend::Out;
+    gateBenderAfter = currentRouting().gate == GateBend::Out;
     moveFadeLeft = 0;
     effectRampLeft = 0;
     stereoMix = choice(raw.inputMode) == (int) InputMode::Stereo ? 1.0f : 0.0f;
     inputGain.setCurrentAndTargetValue(gainOf(raw.input->load()));
     outputGain.setCurrentAndTargetValue(gainOf(raw.output->load()));
-    dryGain.setCurrentAndTargetValue(gainOf(raw.dryLevel->load()));
-    gateGain.setCurrentAndTargetValue(gainOf(raw.gateLevel->load()));
+    dryGain.setCurrentAndTargetValue(dryLevelGain());
+    gateGain.setCurrentAndTargetValue(gateLevelGain());
     spxEngine.reset();
     glideProcessor.reset();
     dryBender.reset();
@@ -407,8 +462,8 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
     s.bypass = raw.gateOn->load() < 0.5f;
     inputGain.setTargetValue(gainOf(raw.input->load()));
     outputGain.setTargetValue(gainOf(raw.output->load()));
-    dryGain.setTargetValue(gainOf(raw.dryLevel->load()));
-    gateGain.setTargetValue(gainOf(raw.gateLevel->load()));
+    dryGain.setTargetValue(dryLevelGain());
+    gateGain.setTargetValue(gateLevelGain());
 
     // Host tempo and position for SYNC.
     double bpm = 120.0, hostBeats = -1.0;
@@ -486,7 +541,7 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
     h.level = gainOf(raw.holdLevel->load());
     // The ROUTING: where HOLD goes and how GLIDE bends the gate (DRY it bends whenever it is on). With
     // the reverse gate bypassed there is no gate to feed: HOLD goes to the output instead.
-    const auto& routing = routingAt(choice(raw.routing));
+    const auto& routing = currentRouting();
     h.feed = s.bypass || !routing.holdIntoGate ? hold::Feed::Out : hold::Feed::Gate;
     const auto gateBend = routing.gate;
     const bool wantAfter = gateBend == GateBend::Out ? true : gateBend == GateBend::In ? false : gateBenderAfter;
@@ -891,9 +946,11 @@ void Glide90Processor::loadFactoryPreset(int index)
 
 juce::File Glide90Processor::userPresetDirectory()
 {
+    // LITE's presets apart: they have MIX and the modules' order, not HOLD and the ROUTING.
+    const char* folder = kLite ? "LITE Presets" : "Presets";
     return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
         .getChildFile("Glide90")
-        .getChildFile("Presets");
+        .getChildFile(folder);
 }
 
 juce::String Glide90Processor::presetExtension()
@@ -1089,9 +1146,42 @@ void Glide90Processor::setParametersExactly(const juce::ValueTree& paramsTree, b
         }
 }
 
+const Routing& Glide90Processor::currentRouting() const
+{
+    // LITE: the modules' order. Before the gate GLIDE bends what goes in, after it what comes out.
+    if constexpr (kLite)
+        return routingAt(choice(raw.glidePosition) == (int) GlidePosition::Pre ? 0 /* INTO THE SWELL */ : 1 /* BENT TAIL */);
+    return routingAt(choice(raw.routing));
+}
+
+float Glide90Processor::dryLevelGain() const
+{
+    // LITE: MIX, the unit's BALANCE, is the direct guitar's share; with the gate off (the unit's analog
+    // bypass) the direct guitar plays at full.
+    if constexpr (kLite)
+        return raw.gateOn->load() < 0.5f ? 1.0f : 1.0f - juce::jlimit(0.0f, 1.0f, raw.gateMix->load());
+    return gainOf(raw.dryLevel->load());
+}
+
+float Glide90Processor::gateLevelGain() const
+{
+    if constexpr (kLite)
+        return juce::jlimit(0.0f, 1.0f, raw.gateMix->load());
+    return gainOf(raw.gateLevel->load());
+}
+
+float Glide90Processor::value(const char* id) const
+{
+    if (auto* v = apvts.getRawParameterValue(id))
+        return v->load();
+    return fixedValue(id);
+}
+
 void Glide90Processor::setParameter(const char* id, float plainValue)
 {
     auto* p = apvts.getParameter(id);
+    if (p == nullptr)
+        return; // not in this product
     p->beginChangeGesture();
     p->setValueNotifyingHost(p->convertTo0to1(plainValue));
     p->endChangeGesture();
