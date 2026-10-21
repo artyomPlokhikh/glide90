@@ -81,7 +81,7 @@ const std::vector<FactoryPreset>& factoryPresets()
             { ids::glideDepth, 8.0f }, { ids::glideDirection, 1.0f }, { ids::glideRandom, 0.7f }, { ids::glideSmooth, 0.6f } } },
         // Everything at once, the bar after the reverb: a wall.
         { "Wall", true,
-          { { ids::gateRoomSize, 20.0f }, { ids::gateLiveness, 10.0f }, { ids::gatePreDelay, 0.1f }, { ids::glidePosition, 1.0f }, { ids::glidePeriod, 1200.0f },
+          { { ids::gateRoomSize, 20.0f }, { ids::gateLiveness, 10.0f }, { ids::gatePreDelay, 0.1f }, { ids::routing, 1.0f /* BENT TAIL */ }, { ids::glidePeriod, 1200.0f },
             { ids::glideDepth, 25.0f }, { ids::glideRandom, 0.4f }, { ids::glideSmooth, 0.4f }, { ids::glideTwinDetune, 12.0f },
             { ids::glideTwinLevel, 0.7f } } },
         { "Seasick (Sync)", true,
@@ -122,7 +122,7 @@ const std::vector<FactoryPreset>& factoryPresets()
             { ids::glidePeriod, 1200.0f }, { ids::glideDepth, 15.0f }, { ids::glideRandom, 0.4f }, { ids::holdOn, 1.0f },
             { ids::holdMode, (float) hold::Mode::Live }, { ids::holdSize, 120.0f }, { ids::holdDensity, 5.0f },
             { ids::holdSmear, 500.0f }, { ids::holdSpread, 12.0f }, { ids::holdReverse, 0.4f }, { ids::holdDuck, 0.5f },
-            { ids::holdFeed, 1.0f }, { ids::holdLevel, -4.4f } } },
+            { ids::routing, 4.0f /* HOLD BESIDE */ }, { ids::holdLevel, -4.4f } } },
         { "Reverse Gate Only", true, { { ids::glideOn, 0.0f } } },
         { "Short Reverse", true,
           { { ids::gateRoomSize, 8.0f }, { ids::gateLiveness, 5.0f }, { ids::gatePreDelay, 10.0f }, { ids::glideOn, 0.0f } } },
@@ -218,12 +218,12 @@ Glide90Processor::Glide90Processor()
             p(ids::glideMode),        p(ids::glidePeriod),       p(ids::glideDivision),  p(ids::glideDepth),
             p(ids::glideDirection),   p(ids::glideRandom),       p(ids::glideSmooth),    p(ids::glideShape),
             p(ids::glideTriggerSource), p(ids::pickSensitivity), p(ids::glideManualSource), p(ids::glideBar),
-            p(ids::glideTwinDetune),  p(ids::glideTwinLevel),    p(ids::glideMix),       p(ids::glidePosition),
+            p(ids::glideTwinDetune),  p(ids::glideTwinLevel),    p(ids::glideMix),       p(ids::routing),
             p(ids::outputMode),       p(ids::glideDynamics),     p(ids::inputMode),
-            p(ids::holdOn),           p(ids::holdMode),          p(ids::holdFreeze),      p(ids::holdFollow),
+            p(ids::holdOn),           p(ids::holdMode),          p(ids::holdFreeze),
             p(ids::holdSize),         p(ids::holdDensity),       p(ids::holdSmear),      p(ids::holdSpread),
             p(ids::holdReverse),      p(ids::holdDuck),          p(ids::holdDecay),      p(ids::holdLevel),
-            p(ids::holdFeed),         p(ids::holdCharacter),     p(ids::holdRoot) };
+            p(ids::holdCharacter),     p(ids::holdRoot) };
     for (size_t i = 0; i < presetShapes.size(); ++i)
         presetShapes[i] = sway::makeShape((sway::ShapePreset) i);
     customShape = audioCustomShape = presetShapes[0];
@@ -251,10 +251,13 @@ void Glide90Processor::prepareToPlay(double sampleRate, int samplesPerBlock)
     maxBlock = juce::jmax(1, samplesPerBlock);
     spxEngine.prepare(sampleRate, maxBlock);
     glideProcessor.prepare(sampleRate);
+    dryBender.prepare(sampleRate);
+    gateBender.prepare(sampleRate);
     holdEngine.prepare(sampleRate);
-    // The inputs, their sum, a stand-in for a missing right output; the bar; HOLD's send and output.
-    work.setSize(8, maxBlock);
-    const int latency = spxEngine.latencySamples() + glideProcessor.latencySamples();
+    // The inputs, their sum, a stand-in for a missing right output; the bar; HOLD's send and output;
+    // the effect's input and output.
+    work.setSize(11, maxBlock);
+    const int latency = spxEngine.latencySamples() + dryBender.latencySamples();
     setLatencySamples(latency);
     bypassDelay.setSize(2, latency + 1);
     dryOut.setSize(2, maxBlock);
@@ -266,13 +269,16 @@ void Glide90Processor::prepareToPlay(double sampleRate, int samplesPerBlock)
 
 void Glide90Processor::reset()
 {
-    activePost = (GlidePosition) choice(raw.glidePosition) == GlidePosition::Post;
-    orderFadeLeft = 0;
+    gateBenderAfter = routingAt(choice(raw.routing)).gate == GateBend::Out;
+    moveFadeLeft = 0;
+    effectRampLeft = 0;
     stereoMix = choice(raw.inputMode) == (int) InputMode::Stereo ? 1.0f : 0.0f;
     inputGain.setCurrentAndTargetValue(gainOf(raw.input->load()));
     outputGain.setCurrentAndTargetValue(gainOf(raw.output->load()));
     spxEngine.reset();
     glideProcessor.reset();
+    dryBender.reset();
+    gateBender.reset();
     holdEngine.reset();
     bypassDelay.clear();
     bypassPos = 0;
@@ -315,6 +321,8 @@ void Glide90Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
         // can take over.
         spxEngine.reset();
         glideProcessor.reset();
+        dryBender.reset();
+        gateBender.reset();
         holdEngine.reset();
         inputRampLeft = fadeLength;
         wasBypassed = false;
@@ -436,8 +444,6 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
     h.latched = raw.holdFreeze->load() > 0.5f;
     // One PICK SENS for the plugin: how hard the player picks is the same for the glide and HOLD.
     h.sensitivity = raw.pickSensitivity->load();
-    h.follow = raw.holdFollow->load();
-    h.followBar = w.enabled;
     h.sizeMs = raw.holdSize->load();
     h.density = choice(raw.holdDensity);
     h.smearMs = raw.holdSmear->load();
@@ -447,27 +453,36 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
     const float decay = raw.holdDecay->load();
     h.decaySeconds = decay >= kHoldDecayForever ? std::numeric_limits<float>::infinity() : decay;
     h.level = gainOf(raw.holdLevel->load());
-    // With the reverse gate bypassed there is no gate to feed: HOLD goes to the output instead.
-    h.feed = s.bypass ? hold::Feed::Out : (hold::Feed) choice(raw.holdFeed);
+    // The ROUTING: where HOLD goes and what GLIDE bends. With the reverse gate bypassed there is no gate
+    // to feed: HOLD goes to the output instead.
+    const auto& routing = routingAt(choice(raw.routing));
+    h.feed = s.bypass || !routing.holdIntoGate ? hold::Feed::Out : hold::Feed::Gate;
+    // Each path is bent once at most: HOLD into the gate bends itself only when the gate bends its
+    // input; with the gate bent at its output the gate's bender bends it with the reverb. Sent out
+    // because the gate is off, HOLD bends if the routing bends the gate.
+    const auto gateBend = routing.gate;
+    const bool wantAfter = gateBend == GateBend::Out ? true : gateBend == GateBend::In ? false : gateBenderAfter;
+    h.bend = w.enabled
+             && (h.feed == hold::Feed::Gate ? gateBend == GateBend::In
+                                            : (routing.holdIntoGate ? gateBend != GateBend::Off : routing.bendHold));
     h.character = (hold::Character) choice(raw.holdCharacter);
     h.rootNote = choice(raw.holdRoot);
 
     const double beatsPerSample = bpm / 60.0 / currentRate;
-    const bool wantPost = (GlidePosition) choice(raw.glidePosition) == GlidePosition::Post;
     for (int start = 0; start < n;)
     {
-        // A new order of the glide and the reverb: fade out in the old one; in the silence switch and
-        // clear both engines (their delay lines hold what the old order fed them); stay silent until
-        // the new order's output arrives, one latency later; fade back in. No click, and the reverb's
-        // tail starts afresh.
+        // The gate's bender moving to the other side of the reverb: fade the effect out; in the silence
+        // move it and clear the reverb and the bender (they hold what the old way fed them); stay
+        // silent until the new way's output arrives, one latency later; fade back in. No click, the
+        // reverb's tail starts afresh, and the direct signal plays on throughout.
         const int silent = getLatencySamples();
-        if (orderFadeLeft == 0 && wantPost != activePost)
-            orderFadeLeft = 2 * fadeLength + silent;
+        if (moveFadeLeft == 0 && wantAfter != gateBenderAfter)
+            moveFadeLeft = 2 * fadeLength + silent;
         int num = juce::jmin(maxBlock, n - start);
-        if (orderFadeLeft > fadeLength + silent)
-            num = juce::jmin(num, orderFadeLeft - fadeLength - silent);
-        else if (orderFadeLeft > 0)
-            num = juce::jmin(num, orderFadeLeft);
+        if (moveFadeLeft > fadeLength + silent)
+            num = juce::jmin(num, moveFadeLeft - fadeLength - silent);
+        else if (moveFadeLeft > 0)
+            num = juce::jmin(num, moveFadeLeft);
 
         sway::SwaySettings chunk = w;
         if (hostBeats >= 0.0)
@@ -479,30 +494,22 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
                 chunkMidi[(size_t) chunkNotes++] = { e.sample - start, e.note, e.on };
         holdChunk.midi = chunkMidi.data();
         holdChunk.numMidi = chunkNotes;
+        Bends bends;
+        bends.dry = w.enabled && routing.bendDry;
+        // While it moves, the bender bends only where it is wanted (it fades out on the wrong side).
+        bends.gate = w.enabled && gateBend != GateBend::Off && (gateBend == GateBend::Out) == gateBenderAfter;
         processChunk(buffer, start, num, s, chunk, noteAt >= start && noteAt < start + num ? noteAt - start : -1,
-                     holdChunk);
+                     holdChunk, bends);
 
-        if (orderFadeLeft > 0)
+        if (moveFadeLeft > 0)
         {
-            for (int ch = 0; ch < juce::jmin(2, buffer.getNumChannels()); ++ch)
+            moveFadeLeft -= num;
+            if (moveFadeLeft == fadeLength + silent)
             {
-                float* data = buffer.getWritePointer(ch, start);
-                for (int i = 0; i < num; ++i)
-                {
-                    const int left = orderFadeLeft - i;
-                    const float gain = left > fadeLength + silent ? (float) (left - fadeLength - silent) / (float) fadeLength
-                                       : left > fadeLength      ? 0.0f
-                                                                : (float) (fadeLength - left) / (float) fadeLength;
-                    data[i] *= gain;
-                }
-            }
-            orderFadeLeft -= num;
-            if (orderFadeLeft == fadeLength + silent)
-            {
-                activePost = !activePost;
-                spxEngine.reset();
-                glideProcessor.reset();
-                inputRampLeft = fadeLength;
+                gateBenderAfter = !gateBenderAfter;
+                spxEngine.resetEffect();
+                gateBender.reset();
+                effectRampLeft = fadeLength;
             }
         }
         start += num;
@@ -516,7 +523,8 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
 }
 
 void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start, int num, const spx::SpxSettings& s,
-                                    sway::SwaySettings w, int midiNoteAt, const hold::HoldSettings& h)
+                                    sway::SwaySettings w, int midiNoteAt, const hold::HoldSettings& h,
+                                    const Bends& bends)
 {
     w.midiTriggerAt = midiNoteAt;
     const int numIn = juce::jmin(getTotalNumInputChannels(), buffer.getNumChannels());
@@ -576,7 +584,7 @@ void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start,
         sum[i] *= g;
     }
 
-    // The bar first, from the dry guitar whichever order plays: the glide and HOLD both follow it.
+    // The bar first, from the dry guitar: every path it bends follows it.
     float* bar = work.getWritePointer(4);
     glideProcessor.computeBar(sum, num, w, bar);
     // HOLD hears the dry guitar too, and plays beside the chain: into the gate, or to the output.
@@ -588,12 +596,27 @@ void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start,
     holdEngine.process(sum, bar, num, h, holdGate, holdL, holdR);
     const bool holdHeard = holdWasHeard || holdEngine.audible();
 
-    const bool post = activePost;
-    if (!post)
+    // What the reverse gate hears: the guitar's sum, bent on its way in (BEND IN), and HOLD, which
+    // bends itself. With the gate's bender after the reverb, both go in as they are.
+    float* effect = work.getWritePointer(10);
+    juce::FloatVectorOperations::copy(effect, sum, num);
+    if (!gateBenderAfter)
     {
-        // One channel from a mono track; two (one bar for both) from a stereo one, in either mode.
+        float* channels[] = { effect };
+        gateBender.process(channels, 1, num, w, bar, bends.gate);
+    }
+    if (holdHeard)
+        juce::FloatVectorOperations::add(effect, holdGate, num);
+    for (int i = 0; i < num && effectRampLeft > 0; ++i, --effectRampLeft)
+        effect[i] *= (float) (fadeLength - effectRampLeft) / (float) fadeLength;
+
+    // The direct guitar: one channel from a mono track (the other side is the same), two (one bar for
+    // both) from a stereo one, in either mode.
+    {
         float* channels[] = { inL, inR };
-        glideProcessor.processWithBar(channels, twoInputs ? 2 : 1, num, w, bar);
+        dryBender.process(channels, twoInputs ? 2 : 1, num, w, bar, bends.dry);
+        if (!twoInputs)
+            juce::FloatVectorOperations::copy(inR, inL, num);
     }
 
     for (const float* ch : { inL, inR })
@@ -604,14 +627,32 @@ void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start,
 
     float* l = buffer.getWritePointer(0, start);
     float* r = buffer.getNumChannels() > 1 ? buffer.getWritePointer(1, start) : work.getWritePointer(3);
-    spxEngine.process(inL, inR, l, r, num, s, holdHeard ? holdGate : nullptr);
+    float* wetL = work.getWritePointer(8);
+    float* wetR = work.getWritePointer(9);
+    spxEngine.process(inL, inR, effect, l, r, wetL, wetR, num, s);
     raiseTo(wetPeak, s.bypass ? 0.0f : spxEngine.takeWetPeak());
-
-    if (post)
+    if (gateBenderAfter)
     {
-        float* channels[] = { l, r };
-        glideProcessor.processWithBar(channels, 2, num, w, bar);
+        // BEND OUT: the whole reverb, and HOLD in it, moves at once.
+        float* channels[] = { wetL, wetR };
+        gateBender.process(channels, 2, num, w, bar, bends.gate);
     }
+    if (moveFadeLeft > 0)
+    {
+        // The gate's bender is moving: the effect fades out, stays silent, and fades back in.
+        const int silent = getLatencySamples();
+        for (int i = 0; i < num; ++i)
+        {
+            const int left = moveFadeLeft - i;
+            const float gain = left > fadeLength + silent ? (float) (left - fadeLength - silent) / (float) fadeLength
+                               : left > fadeLength      ? 0.0f
+                                                        : (float) (fadeLength - left) / (float) fadeLength;
+            wetL[i] *= gain;
+            wetR[i] *= gain;
+        }
+    }
+    juce::FloatVectorOperations::add(l, wetL, num);
+    juce::FloatVectorOperations::add(r, wetR, num);
     if (holdHeard)
     {
         juce::FloatVectorOperations::add(l, holdL, num);

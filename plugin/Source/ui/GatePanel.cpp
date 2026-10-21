@@ -157,7 +157,11 @@ void GateDisplay::paint(juce::Graphics& g)
     for (float y = plot.getY(); y < plot.getBottom(); y += 5.0f)
         g.fillRect(cutX + 2.0f, y, 1.0f, 2.5f);
 
-    drawReadout(g, on ? juce::String("REVERSE") : juce::String("GATE OFF"), { 12.0f, 6.0f, 120.0f, 22.0f }, t.ink.withAlpha(on ? 0.8f : kOffInkAlpha));
+    // Off, the screen says so with the module's own name (if it fits beside the length).
+    const juce::String offText = juce::String(names::reverseGate) + " OFF";
+    const float titleWidth = bounds.getWidth() - 160.0f;
+    drawReadout(g, on ? juce::String("REVERSE") : (readoutWidth(offText) <= titleWidth ? offText : juce::String("OFF")),
+                { 12.0f, 6.0f, titleWidth, 22.0f }, t.ink.withAlpha(on ? 0.8f : kOffInkAlpha));
     drawReadout(g, timeText(lengthMs), { bounds.getRight() - 132.0f, 6.0f, 120.0f, 22.0f }, ink, juce::Justification::right, true, true);
     const juce::Rectangle<float> axis { plot.getX(), plot.getBottom() + 6.0f, plot.getWidth(), 14.0f };
     drawReadout(g, "PRE " + timeText(s.delayMs), axis, t.ink.withAlpha(on ? 0.9f : 0.65f));
@@ -167,7 +171,7 @@ void GateDisplay::paint(juce::Graphics& g)
 // --- GatePanel ---
 
 GatePanel::GatePanel(Glide90Processor& p)
-    : ModulePanel("Reverse Gate"), on(p.state(), ids::gateOn, "ON"), display(p),
+    : ModulePanel(names::reverseGate), on(p.state(), ids::gateOn, "ON"), display(p),
       roomSize(p.state(), ids::gateRoomSize, "ROOM SIZE", Knob::Size::Hero), liveness(p.state(), ids::gateLiveness, "LIVENESS"),
       delay(p.state(), ids::gatePreDelay, "PRE-DELAY"), lpf(p.state(), ids::gateLpf, "LPF"), mix(p.state(), ids::gateMix, "MIX")
 {
@@ -202,42 +206,34 @@ void GatePanel::resized()
     mix.setBounds(knobX(2), kRow2, w, h);
 }
 
-// --- PickLight ---
+// --- PickSense ---
 
-PickLight::PickLight(std::function<int()> count) : picksHeard(std::move(count)) {}
+PickSense::PickSense(juce::AudioProcessorValueTreeState& state, const char* paramId, std::function<int()> count)
+    : dial(state, paramId, "PICK SENS"), picksHeard(std::move(count))
+{
+    addAndMakeVisible(dial);
+}
 
-void PickLight::frame(double seconds)
+void PickSense::resized()
+{
+    dial.setBounds(getLocalBounds());
+}
+
+void PickSense::frame(double seconds)
 {
     const int now = picksHeard ? picksHeard() : 0;
     if (seen >= 0 && now != seen)
         litUntil = seconds + 0.08;
     seen = now;
-    if (const bool shouldBeLit = seconds < litUntil; shouldBeLit != lit)
+    // Lit at once, held for a moment, then fading quickly.
+    const float dt = lastFrame > 0.0 ? (float) juce::jlimit(0.0, 0.1, seconds - lastFrame) : 0.0f;
+    lastFrame = seconds;
+    const float target = seconds < litUntil ? 1.0f : juce::jmax(0.0f, flash - dt / 0.2f);
+    if (!juce::exactlyEqual(target, flash))
     {
-        lit = shouldBeLit;
-        repaint();
+        flash = target;
+        dial.setFlash(flash);
     }
-}
-
-void PickLight::paint(juce::Graphics& g)
-{
-    // Round, unlike the meter's segments above it: a light of its own.
-    const auto& t = theme();
-    const auto dot = getLocalBounds().toFloat().reduced(1.0f);
-    if (lit)
-    {
-        g.setColour(t.accent.withAlpha(0.35f));
-        g.fillEllipse(dot.expanded(1.0f));
-        g.setColour(t.accent);
-        g.fillEllipse(dot.reduced(1.0f));
-    }
-    else
-    {
-        g.setColour(t.textDim.withAlpha(0.25f));
-        g.fillEllipse(dot.reduced(1.0f));
-    }
-    g.setColour(t.textDim.withAlpha(0.6f));
-    g.drawEllipse(dot, 1.0f);
 }
 
 // --- IoColumn ---
@@ -253,18 +249,14 @@ IoColumn::IoColumn(juce::AudioProcessorValueTreeState& state, const char* paramI
     addAndMakeVisible(mode);
 }
 
-void IoColumn::addPickSense(juce::AudioProcessorValueTreeState& state, const char* paramId, std::function<int()> picksHeard)
+void IoColumn::markClip()
 {
-    pick = std::make_unique<Knob>(state, paramId, "PICK SENS");
-    light = std::make_unique<PickLight>(std::move(picksHeard));
-    addAndMakeVisible(*pick);
-    addAndMakeVisible(*light);
-    resized();
+    clip = true;
+    repaint();
 }
 
-void IoColumn::setKnobRows(int pickTop, int levelTop)
+void IoColumn::setKnobRow(int levelTop)
 {
-    pickRow = pickTop;
     levelRow = levelTop;
     resized();
     repaint();
@@ -290,9 +282,9 @@ void IoColumn::paint(juce::Graphics& g)
     {
         const float y = m.getY() + meter.markY(db);
         // The input meter shows the reverse gate's A/D: its top is where that clips, a warning.
-        const bool clip = db >= 0.0f && pick != nullptr;
-        g.setColour(clip ? t.text : t.textDim.interpolatedWith(t.text, 0.3f));
-        g.drawText(clip ? themed("CLIP") : juce::String(juce::roundToInt(db)),
+        const bool clipMark = db >= 0.0f && clip;
+        g.setColour(clipMark ? t.text : t.textDim.interpolatedWith(t.text, 0.3f));
+        g.drawText(clipMark ? themed("CLIP") : juce::String(juce::roundToInt(db)),
                    scaleArea().withY(y - 6.0f).withHeight(12.0f), juce::Justification::centredLeft, false);
     }
 }
@@ -311,14 +303,7 @@ void IoColumn::resized()
     const int gap = ModulePanel::kRow2 - ModulePanel::kRuleY + 14;
     const int knobX = (getWidth() - Knob::kColumn) / 2;
     knob.setBounds(knobX, levelRow, Knob::kColumn, Knob::kHeight);
-    int firstKnob = levelRow;
-    if (pick != nullptr)
-    {
-        pick->setBounds(knobX, pickRow, Knob::kColumn, Knob::kHeight);
-        light->setBounds(juce::Rectangle<int>(10, 10).withCentre({ getWidth() / 2, pickRow - gap / 2 }));
-        firstKnob = pickRow - 10; // room between the meter and the light
-    }
-    meter.setBounds(26, meterTop, 14, juce::jmax(0, firstKnob - gap - meterTop));
+    meter.setBounds(26, meterTop, 14, juce::jmax(0, levelRow - gap - meterTop));
 }
 
 } // namespace glide90::ui

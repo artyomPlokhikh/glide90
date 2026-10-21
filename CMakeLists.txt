@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 # Release builds take the version from the tag (CI passes -DGLIDE90_VERSION=x.y.z).
-set(GLIDE90_VERSION "0.1.0" CACHE STRING "Plugin version, x.y.z")
+set(GLIDE90_VERSION "0.2.0" CACHE STRING "Plugin version, x.y.z")
 project(Glide90 VERSION ${GLIDE90_VERSION} LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)

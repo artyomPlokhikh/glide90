@@ -19,20 +19,25 @@ struct SpxSettings
 };
 
 // The whole SPX90 at unity gain (the plugin's INPUT and OUTPUT do the levels): mono or stereo in,
-// stereo out, at the host rate. The unit has one input: with two,
-// the effect hears their sum and the direct signal keeps its sides. Internally the signal is resampled to
-// the DSP rate, filtered by the measured converter response, quantised to 16 bits, processed by
-// the selected program and mixed with the (equally band-limited) direct signal, as in the unit.
+// stereo out, at the host rate. The unit has one input: with two, the effect hears their sum and the
+// direct signal keeps its sides. Internally the signal is resampled to the DSP rate, filtered by the
+// measured converter response, quantised to 16 bits, processed by the selected program and mixed
+// with the (equally band-limited) direct signal, as in the unit.
 class SpxEngine
 {
 public:
     void prepare(double hostRate, int maxBlockSize);
     void reset();
+    // Clears the effect's tail only; the direct signal plays on undisturbed.
+    void resetEffect();
 
-    // `send`, when given, is heard by the effect only (added to what it hears, after the A/D), never
-    // by the direct signal: a return from HOLD into the reverse gate.
-    void process(const float* inL, const float* inR, float* outL, float* outR, int numSamples, const SpxSettings& s,
-                 const float* send = nullptr);
+    // The direct signal and the effect come out apart (each after BALANCE, the D/A and the analog
+    // bypass), so something can happen to one and not the other, and the effect hears its own input:
+    // `effectIn` (mono) instead of the inputs' sum. direct + wet is the unit's output.
+    void process(const float* directL, const float* directR, const float* effectIn, float* directOutL,
+                 float* directOutR, float* wetOutL, float* wetOutR, int numSamples, const SpxSettings& s);
+    // As the unit: the effect hears the inputs' sum, out comes direct + wet.
+    void process(const float* inL, const float* inR, float* outL, float* outR, int numSamples, const SpxSettings& s);
     void process(const float* monoIn, float* outL, float* outR, int numSamples, const SpxSettings& s)
     {
         process(monoIn, monoIn, outL, outR, numSamples, s);
@@ -51,14 +56,13 @@ private:
     double hostRate = 48000.0;
     int latency = 0;
 
-    Downsampler downL, downR, downSend;
-    Upsampler upL, upR;
-    ConverterFilter<tables::converterIn> adcFilterL, adcFilterR, adcFilterSend;
-    ConverterFilter<tables::converterOut> dacFilterL, dacFilterR;
+    Downsampler downL, downR, downEffect;
+    Upsampler upL, upR, upWetL, upWetR;
+    ConverterFilter<tables::converterIn> adcFilterL, adcFilterR, adcFilterEffect;
+    ConverterFilter<tables::converterOut> dacFilterL, dacFilterR, dacFilterWetL, dacFilterWetR;
     ErEngine er;
 
-    std::vector<float> dspInL, dspInR, dspSum, dspWetL, dspWetR, dspOutL, dspOutR, dspSend;
-    bool sendActive = false; // the send's chain is running, in step with the inputs
+    std::vector<float> dspInL, dspInR, dspEffect, dspWetL, dspWetR, dspOutL, dspOutR, dspOutWetL, dspOutWetR;
 
     // Smoothed at the DSP rate.
     float balance = 1.0f;
@@ -71,7 +75,7 @@ private:
     int bypassPos = 0;
     float bypassMix = 0.0f;
     float bypassStep = 0.0f;
-    std::vector<float> scratchL, scratchR;
+    std::vector<float> scratchL, scratchR, scratchEffect;
 };
 
 } // namespace spx

@@ -8,7 +8,7 @@ namespace glide90::ui
 {
 
 GlidePanel::GlidePanel(Glide90Processor& p)
-    : ModulePanel("Glide"), proc(p), on(p.state(), ids::glideOn, "ON"),
+    : ModulePanel(names::glide), proc(p), on(p.state(), ids::glideOn, "ON"),
       mode(p.state(), ids::glideMode, "MODE", { "FREE", "SYNC", "TRIGGER", "MANUAL" }, { 0, 1, 2, 3 }),
       direction(p.state(), ids::glideDirection, "DIRECTION", { "UP", "BOTH", "DOWN" }, { 2, 1, 0 }), display(p),
       period(p.state(), ids::glidePeriod, "RATE", Knob::Size::Large),
@@ -77,7 +77,7 @@ GlidePanel::GlidePanel(Glide90Processor& p)
     twinDetune.setTooltip("How sharp the second string is tuned: moved by the same bar, the two beat against each "
                           "other");
     twinLevel.setTooltip("How much of the second string is heard (the sum keeps its loudness)");
-    mix.setTooltip("Glide wet / dry. At 0 the guitar is not bent, but the bar still moves HOLD (FOLLOW)");
+    mix.setTooltip("Glide wet / dry, wherever the route strip says it bends. At 0 only HOLD still follows the bar");
     dynamics.setTooltip("How much a strike's strength sets the depth: 0 = every strike bends the full DEPTH, "
                         "100 = a soft strike bends a little, a hard one all the way (pick attack or MIDI velocity)");
     direction.setTooltip("DOWN: like a Jazzmaster bar. BOTH: around the open pitch. UP: above it");

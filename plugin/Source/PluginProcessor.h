@@ -139,8 +139,14 @@ private:
     juce::ValueTree slotState();
     void applySlotState(const juce::ValueTree& slot, bool missingToDefault, bool gestures);
     void captureBaseline();
+    // Which benders bend in this block (HOLD's own bend is in its settings).
+    struct Bends
+    {
+        bool dry = false, gate = false;
+    };
     void processChunk(juce::AudioBuffer<float>& buffer, int start, int num, const spx::SpxSettings& spxSettings,
-                      sway::SwaySettings glide, int midiNoteAt, const hold::HoldSettings& holdSettings);
+                      sway::SwaySettings glide, int midiNoteAt, const hold::HoldSettings& holdSettings,
+                      const Bends& bends);
 
     std::array<juce::UndoManager, 2> undos;
     int openEdits = 0;  // gestures (or beginEdit) under way
@@ -163,7 +169,10 @@ private:
     std::array<sway::Shape, sway::kShapePresetNames.size()> presetShapes;
 
     spx::SpxEngine spxEngine;
+    // The glide: the bar (from glideProcessor) and the paths it can bend. The gate's bender sits before
+    // the reverb (BEND IN) or after it (BEND OUT); either way every path is one bender's latency late.
     sway::SwayProcessor glideProcessor;
+    sway::Bender dryBender, gateBender;
     hold::HoldEngine holdEngine;
     // MIDI notes of the block for HOLD, and those of the piece being processed.
     static constexpr int kMaxHoldMidi = 64;
@@ -183,10 +192,13 @@ private:
     int bypassPos = 0;
     bool wasBypassed = false;
     int fadeLength = 1;
-    // The order that plays (it follows glide_position through a fade) and what is left of the fade.
-    bool activePost = false;
-    int orderFadeLeft = 0;
-    int inputRampLeft = 0; // the input fading into engines just cleared
+    // Where the gate's bender sits (after the reverb: bend_gate OUT; it stays put for OFF) and what is
+    // left of moving it: the effect fades out, the reverb and the bender are cleared, the effect stays
+    // silent until the new way's output arrives and fades back in. The direct signal plays on.
+    bool gateBenderAfter = false;
+    int moveFadeLeft = 0;
+    int inputRampLeft = 0;  // the input fading into engines just cleared
+    int effectRampLeft = 0; // the effect's input fading into a reverb just cleared
     int bypassFadeLeft = 0; // still processing while fading into the bypass
     int resumeLeft = 0;     // the latency and then a fade, after the bypass
 
@@ -202,9 +214,9 @@ private:
         std::atomic<float>*gateRoomSize, *gateLiveness, *gatePreDelay, *gateLpf, *gateMix, *output, *input, *gateOn,
             *glideOn, *glideMode, *glidePeriod, *glideDivision, *glideDepth, *glideDirection,
             *glideRandom, *glideSmooth, *glideShape, *glideTriggerSource, *pickSensitivity, *glideManualSource,
-            *glideBar, *glideTwinDetune, *glideTwinLevel, *glideMix, *glidePosition, *outputMode, *glideDynamics,
-            *inputMode, *holdOn, *holdMode, *holdFreeze, *holdFollow, *holdSize, *holdDensity,
-            *holdSmear, *holdSpread, *holdReverse, *holdDuck, *holdDecay, *holdLevel, *holdFeed, *holdCharacter,
+            *glideBar, *glideTwinDetune, *glideTwinLevel, *glideMix, *routing, *outputMode, *glideDynamics,
+            *inputMode, *holdOn, *holdMode, *holdFreeze, *holdSize, *holdDensity,
+            *holdSmear, *holdSpread, *holdReverse, *holdDuck, *holdDecay, *holdLevel, *holdCharacter,
             *holdRoot;
     } raw;
 

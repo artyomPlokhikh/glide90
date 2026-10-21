@@ -11,7 +11,7 @@ namespace
 {
 
 constexpr double kLn2Over1200 = 0.000577622650466621;
-// The fastest a grain may read (the bar up 300 cents at FOLLOW 200 %, plus SPREAD): held material
+// The fastest a grain may read (the bar up 300 cents, plus SPREAD, with room to spare): held material
 // is laid out so that a grain at this speed still has enough of it.
 constexpr double kMaxRatio = 1.6;
 constexpr double kPi = 3.14159265358979323846;
@@ -94,7 +94,7 @@ void HoldEngine::reset()
         g.active = false;
     spawnIn = 0;
     lastGrain = -1;
-    enabledMix = followMix = levelGain = gate = 0.0f;
+    enabledMix = bendMix = levelGain = gate = 0.0f;
     snapFeed = true;
     duckGain = 1.0f;
     env = 0.0f;
@@ -322,7 +322,7 @@ void HoldEngine::process(const float* dry, const float* barCents, int numSamples
                                : 1.0f;
     const float norm = 1.0f / std::sqrt(0.5f * (float) density);
     const float enabledTarget = s.enabled ? 1.0f : 0.0f;
-    const float followTarget = s.followBar ? 1.0f : 0.0f;
+    const float bendTarget = s.bend ? 1.0f : 0.0f;
     const float feedTarget = s.feed == Feed::Out ? 1.0f : 0.0f;
     if (snapFeed)
     {
@@ -330,7 +330,6 @@ void HoldEngine::process(const float* dry, const float* barCents, int numSamples
         snapFeed = false;
     }
     const float duck = std::clamp(s.duck, 0.0f, 1.0f);
-    const float follow = std::clamp(s.follow, 0.0f, 2.0f);
     const float level = std::clamp(s.level, 0.0f, 1.0f);
     const bool captures = s.mode == Mode::Strike || s.mode == Mode::Midi;
     const bool latchedNow = s.mode == Mode::Latch && s.latched;
@@ -453,11 +452,11 @@ void HoldEngine::process(const float* dry, const float* barCents, int numSamples
         duckGain += duckCoeff * (1.0f - duck * std::min(1.0f, env / loudest) - duckGain);
 
         enabledMix += std::clamp(enabledTarget - enabledMix, -rampStep, rampStep);
-        followMix += std::clamp(followTarget - followMix, -rampStep, rampStep);
+        bendMix += std::clamp(bendTarget - bendMix, -rampStep, rampStep);
         feedMix += std::clamp(feedTarget - feedMix, -rampStep, rampStep);
         levelGain += levelCoeff * (level - levelGain);
 
-        const double cents = (double) barCents[n] * follow * followMix + (s.mode == Mode::Midi ? noteCents : 0.0f);
+        const double cents = (double) barCents[n] * bendMix + (s.mode == Mode::Midi ? noteCents : 0.0f);
         const double ratio = std::exp(cents * kLn2Over1200);
 
         const bool hasSource = s.mode == Mode::Live || current >= 0;

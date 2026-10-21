@@ -20,23 +20,17 @@ void SpxEngine::prepare(double rate, int maxBlockSize)
     hostRate = rate;
     downL.prepare(hostRate, kDspRate);
     downR.prepare(hostRate, kDspRate);
-    downSend.prepare(hostRate, kDspRate);
+    downEffect.prepare(hostRate, kDspRate);
     const int lag = 8 + (int) std::ceil(kDspRate / hostRate); // block-to-block jitter margin
-    upL.prepare(kDspRate, hostRate, lag);
-    upR.prepare(kDspRate, hostRate, lag);
+    for (auto* up : { &upL, &upR, &upWetL, &upWetR })
+        up->prepare(kDspRate, hostRate, lag);
     er.prepare();
 
     const size_t dspMax = (size_t) std::ceil(maxBlockSize * kDspRate / hostRate) + 4;
-    for (auto* v : { &dspInL, &dspInR, &dspSum, &dspWetL, &dspWetR, &dspOutL, &dspOutR, &dspSend })
+    for (auto* v : { &dspInL, &dspInR, &dspEffect, &dspWetL, &dspWetR, &dspOutL, &dspOutR, &dspOutWetL, &dspOutWetR })
         v->reserve(dspMax);
-    {
-        // Grow the send's history once here rather than on the audio thread.
-        const std::vector<float> silence((size_t) maxBlockSize, 0.0f);
-        downSend.process(silence.data(), maxBlockSize, dspSend);
-        dspSend.clear();
-    }
-    scratchL.resize((size_t) maxBlockSize);
-    scratchR.resize((size_t) maxBlockSize);
+    for (auto* v : { &scratchL, &scratchR, &scratchEffect })
+        v->resize((size_t) maxBlockSize);
 
     smoothCoeff = (float) (1.0 - std::exp(-1.0 / (kSmoothingMs * 0.001 * kDspRate)));
     bypassStep = (float) (1.0 / (kBypassFadeMs * 0.001 * hostRate));
@@ -53,20 +47,28 @@ void SpxEngine::reset()
 {
     downL.reset();
     downR.reset();
-    downSend.reset();
-    adcFilterSend.reset();
-    sendActive = false;
-    upL.reset();
-    upR.reset();
+    downEffect.reset();
+    for (auto* up : { &upL, &upR, &upWetL, &upWetR })
+        up->reset();
     er.reset();
     adcFilterL.reset();
     adcFilterR.reset();
+    adcFilterEffect.reset();
     dacFilterL.reset();
     dacFilterR.reset();
+    dacFilterWetL.reset();
+    dacFilterWetR.reset();
     std::fill(bypassDelayL.begin(), bypassDelayL.end(), 0.0f);
     std::fill(bypassDelayR.begin(), bypassDelayR.end(), 0.0f);
     bypassPos = 0;
     snapParameters = true;
+}
+
+void SpxEngine::resetEffect()
+{
+    // The tail is in the reflections' delay lines; the converters around them hold a millisecond at
+    // most, gone long before anything is heard again.
+    er.reset();
 }
 
 int SpxEngine::measureLatency()
@@ -109,26 +111,22 @@ void SpxEngine::processDsp(int numDsp, const SpxSettings& s)
         snapParameters = false;
     }
 
-    // Input stage: anti-alias filter, then the 16-bit A/D. The effect hears the sum
-    // of the two inputs (the unit has one); with the same signal on both, that is the signal itself.
-    dspSum.resize((size_t) numDsp);
+    // Input stage: anti-alias filter, then the 16-bit A/D, for the direct signal and for what the
+    // effect hears.
     for (int n = 0; n < numDsp; ++n)
     {
         const auto i = (size_t) n;
         dspInL[i] = quantise16(adcFilterL.process(dspInL[i]));
         dspInR[i] = quantise16(adcFilterR.process(dspInR[i]));
-        dspSum[i] = 0.5f * (dspInL[i] + dspInR[i]);
+        dspEffect[i] = quantise16(adcFilterEffect.process(dspEffect[i]));
     }
-    if (sendActive)
-        for (int n = 0; n < numDsp; ++n)
-            dspSum[(size_t) n] += quantise16(adcFilterSend.process(dspSend[(size_t) n]));
 
     dspWetL.resize((size_t) numDsp);
     dspWetR.resize((size_t) numDsp);
     if (useEr)
     {
         er.setSettings(s.er);
-        er.process(dspSum.data(), dspWetL.data(), dspWetR.data(), numDsp);
+        er.process(dspEffect.data(), dspWetL.data(), dspWetR.data(), numDsp);
         for (int n = 0; n < numDsp; ++n)
             wetPeak = std::max({ wetPeak, std::abs(dspWetL[(size_t) n]), std::abs(dspWetR[(size_t) n]) });
     }
@@ -139,59 +137,77 @@ void SpxEngine::processDsp(int numDsp, const SpxSettings& s)
     }
 
     // BALANCE is digital; the direct signal also comes out of the D/A.
-    dspOutL.resize((size_t) numDsp);
-    dspOutR.resize((size_t) numDsp);
+    for (auto* v : { &dspOutL, &dspOutR, &dspOutWetL, &dspOutWetR })
+        v->resize((size_t) numDsp);
     for (int n = 0; n < numDsp; ++n)
     {
+        const auto i = (size_t) n;
         balance += smoothCoeff * (targetBal - balance);
-        const float l = dspInL[(size_t) n] * (1.0f - balance) + dspWetL[(size_t) n] * balance;
-        const float r = dspInR[(size_t) n] * (1.0f - balance) + dspWetR[(size_t) n] * balance;
-        dspOutL[(size_t) n] = dacFilterL.process(quantise16(l));
-        dspOutR[(size_t) n] = dacFilterR.process(quantise16(r));
+        dspOutL[i] = dacFilterL.process(quantise16(dspInL[i] * (1.0f - balance)));
+        dspOutR[i] = dacFilterR.process(quantise16(dspInR[i] * (1.0f - balance)));
+        dspOutWetL[i] = dacFilterWetL.process(quantise16(dspWetL[i] * balance));
+        dspOutWetR[i] = dacFilterWetR.process(quantise16(dspWetR[i] * balance));
     }
 }
 
-void SpxEngine::process(const float* inL, const float* inR, float* outL, float* outR, int numSamples,
-                        const SpxSettings& s, const float* send)
+void SpxEngine::process(const float* directL, const float* directR, const float* effectIn, float* directOutL,
+                        float* directOutR, float* wetOutL, float* wetOutR, int numSamples, const SpxSettings& s)
 {
-    if (send != nullptr && !sendActive)
-    {
-        downSend.restartAlongside(downL);
-        adcFilterSend.reset();
-        sendActive = true;
-    }
-    else if (send == nullptr)
-        sendActive = false;
-
     dspInL.clear();
     dspInR.clear();
-    dspSend.clear();
-    downL.process(inL, numSamples, dspInL);
-    downR.process(inR, numSamples, dspInR);
-    if (sendActive)
-        downSend.process(send, numSamples, dspSend);
+    dspEffect.clear();
+    downL.process(directL, numSamples, dspInL);
+    downR.process(directR, numSamples, dspInR);
+    downEffect.process(effectIn, numSamples, dspEffect);
     const int numDsp = (int) dspInL.size();
     processDsp(numDsp, s);
 
     upL.push(dspOutL.data(), numDsp);
     upR.push(dspOutR.data(), numDsp);
-    upL.pull(outL, numSamples);
-    upR.pull(outR, numSamples);
+    upWetL.push(dspOutWetL.data(), numDsp);
+    upWetR.push(dspOutWetR.data(), numDsp);
+    upL.pull(directOutL, numSamples);
+    upR.pull(directOutR, numSamples);
+    upWetL.pull(wetOutL, numSamples);
+    upWetR.pull(wetOutR, numSamples);
 
-    // Analog bypass, kept time-aligned with the processed path and crossfaded on toggling.
+    // Analog bypass, kept time-aligned with the processed path and crossfaded on toggling: the direct
+    // signal takes the analog path, the effect goes quiet.
     const float target = s.bypass ? 1.0f : 0.0f;
     const int size = (int) bypassDelayL.size();
     for (int n = 0; n < numSamples; ++n)
     {
-        bypassDelayL[(size_t) bypassPos] = inL[n];
-        bypassDelayR[(size_t) bypassPos] = inR[n];
+        bypassDelayL[(size_t) bypassPos] = directL[n];
+        bypassDelayR[(size_t) bypassPos] = directR[n];
         bypassPos = (bypassPos + 1) % size;
         const float delayedL = bypassDelayL[(size_t) bypassPos], delayedR = bypassDelayR[(size_t) bypassPos];
         bypassMix = target > bypassMix ? std::min(target, bypassMix + bypassStep) : std::max(target, bypassMix - bypassStep);
         if (bypassMix > 0.0f)
         {
-            outL[n] = outL[n] * (1.0f - bypassMix) + delayedL * bypassMix;
-            outR[n] = outR[n] * (1.0f - bypassMix) + delayedR * bypassMix;
+            const float processed = 1.0f - bypassMix;
+            directOutL[n] = directOutL[n] * processed + delayedL * bypassMix;
+            directOutR[n] = directOutR[n] * processed + delayedR * bypassMix;
+            wetOutL[n] *= processed;
+            wetOutR[n] *= processed;
+        }
+    }
+}
+
+void SpxEngine::process(const float* inL, const float* inR, float* outL, float* outR, int numSamples,
+                        const SpxSettings& s)
+{
+    const int most = (int) scratchEffect.size();
+    for (int start = 0; start < numSamples; start += most)
+    {
+        const int num = std::min(most, numSamples - start);
+        for (int n = 0; n < num; ++n)
+            scratchEffect[(size_t) n] = 0.5f * (inL[start + n] + inR[start + n]);
+        process(inL + start, inR + start, scratchEffect.data(), outL + start, outR + start, scratchL.data(),
+                scratchR.data(), num, s);
+        for (int n = 0; n < num; ++n)
+        {
+            outL[start + n] += scratchL[(size_t) n];
+            outR[start + n] += scratchR[(size_t) n];
         }
     }
 }

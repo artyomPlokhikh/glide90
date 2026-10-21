@@ -107,12 +107,6 @@ void Downsampler::process(const float* in, int numIn, std::vector<float>& out)
     nextTime -= drop;
 }
 
-void Downsampler::restartAlongside(const Downsampler& other)
-{
-    history.assign(other.history.size(), 0.0f);
-    nextTime = other.nextTime;
-}
-
 void Upsampler::prepare(double dspRate, double hostRate, int lagDsp)
 {
     step = dspRate / hostRate;

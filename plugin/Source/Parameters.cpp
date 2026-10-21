@@ -173,7 +173,7 @@ std::optional<float> parseText(const juce::String& id, const juce::String& text,
 
     // Shown as percentages, typed as percentages: "50" and "50 %" are both one half.
     if (isOneOf(id, { ids::gateMix, ids::glideRandom, ids::glideSmooth, ids::pickSensitivity, ids::glideDynamics,
-                      ids::glideBar, ids::glideTwinLevel, ids::glideMix, ids::holdFollow, ids::holdReverse, ids::holdDuck }))
+                      ids::glideBar, ids::glideTwinLevel, ids::glideMix, ids::holdReverse, ids::holdDuck }))
         return (float) (v / 100.0);
     // Milliseconds, or seconds when said so ("1.2 s").
     if (isOneOf(id, { ids::gatePreDelay, ids::glidePeriod, ids::holdSize, ids::holdSmear }))
@@ -343,14 +343,15 @@ Layout createParameterLayout()
                           [](float v) { return juce::String(v, 1) + " ct"; }));
     layout.add(percentParam(ids::glideTwinLevel, "Glide Twin Level", 0.0f));
     layout.add(percentParam(ids::glideMix, "Glide Mix", 1.0f));
-    layout.add(choiceParam(ids::glidePosition, "Glide Position", { "PRE", "POST" }, 0));
+    juce::StringArray routings;
+    for (const auto& r : kRoutings)
+        routings.add(r.name);
+    layout.add(choiceParam(ids::routing, "Routing", routings, 0));
 
     // HOLD: off by default.
     layout.add(boolParam(ids::holdOn, "Hold On", false));
     layout.add(choiceParam(ids::holdMode, "Hold Mode", { "STRIKE", "LATCH", "LIVE", "MIDI" }, 0));
     layout.add(boolParam(ids::holdFreeze, "Hold Freeze", false));
-    layout.add(floatParam(ids::holdFollow, "Hold Follow", NormalisableRange<float>(0.0f, 2.0f, 0.01f), 1.0f,
-                          [](float v) { return juce::String(juce::roundToInt(v * 100.0f)) + "%"; }));
     const auto ms = [](float v) { return juce::String(juce::roundToInt(v)) + " ms"; };
     layout.add(floatParam(ids::holdSize, "Hold Size", steppedRange(20.0f, 500.0f, 1.0f, 150.0f), 180.0f, ms));
     layout.add(intParam(ids::holdDensity, "Hold Density", 1, 8, 2));
@@ -365,7 +366,6 @@ Layout createParameterLayout()
         return v < 10.0f ? juce::String(v, 1) + " s" : juce::String(juce::roundToInt(v)) + " s";
     }));
     layout.add(dbParam(ids::holdLevel, "Hold Level", kOffDb, kHoldLevelMaxDb, -3.0f));
-    layout.add(choiceParam(ids::holdFeed, "Hold Feed", { "GATE", "OUT" }, 0));
     layout.add(choiceParam(ids::holdCharacter, "Hold Character", { "CLEAN", "12-BIT" }, 0));
     layout.add(intParam(ids::holdRoot, "Hold Root", 24, 96, 60, [](int v) { return noteName(v); }));
     return layout;

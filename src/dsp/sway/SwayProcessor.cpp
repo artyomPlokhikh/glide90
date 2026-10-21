@@ -182,9 +182,8 @@ void DualHeadShifter::process(const float* in, float* out, int numChannels, floa
         active = incoming;
 }
 
-void SwayProcessor::prepare(double sampleRate)
+void Bender::prepare(double sampleRate)
 {
-    bar.prepare(sampleRate);
     main.prepare(sampleRate);
     twin.prepare(sampleRate);
     latency = (int) std::lround(main.restingDelay());
@@ -194,14 +193,75 @@ void SwayProcessor::prepare(double sampleRate)
     reset();
 }
 
-void SwayProcessor::reset()
+void Bender::reset()
 {
-    bar.reset();
     main.reset();
     twin.reset();
     for (auto& d : dryDelay)
         d.reset();
     twinMix = 0.0f;
+}
+
+void Bender::process(float* const* channels, int numChannels, int numSamples, const SwaySettings& s,
+                     const float* barCents, bool bend)
+{
+    numChannels = std::clamp(numChannels, 1, kMaxChannels);
+    const float targetMix = bend ? std::clamp(s.mix, 0.0f, 1.0f) : 0.0f;
+    const float targetTwin = std::clamp(s.twinLevel, 0.0f, 1.0f);
+    // The twin string responds a little differently to the same bar movement.
+    constexpr float kTwinBarScale = 0.85f;
+
+    for (int n = 0; n < numSamples; ++n)
+    {
+        float x[kMaxChannels] {}, dry[kMaxChannels] {}, wet[kMaxChannels] {}, second[kMaxChannels] {};
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            x[ch] = channels[ch][n];
+            dryDelay[ch].push(x[ch]);
+            dry[ch] = dryDelay[ch].read((double) latency);
+        }
+
+        enabledMix += std::clamp(targetMix - enabledMix, -mixStep, mixStep);
+        twinMix += std::clamp(targetTwin - twinMix, -mixStep, mixStep);
+        const float cents = barCents[n];
+
+        // Voices that are not heard keep their delay lines filled, so they come in seamlessly.
+        if (enabledMix <= 0.0f && targetMix <= 0.0f)
+        {
+            main.idle(x, numChannels);
+            twin.idle(x, numChannels);
+            for (int ch = 0; ch < numChannels; ++ch)
+                channels[ch][n] = dry[ch];
+            continue;
+        }
+
+        main.process(x, wet, numChannels, cents);
+        if (twinMix > 0.0f || targetTwin > 0.0f)
+        {
+            twin.process(x, second, numChannels, cents * kTwinBarScale + s.twinDetuneCents);
+            const float norm = 1.0f / (1.0f + 0.5f * twinMix);
+            for (int ch = 0; ch < numChannels; ++ch)
+                wet[ch] = (wet[ch] + twinMix * second[ch]) * norm;
+        }
+        else
+            twin.idle(x, numChannels);
+
+        for (int ch = 0; ch < numChannels; ++ch)
+            channels[ch][n] = dry[ch] + enabledMix * (wet[ch] - dry[ch]);
+    }
+}
+
+void SwayProcessor::prepare(double sampleRate)
+{
+    bar.prepare(sampleRate);
+    bender.prepare(sampleRate);
+    reset();
+}
+
+void SwayProcessor::reset()
+{
+    bar.reset();
+    bender.reset();
 }
 
 void SwayProcessor::process(float* const* channels, int numChannels, int numSamples, const SwaySettings& s,
@@ -240,56 +300,18 @@ void SwayProcessor::computeBar(const float* detector, int numSamples, const Sway
         bar.beginBlock(s);
     for (int n = 0; n < numSamples; ++n)
         centsOut[n] = bar.next(detector[n], n, s);
+    // Where the bar is, for the display: 0 while the glide is off. processWithBar() refines this to
+    // what the shifter applies.
+    if (numSamples > 0)
+        lastCents = s.enabled ? centsOut[numSamples - 1] : 0.0f;
 }
 
 void SwayProcessor::processWithBar(float* const* channels, int numChannels, int numSamples, const SwaySettings& s,
                                    const float* barCents)
 {
-    numChannels = std::clamp(numChannels, 1, kMaxChannels);
-    const float targetMix = s.enabled ? std::clamp(s.mix, 0.0f, 1.0f) : 0.0f;
-    const float targetTwin = std::clamp(s.twinLevel, 0.0f, 1.0f);
-    // The twin string responds a little differently to the same bar movement.
-    constexpr float kTwinBarScale = 0.85f;
-
-    for (int n = 0; n < numSamples; ++n)
-    {
-        float x[kMaxChannels] {}, dry[kMaxChannels] {}, wet[kMaxChannels] {}, second[kMaxChannels] {};
-        for (int ch = 0; ch < numChannels; ++ch)
-        {
-            x[ch] = channels[ch][n];
-            dryDelay[ch].push(x[ch]);
-            dry[ch] = dryDelay[ch].read((double) latency);
-        }
-
-        enabledMix += std::clamp(targetMix - enabledMix, -mixStep, mixStep);
-        twinMix += std::clamp(targetTwin - twinMix, -mixStep, mixStep);
-        const float cents = barCents[n];
-        lastCents = cents * enabledMix; // what is actually applied: 0 while off
-
-        // Voices that are not heard keep their delay lines filled, so they come in seamlessly.
-        if (enabledMix <= 0.0f && targetMix <= 0.0f)
-        {
-            main.idle(x, numChannels);
-            twin.idle(x, numChannels);
-            for (int ch = 0; ch < numChannels; ++ch)
-                channels[ch][n] = dry[ch];
-            continue;
-        }
-
-        main.process(x, wet, numChannels, cents);
-        if (twinMix > 0.0f || targetTwin > 0.0f)
-        {
-            twin.process(x, second, numChannels, cents * kTwinBarScale + s.twinDetuneCents);
-            const float norm = 1.0f / (1.0f + 0.5f * twinMix);
-            for (int ch = 0; ch < numChannels; ++ch)
-                wet[ch] = (wet[ch] + twinMix * second[ch]) * norm;
-        }
-        else
-            twin.idle(x, numChannels);
-
-        for (int ch = 0; ch < numChannels; ++ch)
-            channels[ch][n] = dry[ch] + enabledMix * (wet[ch] - dry[ch]);
-    }
+    bender.process(channels, numChannels, numSamples, s, barCents, s.enabled);
+    if (numSamples > 0)
+        lastCents = barCents[numSamples - 1] * bender.mix(); // what is actually applied: 0 while off
 }
 
 } // namespace sway

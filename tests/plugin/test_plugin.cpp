@@ -12,6 +12,7 @@
 #include "ui/HeaderBar.h"
 #include "ui/HoldPanel.h"
 #include "ui/PanelLookAndFeel.h"
+#include "ui/RoutingPanel.h"
 #include "ui/ShapeDisplay.h"
 
 #include <juce_events/juce_events.h>
@@ -28,6 +29,8 @@ namespace
 
 constexpr double kRate = 48000.0;
 constexpr int kBlock = 256;
+// Routings the tests use, by their place in glide90::kRoutings (the ROUTING test checks the names).
+constexpr float kIntoTheSwell = 0.0f, kBentTail = 1.0f, kHoldBeside = 4.0f;
 
 float plain(Glide90Processor& p, const char* id)
 {
@@ -320,87 +323,156 @@ TEST_CASE("GLIDE90_PROFILE=1 reports what painting the whole window costs in eac
     ui::setTheme(before);
 }
 
-TEST_CASE("dragging a module by its title bar to the other place turns the order round")
+TEST_CASE("the ROUTING strip: the arrows and the chart pick a routing, and every module is named as on its panel")
 {
+    namespace ui = glide90::ui;
+    namespace names = glide90::names;
     auto p = make();
     std::unique_ptr<juce::AudioProcessorEditor> editor(p->createEditor());
-    glide90::ui::GlidePanel* glidePanel = nullptr;
-    glide90::ui::GatePanel* gatePanel = nullptr;
+    ui::GlidePanel* glidePanel = nullptr;
+    ui::GatePanel* gatePanel = nullptr;
+    ui::HoldPanel* holdPanel = nullptr;
+    ui::RoutingPanel* routing = nullptr;
+    ui::PickSense* pickSense = nullptr;
+    std::vector<ui::IoColumn*> io;
     std::function<void(juce::Component&)> find = [&](juce::Component& c) {
-        if (auto* g = dynamic_cast<glide90::ui::GlidePanel*>(&c))
+        if (auto* g = dynamic_cast<ui::GlidePanel*>(&c))
             glidePanel = g;
-        if (auto* g = dynamic_cast<glide90::ui::GatePanel*>(&c))
+        if (auto* g = dynamic_cast<ui::GatePanel*>(&c))
             gatePanel = g;
+        if (auto* h = dynamic_cast<ui::HoldPanel*>(&c))
+            holdPanel = h;
+        if (auto* r = dynamic_cast<ui::RoutingPanel*>(&c))
+            routing = r;
+        if (auto* ps = dynamic_cast<ui::PickSense*>(&c))
+            pickSense = ps;
+        if (auto* column = dynamic_cast<ui::IoColumn*>(&c))
+            io.push_back(column);
         for (auto* child : c.getChildren())
             find(*child);
     };
     find(*editor);
     REQUIRE(glidePanel != nullptr);
     REQUIRE(gatePanel != nullptr);
-    auto settle = [] { juce::MessageManager::getInstance()->runDispatchLoopUntil(400); }; // the slides
-    auto glideFirst = [&] { return juce::roundToInt(plain(*p, ids::glidePosition)) == (int) glide90::GlidePosition::Pre; };
-    auto drag = [&](glide90::ui::ModulePanel& m, float dx, bool cancel) {
-        m.onDragStart();
-        for (int step = 1; step <= 10; ++step)
-            m.onDrag(dx * (float) step / 10.0f);
-        m.onDragEnd(cancel);
-        settle();
-    };
-    REQUIRE(glideFirst());
+    REQUIRE(holdPanel != nullptr);
+    REQUIRE(routing != nullptr);
+    REQUIRE(pickSense != nullptr);
+    REQUIRE(io.size() == 2);
+    // The strip over the modules and OUT, beside PICK SENS; the modules stay where they were.
     CHECK(glidePanel->getX() < gatePanel->getX());
+    CHECK(routing->getBottom() < glidePanel->getY());
+    CHECK(routing->getX() == glidePanel->getX());
+    CHECK(pickSense->getRight() < routing->getX());
+    CHECK(pickSense->getY() == routing->getY());
 
+    // The modules' names: the panels' titles are the names the ROUTING uses.
+    CHECK(glidePanel->getTitle() == names::glide);
+    CHECK(gatePanel->getTitle() == names::reverseGate);
+    CHECK(holdPanel->getTitle() == names::hold);
+    juce::StringArray titles { names::dry };
+    for (auto* column : io)
+        titles.add(column->getTitle());
+    titles.addArray({ glidePanel->getTitle(), gatePanel->getTitle(), holdPanel->getTitle() });
+    CHECK(titles.contains(names::in));
+    CHECK(titles.contains(names::out));
+
+    // The routings the other tests use, by name.
+    CHECK(juce::String(glide90::routingAt((int) kIntoTheSwell).name) == "INTO THE SWELL");
+    CHECK(juce::String(glide90::routingAt((int) kBentTail).name) == "BENT TAIL");
+    CHECK(juce::String(glide90::routingAt((int) kHoldBeside).name) == "HOLD BESIDE");
+
+    // Every word a diagram writes is a panel's title (or DRY), in every routing, large or in the chart,
+    // with REVERSE GATE on or off; a GLIDE mark on each path GLIDE bends. With REVERSE GATE off HOLD goes
+    // to OUT, bent if the routing bends the gate.
+    for (int i = 0; i < glide90::kNumRoutings; ++i)
+        for (bool gateOn : { true, false })
+            for (bool small : { false, true })
+            {
+                CAPTURE(i);
+                CAPTURE(gateOn);
+                CAPTURE(small);
+                const auto& r = glide90::routingAt(i);
+                const auto drawn = ui::drawRouting(nullptr, { 0.0f, 0.0f, small ? 250.0f : 644.0f, 64.0f }, r,
+                                                   { true, gateOn, true }, small, juce::Colours::black, juce::Colours::white);
+                int marks = 0;
+                for (const auto& label : drawn)
+                {
+                    CAPTURE(label.text);
+                    CHECK(titles.contains(label.text));
+                    marks += label.text == names::glide ? 1 : 0;
+                }
+                const bool holdOut = !r.holdIntoGate || !gateOn;
+                const int expected = (r.bendDry ? 1 : 0) + (gateOn && r.gate != glide90::GateBend::Off ? 1 : 0)
+                                     + (holdOut && (r.holdIntoGate ? r.gate != glide90::GateBend::Off : r.bendHold) ? 1 : 0);
+                CHECK(marks == expected);
+            }
+    // The descriptions name the modules the same way: never "GATE" alone, never "BAR".
+    for (const auto& r : glide90::kRoutings)
+    {
+        const juce::String d(r.description);
+        CAPTURE(d);
+        CHECK(d.replace(names::reverseGate, "").indexOf("GATE") < 0);
+        CHECK(!d.containsWholeWord("BAR"));
+    }
+
+    // The arrows step through the routings, wrapping round; one step, one undo.
+    auto value = [&] { return juce::roundToInt(plain(*p, ids::routing)); };
+    CHECK(value() == 0);
+    routing->step(1);
+    CHECK(value() == 1);
+    p->undoManager().undo();
+    CHECK(value() == 0);
+    routing->step(-1);
+    CHECK(value() == glide90::kNumRoutings - 1);
+    routing->step(1);
+    CHECK(value() == 0);
+
+    // The chart: a card takes its routing and closes the chart.
+    routing->openChart();
+    REQUIRE(routing->chart() != nullptr);
     if (const auto path = juce::SystemStats::getEnvironmentVariable("GLIDE90_SNAPSHOT", {}); path.isNotEmpty())
     {
-        // Half way: the glide lifted and past the middle, the gate gone to the left, the landing marked.
-        glidePanel->onDragStart();
-        glidePanel->onDrag(220.0f);
-        settle();
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
         const auto image = editor->createComponentSnapshot(editor->getLocalBounds(), true, 2.0f);
-        juce::File file(juce::File(path).getSiblingFile(juce::File(path).getFileNameWithoutExtension() + "-drag.png"));
+        juce::File file(juce::File(path).getSiblingFile(juce::File(path).getFileNameWithoutExtension() + "-chart.png"));
         file.deleteFile();
         juce::FileOutputStream out(file);
         REQUIRE(juce::PNGImageFormat().writeImageToStream(image, out));
-        glidePanel->onDragEnd(true);
-        settle();
     }
+    routing->chart()->choose((int) kHoldBeside);
+    CHECK(value() == (int) kHoldBeside);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+    CHECK(routing->chart() == nullptr);
 
-    // Not far enough: back where it was.
-    const int glideX = glidePanel->getX();
-    drag(*glidePanel, 60.0f, false);
-    CHECK(glideFirst());
-    CHECK(glidePanel->getX() == glideX);
-
-    // Past the gate: the gate plays first now, and both are in their new places.
-    drag(*glidePanel, 400.0f, false);
-    CHECK_FALSE(glideFirst());
-    CHECK(gatePanel->getX() < glidePanel->getX());
-    CHECK(gatePanel->getY() == glidePanel->getY()); // nothing left raised
-
-    // Escape: nothing changes.
-    drag(*glidePanel, -400.0f, true);
-    CHECK_FALSE(glideFirst());
-    CHECK(gatePanel->getX() < glidePanel->getX());
-
-    // One step to undo.
-    p->undoManager().undo();
-    settle();
-    CHECK(glideFirst());
-    CHECK(glidePanel->getX() < gatePanel->getX());
+    if (const auto path = juce::SystemStats::getEnvironmentVariable("GLIDE90_SNAPSHOT", {}); path.isNotEmpty())
+    {
+        set(*p, ids::holdOn, 1.0f);
+        set(*p, ids::gateOn, 0.0f);
+        pickSense->knob().setFlash(1.0f); // as on a pick heard
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(100);
+        const auto image = editor->createComponentSnapshot(editor->getLocalBounds(), true, 2.0f);
+        juce::File file(juce::File(path).getSiblingFile(juce::File(path).getFileNameWithoutExtension() + "-routing.png"));
+        file.deleteFile();
+        juce::FileOutputStream out(file);
+        REQUIRE(juce::PNGImageFormat().writeImageToStream(image, out));
+    }
 }
 
-TEST_CASE("changing the order of the glide and the reverb does not click")
+TEST_CASE("moving the gate's bend between IN and OUT does not click, and the direct sound plays on")
 {
-    // The largest sample-to-sample step of a sine through the plugin, with the order flipped twice
-    // or not at all: the flips may not add a jump of their own.
-    auto run = [](bool flip) {
+    // The largest sample-to-sample step of a sine through the plugin, with the bend moved twice or not
+    // at all: the moves may not add a jump of their own. With the effect silent (MIX all direct) the
+    // output stays the same: only the effect fades while the bender moves.
+    auto run = [](bool flip, float gateMix) {
         auto p = make();
-        juce::AudioBuffer<float> buffer(2, kBlock);
+        set(*p, ids::gateMix, gateMix);
+        juce::AudioBuffer<float> buffer(2, kBlock), all(2, 300 * kBlock);
         juce::MidiBuffer midi;
         float previous = 0.0f, worst = 0.0f;
         for (int b = 0; b < 300; ++b)
         {
             if (flip && (b == 100 || b == 200))
-                set(*p, ids::glidePosition, b == 100 ? 1.0f : 0.0f);
+                set(*p, ids::routing, b == 100 ? kBentTail : kIntoTheSwell);
             for (int ch = 0; ch < 2; ++ch)
                 for (int i = 0; i < kBlock; ++i)
                     buffer.setSample(ch, i, 0.5f * (float) std::sin(2.0 * 3.14159265 * 220.0 * (b * kBlock + i) / kRate));
@@ -411,12 +483,20 @@ TEST_CASE("changing the order of the glide and the reverb does not click")
                     worst = std::max(worst, std::abs(buffer.getSample(0, i) - previous));
                 previous = buffer.getSample(0, i);
             }
+            for (int ch = 0; ch < 2; ++ch)
+                all.copyFrom(ch, b * kBlock, buffer, ch, 0, kBlock);
         }
-        return worst;
+        return std::make_pair(worst, all);
     };
-    const float steady = run(false), flipped = run(true);
-    MESSAGE("largest step " << flipped << ", without flips " << steady);
+    const float steady = run(false, 0.5f).first, flipped = run(true, 0.5f).first;
+    MESSAGE("largest step " << flipped << ", without moves " << steady);
     CHECK(flipped <= steady * 1.1f + 0.005f);
+    const auto straight = run(false, 0.0f).second, moved = run(true, 0.0f).second;
+    double apart = 0.0;
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < straight.getNumSamples(); ++i)
+            apart = std::max(apart, (double) std::abs(straight.getSample(ch, i) - moved.getSample(ch, i)));
+    CHECK(apart < 1e-6); // rounding only
 }
 
 TEST_CASE("a knob's value field: a click elsewhere applies it; Alt-click resets the knob")
@@ -1314,9 +1394,9 @@ TEST_CASE("HOLD is off in new instances, and while off its controls change nothi
     const auto in = strummed(3.0, 1.0);
     const auto before = renderFresh(in, [](Glide90Processor&) {});
     const auto after = renderFresh(in, [](Glide90Processor& p) {
-        for (const char* id : { ids::holdMode, ids::holdFreeze, ids::holdFollow, ids::holdSize, ids::holdDensity,
-                                ids::holdSmear, ids::holdSpread, ids::holdReverse, ids::holdDuck, ids::holdDecay,
-                                ids::holdLevel, ids::holdFeed, ids::holdCharacter, ids::holdRoot })
+        for (const char* id : { ids::holdMode, ids::holdFreeze, ids::holdSize, ids::holdDensity, ids::holdSmear,
+                                ids::holdSpread, ids::holdReverse, ids::holdDuck, ids::holdDecay, ids::holdLevel,
+                                ids::holdCharacter, ids::holdRoot })
         {
             auto* param = p.state().getParameter(id);
             param->setValueNotifyingHost(param->getValue() > 0.5f ? 0.1f : 0.9f);
@@ -1337,11 +1417,11 @@ TEST_CASE("HOLD holds the strum into the gate, adds no latency, and goes to the 
         CHECK(p->getTailLengthSeconds() > 2.2);
     }
     // The gate's effect silent: only the direct signal comes out.
-    auto dryOnly = [](float holdOn, float feed) {
-        return [holdOn, feed](Glide90Processor& p) {
+    auto dryOnly = [](float holdOn, float toOut) {
+        return [holdOn, toOut](Glide90Processor& p) {
             set(p, ids::gateMix, 0.0f);
             set(p, ids::holdOn, holdOn);
-            set(p, ids::holdFeed, feed);
+            set(p, ids::routing, toOut > 0.5f ? kHoldBeside : kIntoTheSwell);
         };
     };
     const auto off = renderFresh(in, dryOnly(0.0f, 0.0f));
@@ -1357,6 +1437,138 @@ TEST_CASE("HOLD holds the strum into the gate, adds no latency, and goes to the 
         };
     };
     CHECK(difference(renderFresh(in, bypassed(0.0f)), renderFresh(in, bypassed(1.0f)), (int) (3.0 * kRate)) > 1.0);
+}
+
+namespace
+{
+// How much of `freq` there is in `b` (left channel) over [from, to): Goertzel power per sample.
+double toneEnergy(const juce::AudioBuffer<float>& b, int from, int to, double freq)
+{
+    const double w = 2.0 * juce::MathConstants<double>::pi * freq / kRate, coeff = 2.0 * std::cos(w);
+    double s1 = 0.0, s2 = 0.0;
+    for (int i = from; i < to; ++i)
+    {
+        const double s0 = b.getSample(0, i) + coeff * s1 - s2;
+        s2 = s1;
+        s1 = s0;
+    }
+    return (s1 * s1 + s2 * s2 - coeff * s1 * s2) / (double) (to - from);
+}
+
+// A tone that bends by -100 cents with the bar, and the same bent twice.
+constexpr double kOpen = 220.0;
+const double kBent = kOpen * std::pow(2.0, -100.0 / 1200.0), kBentTwice = kOpen * std::pow(2.0, -200.0 / 1200.0);
+
+// The first routing that bends DRY as `dry` and REVERSE GATE as `gate`, HOLD into REVERSE GATE.
+int routingWith(bool dry, glide90::GateBend gate)
+{
+    for (int i = 0; i < glide90::kNumRoutings; ++i)
+        if (const auto& r = glide90::routingAt(i); r.bendDry == dry && r.gate == gate && r.holdIntoGate)
+            return i;
+    FAIL("no routing bends DRY " << dry << " and REVERSE GATE " << (int) gate);
+    return 0;
+}
+
+// The glide as a bar that the test moves: MANUAL, 100 cents down at the top, at once.
+void manualBar(Glide90Processor& p)
+{
+    set(p, ids::glideMode, 3.0f);
+    set(p, ids::glideDepth, 100.0f);
+    set(p, ids::glideDirection, 0.0f);
+    set(p, ids::glideSmooth, 0.0f);
+    set(p, ids::glideRandom, 0.0f);
+}
+} // namespace
+
+TEST_CASE("HOLD in the gate: bent at the gate's output it moves at once and once; bent going in, the reflections repeat the move")
+{
+    // One strike, held forever into the gate; only the effect is heard. At 3 s the bar goes down.
+    const auto in = strummed(7.0);
+    const int jump = (int) (3.0 * kRate);
+    auto run = [&](glide90::GateBend bend) {
+        auto p = make();
+        manualBar(*p);
+        set(*p, ids::holdOn, 1.0f);
+        set(*p, ids::holdSpread, 0.0f);
+        set(*p, ids::holdDuck, 0.0f);
+        set(*p, ids::gateMix, 1.0f);
+        set(*p, ids::gateRoomSize, 20.0f);
+        set(*p, ids::routing, bend == glide90::GateBend::Out ? kBentTail : kIntoTheSwell);
+        p->prepareToPlay(kRate, kBlock);
+        juce::AudioBuffer<float> out(in), block(2, kBlock);
+        juce::MidiBuffer midi;
+        for (int start = 0; start + kBlock <= in.getNumSamples(); start += kBlock)
+        {
+            if (start >= jump && plain(*p, ids::glideBar) < 0.5f)
+                set(*p, ids::glideBar, 1.0f);
+            for (int ch = 0; ch < 2; ++ch)
+                block.copyFrom(ch, 0, in, ch, start, kBlock);
+            p->processBlock(block, midi);
+            for (int ch = 0; ch < 2; ++ch)
+                out.copyFrom(ch, start, block, ch, 0, kBlock);
+        }
+        return std::make_pair(out, jump + p->getLatencySamples());
+    };
+    auto at = [](int from, double seconds) { return from + (int) (seconds * kRate); };
+
+    {
+        const auto [out, heard] = run(glide90::GateBend::Out);
+        // Before: the open pitch. Soon after the move: only the bent one, the old pitch gone at once.
+        CHECK(toneEnergy(out, at(heard, -0.8), at(heard, -0.1), kOpen) > 20.0 * toneEnergy(out, at(heard, -0.8), at(heard, -0.1), kBent));
+        const double old = toneEnergy(out, at(heard, 0.1), at(heard, 0.6), kOpen);
+        const double bent = toneEnergy(out, at(heard, 0.1), at(heard, 0.6), kBent);
+        MESSAGE("BEND OUT, after the move: old pitch " << old / bent << " of the new one");
+        CHECK(old < 0.02 * bent);
+        // Bent once: not twice (HOLD bending itself, then the gate's bender again).
+        CHECK(toneEnergy(out, at(heard, 0.6), at(heard, 2.6), kBentTwice) < 0.02 * toneEnergy(out, at(heard, 0.6), at(heard, 2.6), kBent));
+    }
+    {
+        const auto [out, heard] = run(glide90::GateBend::In);
+        // The reflections still play what went in before the move.
+        const double old = toneEnergy(out, at(heard, 0.1), at(heard, 0.6), kOpen);
+        const double bent = toneEnergy(out, at(heard, 0.1), at(heard, 0.6), kBent);
+        MESSAGE("BEND IN, after the move: old pitch " << old / bent << " of the new one");
+        CHECK(old > 0.1 * bent);
+        // Once they have gone by, the new pitch, bent once.
+        CHECK(toneEnergy(out, at(heard, 2.0), at(heard, 3.0), kOpen) < 0.02 * toneEnergy(out, at(heard, 2.0), at(heard, 3.0), kBent));
+        CHECK(toneEnergy(out, at(heard, 2.0), at(heard, 3.0), kBentTwice) < 0.02 * toneEnergy(out, at(heard, 2.0), at(heard, 3.0), kBent));
+    }
+}
+
+TEST_CASE("DRY and the gate bend apart: the direct guitar can stay straight under a bending reverb, and the other way round")
+{
+    // A steady tone, the bar held down from the start.
+    juce::AudioBuffer<float> in(2, (int) (3.0 * kRate));
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < in.getNumSamples(); ++i)
+            in.setSample(ch, i, 0.3f * (float) std::sin(2.0 * juce::MathConstants<double>::pi * kOpen * i / kRate));
+    auto pitchOf = [&](float gateMix, bool dry, glide90::GateBend gate) {
+        const auto out = renderFresh(in, [&](Glide90Processor& p) {
+            manualBar(p);
+            set(p, ids::glideBar, 1.0f);
+            set(p, ids::gateMix, gateMix);
+            set(p, ids::routing, (float) routingWith(dry, gate));
+        });
+        const int from = (int) (1.5 * kRate), to = (int) (2.9 * kRate);
+        const double open = toneEnergy(out, from, to, kOpen), bent = toneEnergy(out, from, to, kBent);
+        return bent > 50.0 * open ? -100 : open > 50.0 * bent ? 0 : 1; // 1: both, or neither
+    };
+    // The direct guitar alone (MIX all direct).
+    CHECK(pitchOf(0.0f, true, glide90::GateBend::Off) == -100);
+    CHECK(pitchOf(0.0f, false, glide90::GateBend::In) == 0);
+    // The effect alone, bent going in or coming out, or not at all, whatever the direct guitar does.
+    CHECK(pitchOf(1.0f, false, glide90::GateBend::In) == -100);
+    CHECK(pitchOf(1.0f, true, glide90::GateBend::Out) == -100); // the direct guitar silent at MIX 1
+    CHECK(pitchOf(1.0f, true, glide90::GateBend::Off) == 0);
+    // With the glide off nothing bends.
+    const auto off = renderFresh(in, [&](Glide90Processor& p) {
+        manualBar(p);
+        set(p, ids::glideBar, 1.0f);
+        set(p, ids::glideOn, 0.0f);
+        set(p, ids::gateMix, 0.5f);
+    });
+    const int from = (int) (1.5 * kRate), to = (int) (2.9 * kRate);
+    CHECK(toneEnergy(off, from, to, kBent) < 0.02 * toneEnergy(off, from, to, kOpen));
 }
 
 namespace
@@ -1385,14 +1597,14 @@ TEST_CASE("OUTPUT is the last stage: it scales everything, HOLD on either path, 
 {
     const auto in = strummed(3.0, 1.0);
     for (float gateOn : { 1.0f, 0.0f })
-        for (auto feed : { hold::Feed::Gate, hold::Feed::Out })
+        for (float feed : { kIntoTheSwell, kHoldBeside })
         {
             CAPTURE(gateOn);
-            CAPTURE((int) feed);
+            CAPTURE(feed);
             auto setUp = [gateOn, feed](float outputDb) {
                 return [gateOn, feed, outputDb](Glide90Processor& p) {
                     set(p, ids::holdOn, 1.0f);
-                    set(p, ids::holdFeed, (float) feed);
+                    set(p, ids::routing, feed);
                     set(p, ids::gateOn, gateOn);
                     set(p, ids::output, outputDb);
                 };
@@ -1404,7 +1616,7 @@ TEST_CASE("OUTPUT is the last stage: it scales everything, HOLD on either path, 
     // At its bottom, silence.
     const auto off = renderFresh(in, [](Glide90Processor& p) {
         set(p, ids::holdOn, 1.0f);
-        set(p, ids::holdFeed, (float) hold::Feed::Out);
+        set(p, ids::routing, kHoldBeside);
         set(p, ids::output, glide90::kOffDb);
     });
     CHECK(off.getMagnitude(0, processed(off)) == 0.0f);
@@ -1418,7 +1630,7 @@ TEST_CASE("INPUT is the first stage: everything follows it, HOLD on its own path
         return [inputDb](Glide90Processor& p) {
             set(p, ids::gateMix, 0.0f);
             set(p, ids::holdOn, 1.0f);
-            set(p, ids::holdFeed, (float) hold::Feed::Out);
+            set(p, ids::routing, kHoldBeside);
             set(p, ids::input, inputDb);
         };
     };
@@ -1482,7 +1694,6 @@ TEST_CASE("HOLD's typed values are read the way they are shown")
     CHECK(typed(ids::holdDecay, "inf") >= glide90::kHoldDecayForever);
     CHECK(typed(ids::holdDecay, "4.5") == doctest::Approx(4.5f));
     CHECK(typed(ids::holdDecay, "800 ms") == doctest::Approx(0.8f));
-    CHECK(typed(ids::holdFollow, "150") == doctest::Approx(1.5f));
     CHECK(typed(ids::holdSpread, "0.2 st") == doctest::Approx(20.0f));
     CHECK(typed(ids::holdRoot, "C4") == doctest::Approx(72.0f));
     CHECK(typed(ids::holdRoot, "eb2") == doctest::Approx(51.0f));
@@ -1532,23 +1743,38 @@ TEST_CASE("HOLD is a strip under the glide and the gate, between IN and OUT, tha
         CHECK(holdPanel->getX() == in->getRight() + Editor::kGap);
         CHECK(holdPanel->getRight() == out->getX() - Editor::kGap);
         CHECK(holdPanel->getY() >= glidePanel->getBottom());
-        // The level knobs sit on the lowest row of knobs beside them.
-        const int lowest = holdPanel->isFolded() ? glidePanel->getY() + ui::ModulePanel::kRow2
+        // The level knobs sit at the columns' foot: open, on HOLD's row of knobs; folded, as far from the
+        // foot as when open (not left up on GLIDE's row).
+        const int footGap = ui::HoldPanel::kOpenHeight - ui::HoldPanel::kRowTop - ui::Knob::kHeight;
+        const int lowest = holdPanel->isFolded() ? in->getBottom() - footGap - ui::Knob::kHeight
                                                  : holdPanel->getY() + ui::HoldPanel::kRowTop;
+        CHECK(in->getBottom() - (in->getY() + in->levelKnob().getBottom()) == footGap);
         CHECK(in->getY() + in->levelKnob().getY() == lowest);
         CHECK(out->getY() + out->levelKnob().getY() == lowest);
     };
 
-    // Open: the window about a third taller than without HOLD, and wider for the gate's fourth column.
+    // Open: the window with the ROUTING strip on top and HOLD under the modules, wider for the gate's
+    // fourth column.
     CHECK(Editor::kWidth == 1168);
-    CHECK(Editor::heightFor(false) < 700);
+    CHECK(Editor::heightFor(false) < 760);
     CHECK(editor->getHeight() == windowHeight(false));
     CHECK(holdPanel->getBottom() <= Editor::heightFor(false));
     framed();
 
-    // PICK SENS is IN's, with its light: the glide and HOLD share it. GLIDE has no PICK SENS.
-    REQUIRE(in->pickKnob() != nullptr);
-    CHECK(out->pickKnob() == nullptr);
+    // PICK SENS is on its own, above IN (the glide and HOLD share it): not in IN, OUT or GLIDE, and
+    // only once in the window.
+    ui::PickSense* pickSense = nullptr;
+    std::function<void(juce::Component&)> findPick = [&](juce::Component& c) {
+        if (auto* ps = dynamic_cast<ui::PickSense*>(&c))
+            pickSense = ps;
+        for (auto* child : c.getChildren())
+            findPick(*child);
+    };
+    findPick(*editor);
+    REQUIRE(pickSense != nullptr);
+    CHECK(pickSense->getX() == in->getX());
+    CHECK(pickSense->getRight() == in->getRight());
+    CHECK(pickSense->getBottom() < in->getY());
     std::function<int(juce::Component&)> pickKnobs = [&](juce::Component& c) {
         int n = 0;
         if (auto* k = dynamic_cast<ui::Knob*>(&c); k != nullptr && k->getLabel() == "PICK SENS")
@@ -1557,49 +1783,22 @@ TEST_CASE("HOLD is a strip under the glide and the gate, between IN and OUT, tha
             n += pickKnobs(*child);
         return n;
     };
+    CHECK(pickKnobs(*in) == 0);
+    CHECK(pickKnobs(*out) == 0);
     CHECK(pickKnobs(*glidePanel) == 0);
+    CHECK(pickKnobs(*pickSense) == 1);
     CHECK(pickKnobs(*editor) == 1);
 
-    // FEED is a key on HOLD's title bar; with the gate off it shows OUT and cannot be pressed.
-    auto* feedKey = dynamic_cast<ui::CycleKey*>(holdPanel->findChildWithID(ids::holdFeed));
-    REQUIRE(feedKey != nullptr);
-    CHECK(feedKey->getY() < ui::ModulePanel::kTitleHeight);
-    CHECK(feedKey->getButtonText() == "> GATE");
-    feedKey->triggerClick();
-    juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
-    CHECK(juce::roundToInt(plain(*p, ids::holdFeed)) == (int) hold::Feed::Out);
-    CHECK(feedKey->getButtonText() == "> OUT");
-    set(*p, ids::holdFeed, (float) hold::Feed::Gate);
-    set(*p, ids::gateOn, 0.0f);
-    juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
-    CHECK(feedKey->getButtonText() == "> OUT");
-    CHECK_FALSE(feedKey->isEnabled());
-    feedKey->triggerClick();
-    juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
-    CHECK(juce::roundToInt(plain(*p, ids::holdFeed)) == (int) hold::Feed::Gate); // nothing went to the parameter
-    set(*p, ids::gateOn, 1.0f);
-    juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
-    CHECK(feedKey->getButtonText() == "> GATE");
-    CHECK(feedKey->isEnabled());
-
-    // FOLLOW dims while the glide is off: then no bar moves the held chord.
-    std::function<ui::Knob*(juce::Component&)> findFollow = [&](juce::Component& c) -> ui::Knob* {
+    // Where HOLD goes and whether GLIDE bends it is the ROUTING's: no FEED key, no FOLLOW.
+    std::function<bool(juce::Component&)> hasFollow = [&](juce::Component& c) {
         if (auto* k = dynamic_cast<ui::Knob*>(&c); k != nullptr && k->getLabel() == "FOLLOW")
-            return k;
+            return true;
         for (auto* child : c.getChildren())
-            if (auto* k = findFollow(*child))
-                return k;
-        return nullptr;
+            if (hasFollow(*child))
+                return true;
+        return false;
     };
-    auto* follow = findFollow(*holdPanel);
-    REQUIRE(follow != nullptr);
-    CHECK(follow->isEnabled());
-    set(*p, ids::glideOn, 0.0f);
-    juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
-    CHECK_FALSE(follow->isEnabled());
-    set(*p, ids::glideOn, 1.0f);
-    juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
-    CHECK(follow->isEnabled());
+    CHECK_FALSE(hasFollow(*editor));
 
     if (const auto path = juce::SystemStats::getEnvironmentVariable("GLIDE90_SNAPSHOT", {}); path.isNotEmpty())
     {
@@ -1611,19 +1810,13 @@ TEST_CASE("HOLD is a strip under the glide and the gate, between IN and OUT, tha
         REQUIRE(juce::PNGImageFormat().writeImageToStream(image, out));
     }
 
-    // A click on the title folds it: the window shrinks to the bar, and the setting is kept. The title
-    // is no handle: dragging it moves nothing.
-    bool started = false;
-    holdPanel->onDragStart = [&] { started = true; };
+    // A click on the title folds it: the window shrinks to the bar, and the setting is kept.
     auto mouse = [&](juce::Component& c, juce::Point<float> at) {
         return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), at,
                                 juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
                                 &c, &c, juce::Time::getCurrentTime(), at, juce::Time::getCurrentTime(), 1, false);
     };
     holdPanel->mouseDown(mouse(*holdPanel, { 60.0f, 20.0f }));
-    holdPanel->mouseDrag(mouse(*holdPanel, { 300.0f, 20.0f }));
-    holdPanel->mouseUp(mouse(*holdPanel, { 300.0f, 20.0f }));
-    CHECK_FALSE(started);
     CHECK(holdPanel->isFolded());
     CHECK(ui::holdFolded());
     CHECK(editor->getHeight() == windowHeight(true));
@@ -1763,6 +1956,9 @@ std::vector<Reading> readText(juce::AudioProcessorEditor& editor, const juce::Im
         }
         else if (dynamic_cast<ui::HeaderBar*>(&c) != nullptr)
             measure(c, { 16.0f, 8.0f, 140.0f, 40.0f }, "logo", dim);
+        else if (auto* routing = dynamic_cast<ui::RoutingPanel*>(&c))
+            for (const auto& label : routing->labels())
+                measure(c, label.area.expanded(3.0f), "routing " + label.text, dim || label.dimmed);
         for (auto* child : c.getChildren())
             walk(*child);
     };

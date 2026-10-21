@@ -64,7 +64,7 @@ void HoldDisplay::frame(double seconds)
     };
     set(on, choice(ids::holdOn) != 0);
     set(mode, choice(ids::holdMode));
-    set(feed, choice(ids::holdFeed));
+    set(feed, (int) (routingAt(choice(ids::routing)).holdIntoGate ? hold::Feed::Gate : hold::Feed::Out));
     set(density, choice(ids::holdDensity));
     set(character, choice(ids::holdCharacter));
     set(root, choice(ids::holdRoot));
@@ -370,7 +370,7 @@ void HoldDisplay::paint(juce::Graphics& g)
         // One line: what it does and where it goes; the waveform beside it, its level under it.
         auto line = status();
         if (on)
-            line << "  " << modeNames()[mode] << (toGate ? " > GATE" : " > OUT");
+            line << "  " << modeNames()[mode] << " > " << (toGate ? names::reverseGate : names::out);
         drawReadout(g, line, bounds.reduced(10.0f, 0.0f).withWidth(bounds.getWidth() * 0.6f), t.ink.withAlpha(on ? 0.95f : kOffInkAlpha));
         const auto plot = bounds.withTrimmedLeft(bounds.getWidth() * 0.62f).reduced(8.0f, 5.0f).withTrimmedBottom(3.0f);
         paintWave(g, plot, true);
@@ -428,33 +428,20 @@ void HoldDisplay::paint(juce::Graphics& g)
 // --- HoldPanel ---
 
 HoldPanel::HoldPanel(Glide90Processor& p)
-    : ModulePanel("Hold"), proc(p), on(p.state(), ids::holdOn, "ON"), freeze(p.state(), ids::holdFreeze, "FREEZE"),
-      feed(p.state(), ids::holdFeed, (int) hold::Feed::Gate), display(p),
-      follow(p.state(), ids::holdFollow, "FOLLOW", Knob::Size::Large), size(p.state(), ids::holdSize, "SIZE"),
+    : ModulePanel(names::hold), proc(p), on(p.state(), ids::holdOn, "ON"), freeze(p.state(), ids::holdFreeze, "FREEZE"),
+      display(p), size(p.state(), ids::holdSize, "SIZE"),
       smear(p.state(), ids::holdSmear, "SMEAR"), spread(p.state(), ids::holdSpread, "SPREAD"),
       reverse(p.state(), ids::holdReverse, "REVERSE"), duck(p.state(), ids::holdDuck, "DUCK"),
       decay(p.state(), ids::holdDecay, "DECAY"), level(p.state(), ids::holdLevel, "LEVEL"),
       modeWatch(*p.state().getParameter(ids::holdMode),
-                [this](float v) { freeze.setEnabled((hold::Mode) juce::roundToInt(v) == hold::Mode::Latch); }),
-      gateWatch(*p.state().getParameter(ids::gateOn),
-                [this](float v) {
-                    feed.setForcedChoice(v > 0.5f ? std::nullopt : std::optional<int>((int) hold::Feed::Out));
-                }),
-      glideWatch(*p.state().getParameter(ids::glideOn), [this](float v) { follow.setEnabled(v > 0.5f); })
+                [this](float v) { freeze.setEnabled((hold::Mode) juce::roundToInt(v) == hold::Mode::Latch); })
 {
-    setDraggable(false);
-    feed.setComponentID(ids::holdFeed);
-    feed.setLegendPrefix("> ");
-    for (auto* c : std::initializer_list<juce::Component*> { &on, &freeze, &feed, &display, &follow, &size, &smear,
-                                                             &spread, &reverse, &duck, &decay, &level })
+    for (auto* c : std::initializer_list<juce::Component*> { &on, &freeze, &display, &size, &smear, &spread, &reverse,
+                                                             &duck, &decay, &level })
         addAndMakeVisible(c);
 
     on.setTooltip("Hold on/off. It plays beside the glide and the reverse gate and adds no delay");
     freeze.setTooltip("LATCH: holds what just played, for as long as it is down");
-    feed.setTooltip("Where HOLD goes. GATE: into the reverse gate, so the held chord swells backwards. OUT: straight "
-                    "to the output. With the reverse gate off, always OUT");
-    follow.setTooltip("How much the glide bar bends the held chord. 100 bends it with the guitar, 200 twice as far, "
-                      "0 holds it still. The bar moves only while GLIDE is on");
     size.setTooltip("Length of each grain. Long is smooth, short is grainy");
     smear.setTooltip("How far each grain may wander from the start of the held chord. 0 is a steady loop");
     spread.setTooltip("Each grain a few cents off and panned apart: many slightly different guitars");
@@ -469,8 +456,6 @@ HoldPanel::HoldPanel(Glide90Processor& p)
             onFold(false);
     };
     modeWatch.sendInitialUpdate();
-    gateWatch.sendInitialUpdate();
-    glideWatch.sendInitialUpdate();
     setFolded(holdFolded());
 }
 
@@ -479,8 +464,7 @@ HoldPanel::~HoldPanel() = default;
 void HoldPanel::setFolded(bool f)
 {
     folded = f;
-    for (auto* c : std::initializer_list<juce::Component*> { &follow, &size, &smear, &spread, &reverse, &duck, &decay,
-                                                             &level })
+    for (auto* c : std::initializer_list<juce::Component*> { &size, &smear, &spread, &reverse, &duck, &decay, &level })
         c->setVisible(!folded);
     display.setCompact(folded);
     resized();
@@ -492,22 +476,17 @@ juce::Rectangle<int> HoldPanel::freezeBounds() const
     return onKeyBounds().translated(-84, 0).withWidth(76);
 }
 
-juce::Rectangle<int> HoldPanel::feedBounds() const
-{
-    return freezeBounds().translated(-84, 0);
-}
-
 juce::Rectangle<int> HoldPanel::titleArea() const
 {
     // Where a click folds or opens the strip: the title, up to the screen (folded) or the keys.
-    const int right = folded ? display.getX() - 4 : feedBounds().getX() - 8;
+    const int right = folded ? display.getX() - 4 : freezeBounds().getX() - 8;
     return { 0, 0, right, kTitleHeight };
 }
 
 void HoldPanel::paint(juce::Graphics& g)
 {
     ModulePanel::paint(g);
-    // Where the other modules have their grip: which way the strip opens.
+    // Before the title: which way the strip opens.
     g.setColour(theme().textDim);
     juce::Path chevron;
     const float x = 17.0f, y = (float) kTitleHeight * 0.5f;
@@ -522,17 +501,16 @@ void HoldPanel::resized()
 {
     on.setBounds(onKeyBounds());
     freeze.setBounds(freezeBounds());
-    feed.setBounds(feedBounds());
     if (folded)
     {
         // The screen shrinks into the title bar, between the title and the keys.
-        display.setBounds(juce::Rectangle<int>(110, 6, feedBounds().getX() - 12 - 110, kTitleHeight - 12));
+        display.setBounds(juce::Rectangle<int>(110, 6, freezeBounds().getX() - 12 - 110, kTitleHeight - 12));
         return;
     }
     const int m = PanelLookAndFeel::kMargin, w = Knob::kColumn, h = Knob::kHeight;
     display.setBounds(m, kRowTop, kScreenWidth, h);
     int x = getWidth() - m - kKnobs * w;
-    for (auto* k : { &follow, &size, &smear, &spread, &reverse, &duck, &decay, &level })
+    for (auto* k : { &size, &smear, &spread, &reverse, &duck, &decay, &level })
     {
         k->setBounds(x, kRowTop, w, h);
         x += w;

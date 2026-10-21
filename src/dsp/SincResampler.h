@@ -34,10 +34,6 @@ public:
     // Appends produced DSP samples to `out`.
     void process(const float* in, int numIn, std::vector<float>& out);
 
-    // Starts afresh (silence so far) at the same point as `other`, so that from now on both give as
-    // many samples per block, at the same instants.
-    void restartAlongside(const Downsampler& other);
-
     // Group delay in host samples.
     double latencyHost() const { return kernelHalf; }
 

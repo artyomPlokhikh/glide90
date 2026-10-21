@@ -78,12 +78,40 @@ private:
     int searchCost = 0;
 };
 
+// Bends one path by the glide bar: the pitch shifter plus the optional twin string, mixed with the
+// path itself by MIX. The path comes out delayed by latencySamples() whether it is bent or not, so
+// bent and straight paths stay in time with each other.
+class Bender
+{
+public:
+    static constexpr int kMaxChannels = DualHeadShifter::kMaxChannels;
+
+    void prepare(double sampleRate);
+    void reset();
+
+    // `cents`: the bar, one value per sample. With `bend` false the path fades (20 ms) to itself,
+    // delayed; the shifters then only keep their delay lines filled.
+    void process(float* const* channels, int numChannels, int numSamples, const SwaySettings& s, const float* cents,
+                 bool bend);
+
+    int latencySamples() const { return latency; }
+    // How far the bend is in now (0 - MIX): 0 while straight.
+    float mix() const { return enabledMix; }
+    const DualHeadShifter& mainShifter() const { return main; }
+
+private:
+    DualHeadShifter main, twin;
+    DelayLine dryDelay[kMaxChannels];
+    int latency = 0;
+    float enabledMix = 0.0f, twinMix = 0.0f, mixStep = 0.0f;
+};
+
 // The whole Sway block: one bar position drives the pitch shifter (the same bar moves both sides
 // when Sway sits after the stereo SPX90), plus the optional twin string.
 class SwayProcessor
 {
 public:
-    static constexpr int kMaxChannels = DualHeadShifter::kMaxChannels;
+    static constexpr int kMaxChannels = Bender::kMaxChannels;
 
     void prepare(double sampleRate);
     void reset();
@@ -94,9 +122,9 @@ public:
     void process(float* const* channels, int numChannels, int numSamples, const SwaySettings& s,
                  const float* detector = nullptr);
 
-    // The same in two steps, for when something else follows the bar too (HOLD): first where the
-    // bar is, one value per sample in cents, from what the pick detector listens to; then the
-    // shifting, from those positions. Call computeBar() once per block, or for pieces of one with
+    // The same in two steps, for when something else follows the bar too (HOLD, other paths): first
+    // where the bar is, one value per sample in cents, from what the pick detector listens to; then
+    // the shifting, from those positions. Call computeBar() once per block, or for pieces of one with
     // `continuing` set after the first.
     void computeBar(const float* detector, int numSamples, const SwaySettings& s, float* centsOut,
                     bool continuing = false);
@@ -104,7 +132,7 @@ public:
                         const float* cents);
 
     // Constant delay of the dry path; the wet path is centred on it.
-    int latencySamples() const { return latency; }
+    int latencySamples() const { return bender.latencySamples(); }
 
     // Bar position (cents) and position in the shape's cycle (0 - 1) at the end of the last block,
     // for display.
@@ -112,14 +140,11 @@ public:
     float phase() const { return bar.phase(); }
     int pickAttacks() const { return bar.pickAttacks(); }
     // For tests.
-    const DualHeadShifter& mainShifter() const { return main; }
+    const DualHeadShifter& mainShifter() const { return bender.mainShifter(); }
 
 private:
     BarGenerator bar;
-    DualHeadShifter main, twin;
-    DelayLine dryDelay[kMaxChannels];
-    int latency = 0;
-    float enabledMix = 0.0f, twinMix = 0.0f, mixStep = 0.0f;
+    Bender bender;
     float lastCents = 0.0f;
     // process(): the detector's input and the bar, a piece of the block at a time.
     static constexpr int kPiece = 256;

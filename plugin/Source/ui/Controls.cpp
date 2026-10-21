@@ -315,12 +315,20 @@ void Knob::paint(juce::Graphics& g)
 {
     const bool enabled = isEnabled();
     drawLegend(g, label, getLocalBounds().removeFromTop(15).toFloat(), enabled);
-    drawKnob(g, knobArea(), param.convertTo0to1(value), enabled, size != Size::Small);
+    drawKnob(g, knobArea(), param.convertTo0to1(value), enabled, size != Size::Small, true, flash);
     if (editor == nullptr)
     {
         const auto colour = !enabled ? theme().textDim.withMultipliedAlpha(kDimmedAlpha) : (hover || dragging ? theme().accent : theme().textDim);
         drawReadout(g, param.getCurrentValueAsText(), valueArea().toFloat(), colour, juce::Justification::centred);
     }
+}
+
+void Knob::setFlash(float amount)
+{
+    if (juce::exactlyEqual(amount, flash))
+        return;
+    flash = amount;
+    repaint(knobArea().expanded(6.0f).getSmallestIntegerContainer());
 }
 
 void Knob::mouseEnter(const juce::MouseEvent&)

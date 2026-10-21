@@ -71,11 +71,11 @@ private:
 };
 
 // The Hold strip, under GLIDE and GATE between IN and OUT: one row, so the window stays close to its
-// size without HOLD. Its title bar has FEED (where HOLD goes: into the gate or to the output), FREEZE
-// and ON; a click on the title folds the strip down to the bar (a setting of the user, not of the
-// sound), the screen then shrinking into it. Open: the screen, then FOLLOW, the grains (size, smear,
-// spread, reverse; density is on the screen) and the mix (duck, decay, level). PICK SENS is IN's:
-// the same picking feeds the glide and HOLD.
+// size without HOLD. Its title bar has FREEZE and ON; a click on the title folds the strip down to the
+// bar (a setting of the user, not of the sound), the screen then shrinking into it. Open: the screen,
+// then the grains (size, smear, spread, reverse; density is on the screen) and the mix (duck, decay,
+// level). Where HOLD goes and whether the bar bends it is on the route strip; PICK SENS is IN's: the
+// same picking feeds the glide and HOLD.
 class HoldPanel : public ModulePanel
 {
 public:
@@ -83,7 +83,7 @@ public:
     ~HoldPanel() override;
 
     static constexpr int kFoldedHeight = kTitleHeight, kOpenHeight = 156;
-    static constexpr int kRowTop = 46, kScreenWidth = 208, kKnobs = 8;
+    static constexpr int kRowTop = 46, kScreenWidth = 296, kKnobs = 7;
 
     bool isFolded() const { return folded; }
     void setFolded(bool);
@@ -98,17 +98,13 @@ public:
 private:
     juce::Rectangle<int> titleArea() const;
     juce::Rectangle<int> freezeBounds() const;
-    juce::Rectangle<int> feedBounds() const;
 
     Glide90Processor& proc;
     ToggleKey on, freeze;
-    CycleKey feed;
     HoldDisplay display;
-    Knob follow, size, smear, spread, reverse, duck, decay, level;
+    Knob size, smear, spread, reverse, duck, decay, level;
     bool folded = false;
-    juce::ParameterAttachment modeWatch;  // FREEZE is lit only in LATCH
-    juce::ParameterAttachment gateWatch;  // with the gate off, FEED is OUT
-    juce::ParameterAttachment glideWatch; // with the glide off, the bar does not move: FOLLOW dims
+    juce::ParameterAttachment modeWatch; // FREEZE is lit only in LATCH
 };
 
 } // namespace glide90::ui

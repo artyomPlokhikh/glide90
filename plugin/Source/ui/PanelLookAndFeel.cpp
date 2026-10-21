@@ -441,7 +441,7 @@ void strokeGlowing(juce::Graphics& g, const juce::Path& path, juce::Colour colou
 
 // --- Panels ---
 
-void drawCard(juce::Graphics& g, juce::Rectangle<float> r, bool lifted)
+void drawCard(juce::Graphics& g, juce::Rectangle<float> r)
 {
     const auto& t = theme();
     if (t.backdrop == Theme::Backdrop::Duotone)
@@ -456,11 +456,6 @@ void drawCard(juce::Graphics& g, juce::Rectangle<float> r, bool lifted)
     {
         g.setColour(t.cardEdge);
         g.drawRoundedRectangle(r.reduced(0.5f), t.cardCorner, t.backdrop == Theme::Backdrop::Duotone ? 1.5f : 1.0f);
-    }
-    if (lifted)
-    {
-        g.setColour(t.accent.withAlpha(0.45f));
-        g.drawRoundedRectangle(r.reduced(0.5f), t.cardCorner, 1.0f);
     }
 }
 
@@ -524,7 +519,8 @@ void drawLed(juce::Graphics& g, juce::Rectangle<float> r, juce::Colour colour, b
         g.fillRoundedRectangle(r, juce::jmin(r.getWidth(), r.getHeight()) * 0.5f);
 }
 
-void drawKnob(juce::Graphics& g, juce::Rectangle<float> area, float position, bool enabled, bool large, bool scale)
+void drawKnob(juce::Graphics& g, juce::Rectangle<float> area, float position, bool enabled, bool large, bool scale,
+              float flash)
 {
     const auto& t = theme();
     constexpr float start = -2.36f, end = 2.36f; // +-135 degrees
@@ -549,6 +545,8 @@ void drawKnob(juce::Graphics& g, juce::Rectangle<float> area, float position, bo
         g.setColour(colour.withMultipliedAlpha(alpha));
         g.strokePath(line, juce::PathStrokeType(width, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     };
+    // Where the pointer runs, for `flash`.
+    float pointerFrom = 0.0f, pointerTo = radius * 0.6f;
 
     switch (t.knob)
     {
@@ -581,6 +579,8 @@ void drawKnob(juce::Graphics& g, juce::Rectangle<float> area, float position, bo
                 strokeGlowing(g, line, t.knobPointer, large ? 2.0f : 1.6f);
             else
                 pointer(topR * 0.3f, topR * 0.9f, t.knobPointer, 1.6f);
+            pointerFrom = topR * 0.3f;
+            pointerTo = topR * 0.9f;
             break;
         }
         case Theme::Knob::Arc:
@@ -598,6 +598,8 @@ void drawKnob(juce::Graphics& g, juce::Rectangle<float> area, float position, bo
             g.strokePath(value, juce::PathStrokeType(large ? 2.6f : 2.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             g.fillEllipse(juce::Rectangle<float>(large ? 8.0f : 7.0f, large ? 8.0f : 7.0f).withCentre(at(angle, r)));
             pointer(r * 0.12f, r * 0.5f, t.knobPointer.withMultipliedAlpha(0.6f), 1.2f);
+            pointerFrom = r * 0.12f;
+            pointerTo = r;
             break;
         }
         case Theme::Knob::Bakelite:
@@ -615,6 +617,8 @@ void drawKnob(juce::Graphics& g, juce::Rectangle<float> area, float position, bo
                                                    c.x, top.getBottom(), false));
             g.fillEllipse(top);
             pointer(knobR * 0.25f, knobR * 0.86f, t.knobPointer, large ? 2.4f : 2.0f);
+            pointerFrom = knobR * 0.25f;
+            pointerTo = knobR * 0.86f;
             break;
         }
         case Theme::Knob::Flat:
@@ -629,42 +633,36 @@ void drawKnob(juce::Graphics& g, juce::Rectangle<float> area, float position, bo
             g.setColour(t.knobPointer.withMultipliedAlpha(alpha));
             g.drawEllipse(body, 1.6f);
             pointer(0.0f, knobR * 0.92f, t.knobPointer, 2.0f);
+            pointerFrom = knobR * 0.1f;
+            pointerTo = knobR * 0.92f;
             break;
         }
+    }
+
+    if (flash > 0.0f && enabled)
+    {
+        // Lit: a halo in the pointer's colour round a stronger pointer (towards white on a dark knob's
+        // light pointer, towards black on a light knob's dark one).
+        juce::Path line;
+        line.startNewSubPath(at(angle, pointerFrom));
+        line.lineTo(at(angle, pointerTo));
+        const juce::PathStrokeType::JointStyle joint = juce::PathStrokeType::curved;
+        const auto cap = juce::PathStrokeType::rounded;
+        g.setColour(t.knobPointer.withMultipliedAlpha(0.22f * flash));
+        g.strokePath(line, juce::PathStrokeType(large ? 9.0f : 7.5f, joint, cap));
+        g.setColour(t.knobPointer.withMultipliedAlpha(0.4f * flash));
+        g.strokePath(line, juce::PathStrokeType(large ? 5.0f : 4.2f, joint, cap));
+        const auto toward = t.knobPointer.getPerceivedBrightness() > 0.5f ? juce::Colours::white : juce::Colours::black;
+        g.setColour(t.knobPointer.interpolatedWith(toward, 0.45f).withMultipliedAlpha(flash));
+        g.strokePath(line, juce::PathStrokeType(large ? 2.8f : 2.4f, joint, cap));
     }
 }
 
 // --- Backdrop ---
 
-namespace
-{
-constexpr int kShadowRadius = 26, kShadowDrop = 12;
-} // namespace
-
 Backdrop::Backdrop()
 {
     setOpaque(true);
-}
-
-void Backdrop::setDragGuides(juce::Rectangle<int> landingArea, juce::Rectangle<int> liftedArea)
-{
-    auto dirty = [this] {
-        return landing.expanded(4).getUnion(lifted.expanded(kShadowRadius + 4).withBottom(lifted.getBottom() + kShadowRadius + kShadowDrop + 4));
-    };
-    if (!landing.isEmpty() || !lifted.isEmpty())
-        repaint(dirty());
-    // The shadow is the same all through a drag: blurred once.
-    if (!liftedArea.isEmpty() && (shadow.isNull() || liftedArea.getWidth() + 2 * kShadowRadius != shadow.getWidth()))
-    {
-        shadow = juce::Image(juce::Image::ARGB, liftedArea.getWidth() + 2 * kShadowRadius, liftedArea.getHeight() + 2 * kShadowRadius, true);
-        juce::Graphics g(shadow);
-        juce::DropShadow(juce::Colours::black.withAlpha(0.6f), kShadowRadius, {})
-            .drawForRectangle(g, liftedArea.withPosition(kShadowRadius, kShadowRadius));
-    }
-    landing = landingArea;
-    lifted = liftedArea;
-    if (!landing.isEmpty() || !lifted.isEmpty())
-        repaint(dirty());
 }
 
 void Backdrop::themeChanged()
@@ -774,7 +772,6 @@ void Backdrop::render(float scale)
 
 void Backdrop::paint(juce::Graphics& g)
 {
-    const auto& t = theme();
     const float scale = g.getInternalContext().getPhysicalPixelScaleFactor();
     if (composite.isNull() || std::abs(scale - compositeScale) > 0.01f)
         render(scale);
@@ -787,19 +784,6 @@ void Backdrop::paint(juce::Graphics& g)
         // A deep bend flushes the picture.
         g.setColour(C(0xffff2a6d).withAlpha(juce::jmin(0.22f, std::abs(motion.cents) / 400.0f)));
         g.fillRect(getLocalBounds());
-    }
-
-    // A module being dragged: its shadow, and where it will land.
-    if (!lifted.isEmpty() && shadow.isValid())
-        g.drawImageAt(shadow, lifted.getX() - kShadowRadius, lifted.getY() - kShadowRadius + kShadowDrop);
-    if (!landing.isEmpty())
-    {
-        juce::Path outline, dashed;
-        outline.addRoundedRectangle(landing.toFloat().reduced(0.5f), juce::jmax(2.0f, t.cardCorner));
-        const float dashes[] { 5.0f, 4.0f };
-        juce::PathStrokeType(1.2f).createDashedStroke(dashed, outline, dashes, 2);
-        g.setColour(t.accent.withAlpha(0.5f));
-        g.fillPath(dashed);
     }
 }
 

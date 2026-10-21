@@ -383,24 +383,27 @@ TEST_CASE("stereo input: the reverb hears the sum, the direct signal keeps its s
     }
 }
 
-TEST_CASE("the send reaches the effect only, and an unused one changes nothing")
+TEST_CASE("direct and effect come out apart, and the effect hears its own input")
 {
     const double rate = 48000.0;
     const int n = 48000;
-    // `sendFrom`: the first sample with a send (none before it, as when HOLD comes on mid-stream).
-    auto run = [&](const std::vector<float>& in, const std::vector<float>* send, const spx::SpxSettings& s,
-                   int sendFrom = 0, int block = 512) {
+    struct Out
+    {
+        std::vector<float> directL, directR, wetL, wetR;
+    };
+    auto run = [&](const std::vector<float>& direct, const std::vector<float>& effect, const spx::SpxSettings& s,
+                   int block = 512) {
         spx::SpxEngine engine;
         engine.prepare(rate, block);
-        std::vector<std::vector<float>> out(2, std::vector<float>((size_t) n));
+        Out o { std::vector<float>((size_t) n), std::vector<float>((size_t) n), std::vector<float>((size_t) n),
+                std::vector<float>((size_t) n) };
         for (int start = 0; start < n; start += block)
         {
             const int num = std::min(block, n - start);
-            const float* sendNow = send != nullptr && start >= sendFrom ? send->data() + start : nullptr;
-            engine.process(in.data() + start, in.data() + start, out[0].data() + start, out[1].data() + start, num, s,
-                           sendNow);
+            engine.process(direct.data() + start, direct.data() + start, effect.data() + start, o.directL.data() + start,
+                           o.directR.data() + start, o.wetL.data() + start, o.wetR.data() + start, num, s);
         }
-        return out;
+        return o;
     };
     auto energy = [](const std::vector<float>& v) {
         return std::inner_product(v.begin(), v.end(), v.begin(), 0.0);
@@ -408,27 +411,31 @@ TEST_CASE("the send reaches the effect only, and an unused one changes nothing")
     const auto signal = test::sine(700.0, rate, n, 0.3f);
     const std::vector<float> silence((size_t) n, 0.0f);
 
-    // A silent send is no send at all, bit for bit.
-    for (float balance : { 0.0f, 0.5f, 1.0f })
-    {
-        const auto s = programSettings(17, balance);
-        CHECK(run(signal, &silence, s) == run(signal, nullptr, s));
-    }
-    // Direct only: the send is not heard. Effect only: it is, as from the input.
-    CHECK(energy(run(silence, &signal, programSettings(17, 0.0f))[0]) == 0.0);
-    const auto wet = run(silence, &signal, programSettings(17, 1.0f));
-    const auto fromInput = run(signal, nullptr, programSettings(17, 1.0f));
-    CHECK(energy(wet[0]) > 1.0);
-    double err = 0.0;
-    for (int ch = 0; ch < 2; ++ch)
-        for (size_t i = 0; i < (size_t) n; ++i)
-            err = std::max(err, (double) std::abs(wet[(size_t) ch][i] - fromInput[(size_t) ch][i]));
-    CHECK(err < 1e-4);
-    // A send that starts mid-stream, in odd blocks, stays in step with the input (no glitch, no crash).
+    // Only the effect's input: the direct outputs stay silent, the effect swells.
+    const auto effectOnly = run(silence, signal, programSettings(17, 0.5f));
+    CHECK(energy(effectOnly.directL) == 0.0);
+    CHECK(energy(effectOnly.wetL) > 1.0);
+    // Only the direct input: the effect hears nothing.
+    const auto directOnly = run(signal, silence, programSettings(17, 0.5f));
+    CHECK(energy(directOnly.wetL) == 0.0);
+    CHECK(energy(directOnly.directL) > 1.0);
+    // BALANCE all direct: no effect at all, even with something in it.
+    CHECK(energy(run(signal, signal, programSettings(17, 0.0f)).wetR) == 0.0);
+
+    // Direct + wet is the unit, when the effect hears the input, in any blocks.
     for (int block : { 512, 37 })
     {
         CAPTURE(block);
-        const auto late = run(silence, &signal, programSettings(17, 1.0f), 9001, block);
-        CHECK(energy(late[0]) > 0.5);
+        const auto s = programSettings(17, 0.5f);
+        const auto apart = run(signal, signal, s, block);
+        spx::SpxEngine engine;
+        engine.prepare(rate, block);
+        std::vector<float> l((size_t) n), r((size_t) n);
+        for (int start = 0; start < n; start += block)
+            engine.process(signal.data() + start, l.data() + start, r.data() + start, std::min(block, n - start), s);
+        double err = 0.0;
+        for (size_t i = 0; i < (size_t) n; ++i)
+            err = std::max(err, (double) std::abs(apart.directL[i] + apart.wetL[i] - l[i]));
+        CHECK(err == 0.0);
     }
 }

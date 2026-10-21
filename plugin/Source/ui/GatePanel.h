@@ -64,28 +64,33 @@ private:
     Knob roomSize, liveness, delay, lpf, mix;
 };
 
-// A light that flashes on each pick attack heard; `picksHeard` counts them.
-class PickLight : public juce::Component, public juce::SettableTooltipClient
+// PICK SENS on its own, above IN: how easily the pick detector GLIDE and HOLD both listen to hears a
+// pick attack. No card: a bare knob. Its pointer lights up on each pick heard (`picksHeard` counts them).
+class PickSense : public juce::Component
 {
 public:
-    explicit PickLight(std::function<int()> picksHeard);
+    PickSense(juce::AudioProcessorValueTreeState& state, const char* paramId, std::function<int()> picksHeard);
 
-    void paint(juce::Graphics&) override;
+    Knob& knob() { return dial; }
+    // How lit the pointer is now, 0-1 (for tests).
+    float flashLevel() const { return flash; }
+
+    void resized() override;
 
 private:
     void frame(double seconds);
 
+    Knob dial;
     std::function<int()> picksHeard;
     int seen = -1;
-    double litUntil = 0.0;
-    bool lit = false;
+    double litUntil = 0.0, lastFrame = 0.0;
+    float flash = 0.0f;
     juce::VBlankAttachment vblank { this, [this](double seconds) { frame(seconds); } };
 };
 
 // The plugin's input or output, down the window's side: a key for its mode (MONO / STEREO ...) under
 // the title, its meter with a dB scale, and its level knob at the bottom, level with the lowest row of
-// knobs beside it. The input also has PICK SENS and the pick light above its level knob: the pick
-// detector listens to the input, for GLIDE and HOLD alike.
+// knobs beside it.
 class IoColumn : public juce::Component
 {
 public:
@@ -95,11 +100,10 @@ public:
 
     static constexpr int kWidth = 78;
 
-    // Adds PICK SENS for `paramId`, and the light, above the level knob. The meter's top mark then
-    // reads CLIP: what the input meter shows is the reverse gate's A/D.
-    void addPickSense(juce::AudioProcessorValueTreeState& state, const char* paramId, std::function<int()> picksHeard);
-    // The tops of the knobs, in this column: PICK SENS's (if any) and the level knob's.
-    void setKnobRows(int pickTop, int levelTop);
+    // The meter's top mark reads CLIP: what the input meter shows is the reverse gate's A/D.
+    void markClip();
+    // The top of the level knob, in this column.
+    void setKnobRow(int levelTop);
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -107,19 +111,17 @@ public:
     // Where the meter's dB marks are drawn.
     juce::Rectangle<float> scaleArea() const;
 
+    const juce::String& getTitle() const { return title; }
     CycleKey& modeKey() { return mode; }
     Knob& levelKnob() { return knob; }
-    Knob* pickKnob() { return pick.get(); }
-    PickLight* pickLight() { return light.get(); }
 
 private:
     juce::String title;
     LevelMeter meter;
     Knob knob;
     CycleKey mode;
-    std::unique_ptr<Knob> pick;
-    std::unique_ptr<PickLight> light;
-    int pickRow = 0, levelRow = 0;
+    bool clip = false;
+    int levelRow = 0;
 };
 
 } // namespace glide90::ui

@@ -44,8 +44,7 @@ struct HoldSettings
     Mode mode = Mode::Strike;
     bool latched = false;      // LATCH: the FREEZE key
     float sensitivity = 0.55f; // STRIKE, MIDI: how easily a pick attack captures
-    float follow = 1.0f;       // 0 - 2: how much the glide bar bends the layer
-    bool followBar = true;     // the glide is on (the bar moves the layer only then)
+    bool bend = true;          // the glide bar bends the layer (the plugin decides by where it plays)
     float sizeMs = 180.0f;     // grain length
     int density = 2;           // grains at once
     float smearMs = 60.0f;     // how far each grain may wander from the read point
@@ -166,7 +165,7 @@ private:
     static constexpr int kWindow = 2048;
 
     bool snapFeed = true; // the first block after a reset takes FEED as it is
-    float enabledMix = 0.0f, followMix = 0.0f, feedMix = 0.0f, levelGain = 0.0f, gate = 0.0f, duckGain = 1.0f;
+    float enabledMix = 0.0f, bendMix = 0.0f, feedMix = 0.0f, levelGain = 0.0f, gate = 0.0f, duckGain = 1.0f;
     float env = 0.0f, loudest = 1e-3f;
     float rampStep = 0.0f, releaseStep = 0.0f, envAttack = 0.0f, envRelease = 0.0f, loudestFall = 0.0f, duckCoeff = 0.0f;
     float gateAttack = 0.0f, gateRelease = 0.0f, levelCoeff = 0.0f;

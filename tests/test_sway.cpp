@@ -531,3 +531,46 @@ TEST_CASE("after a held bend the wet signal comes back in time with the dry one"
     CHECK(held > 0.01 * rate);
     CHECK(std::abs(p.mainShifter().offsetFromRest()) < 0.0052 * rate); // within a period of the note
 }
+
+TEST_CASE("a path that is not bent comes through delayed, and bending it in and out is smooth")
+{
+    const double rate = 48000.0;
+    const auto x = test::sine(440.0, rate, (size_t) (3.0 * rate), 0.3f);
+    const std::vector<float> bar(x.size(), -150.0f);
+    SwaySettings s;
+
+    // Straight: the path itself, one latency late, to the sample.
+    {
+        sway::Bender b;
+        b.prepare(rate);
+        auto y = x;
+        for (size_t i = 0; i < y.size(); i += 256)
+        {
+            float* ch[] = { y.data() + i };
+            b.process(ch, 1, (int) std::min<size_t>(256, y.size() - i), s, bar.data() + i, false);
+        }
+        const auto d = (size_t) b.latencySamples();
+        float err = 0.0f;
+        for (size_t i = d; i < y.size(); ++i)
+            err = std::max(err, std::abs(y[i] - x[i - d]));
+        CHECK(err == 0.0f);
+    }
+
+    // Bent from 1 s to 2 s: the pitch goes there and back, and no step is louder than the tone's own.
+    sway::Bender b;
+    b.prepare(rate);
+    auto y = x;
+    for (size_t i = 0; i < y.size(); i += 256)
+    {
+        float* ch[] = { y.data() + i };
+        const bool bend = i >= (size_t) rate && i < (size_t) (2.0 * rate);
+        b.process(ch, 1, (int) std::min<size_t>(256, y.size() - i), s, bar.data() + i, bend);
+    }
+    const auto at = [&](double seconds) { return (size_t) (seconds * rate); };
+    CHECK(std::abs(1200.0 * std::log2(test::measureFrequency(y, at(1.3), at(1.9), rate) / 440.0) + 150.0) < 3.0);
+    CHECK(std::abs(1200.0 * std::log2(test::measureFrequency(y, at(2.3), at(2.9), rate) / 440.0)) < 1.0);
+    float worst = 0.0f;
+    for (size_t i = at(0.5); i < y.size(); ++i)
+        worst = std::max(worst, std::abs(y[i] - y[i - 1]));
+    CHECK(worst < 1.3f * 0.3f * (float) (2.0 * test::kPi * 440.0 / rate));
+}

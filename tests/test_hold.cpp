@@ -162,25 +162,21 @@ TEST_CASE("the held loop is smooth and keeps the pitch")
     }
 }
 
-TEST_CASE("FOLLOW: the glide bar bends the held chord once, by FOLLOW")
+TEST_CASE("BEND: the glide bar bends the held chord once, by the bar")
 {
     std::vector<float> in(at(5.0), 0.0f);
     strike(in, 0.2, 220.0, 0.5);
     for (float bar : { -100.0f, 150.0f })
-        for (float follow : { 0.0f, 1.0f, 2.0f })
-        {
-            CAPTURE(bar);
-            CAPTURE(follow);
-            HoldSettings s = plain();
-            s.follow = follow;
-            const auto out = run(in, s, std::vector<float>(in.size(), bar));
-            const double measured = cents(test::measureFrequency(out.l, at(2.0), at(5.0), kRate), 220.0);
-            CHECK(std::abs(measured - bar * follow) < 3.0);
-        }
+    {
+        CAPTURE(bar);
+        const auto out = run(in, plain(), std::vector<float>(in.size(), bar));
+        const double measured = cents(test::measureFrequency(out.l, at(2.0), at(5.0), kRate), 220.0);
+        CHECK(std::abs(measured - bar) < 3.0);
+    }
 
-    // With the glide off, the bar does not move the layer.
+    // Not bent (the glide off, or where it plays), the bar does not move the layer.
     HoldSettings s = plain();
-    s.followBar = false;
+    s.bend = false;
     const auto out = run(in, s, std::vector<float>(in.size(), -100.0f));
     CHECK(std::abs(cents(test::measureFrequency(out.l, at(2.0), at(5.0), kRate), 220.0)) < 2.0);
 }
@@ -209,18 +205,17 @@ TEST_CASE("DUCK: the layer stays down while you play and comes up when you stop"
 
 TEST_CASE("LIVE: grains read the recent past without ever catching up with the present")
 {
-    // A steady tone, the bar as far up as it goes at FOLLOW 200 %: the grains read 1.4 times as fast
-    // as the signal arrives. Reading past the newest sample would hit eight-second-old silence.
+    // A steady tone, the bar twice as far up as it goes: the grains read 1.4 times as fast as the
+    // signal arrives. Reading past the newest sample would hit eight-second-old silence.
     const auto in = test::sine(220.0, kRate, at(4.0), 0.2f);
     for (float size : { 20.0f, 180.0f, 500.0f })
     {
         CAPTURE(size);
         HoldSettings s = plain();
         s.mode = Mode::Live;
-        s.follow = 2.0f;
         s.sizeMs = size;
         s.smearMs = 300.0f;
-        const auto out = run(in, s, std::vector<float>(in.size(), 300.0f));
+        const auto out = run(in, s, std::vector<float>(in.size(), 600.0f));
         const float amp = peak(out.l, at(2.0), at(4.0));
         CHECK(amp > 0.05f);
         CHECK(maxStep(out.l, at(2.0), at(4.0)) < 2.5f * amp * (float) (2.0 * test::kPi * 220.0 * 1.42 / kRate));
@@ -420,14 +415,13 @@ TEST_CASE("HOLD stays finite and bounded with every control at its extreme")
                 s.smearMs = 1000.0f;
                 s.spreadCents = 50.0f;
                 s.reverse = 0.5f;
-                s.follow = 2.0f;
                 s.duck = 1.0f;
                 s.level = 1.0f;
                 s.decaySeconds = 0.5f;
                 s.feed = Feed::Out;
                 s.character = Character::Bit12;
                 const std::vector<MidiEvent> midi { { (int) at(1.0), 96, true } };
-                const auto out = run(in, [s](size_t) { return s; }, std::vector<float>(in.size(), 300.0f), midi,
+                const auto out = run(in, [s](size_t) { return s; }, std::vector<float>(in.size(), 600.0f), midi,
                                      { 333 });
                 for (const auto* ch : { &out.l, &out.r })
                     for (float v : *ch)

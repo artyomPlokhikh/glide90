@@ -64,6 +64,10 @@ public:
 
     void setLabel(const juce::String& text);
     const juce::String& getLabel() const { return label; }
+    // Where the dial is drawn, in this knob's coordinates.
+    juce::Rectangle<float> dialArea() const { return knobArea(); }
+    // Lights the pointer up (0-1): PICK SENS on each pick heard.
+    void setFlash(float amount);
 
     // Every knob takes one column of the grid and one row (a hero two), whatever its size, so that
     // names and values line up.
@@ -89,6 +93,7 @@ private:
     juce::String label;
     Size size;
     float value = 0.0f; // plain value
+    float flash = 0.0f;
     float dragNormalised = 0.0f;
     juce::Point<float> lastDrag;
     bool hover = false, dragging = false;

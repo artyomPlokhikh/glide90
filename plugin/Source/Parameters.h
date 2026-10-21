@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include <iterator>
 #include <optional>
 
 namespace glide90
@@ -43,13 +44,14 @@ inline constexpr const char* glideBar = "glide_bar";
 inline constexpr const char* glideTwinDetune = "glide_twin_detune";
 inline constexpr const char* glideTwinLevel = "glide_twin_level";
 inline constexpr const char* glideMix = "glide_mix";
-inline constexpr const char* glidePosition = "glide_position";
+
+// The ROUTING: where HOLD goes and which paths GLIDE bends, one of kRoutings.
+inline constexpr const char* routing = "routing";
 
 // Hold: captures the chord and holds it, bent by the glide bar.
 inline constexpr const char* holdOn = "hold_on";
 inline constexpr const char* holdMode = "hold_mode";
 inline constexpr const char* holdFreeze = "hold_freeze";
-inline constexpr const char* holdFollow = "hold_follow";
 inline constexpr const char* holdSize = "hold_size";
 inline constexpr const char* holdDensity = "hold_density";
 inline constexpr const char* holdSmear = "hold_smear";
@@ -58,7 +60,6 @@ inline constexpr const char* holdReverse = "hold_reverse";
 inline constexpr const char* holdDuck = "hold_duck";
 inline constexpr const char* holdDecay = "hold_decay";
 inline constexpr const char* holdLevel = "hold_level";
-inline constexpr const char* holdFeed = "hold_feed";
 inline constexpr const char* holdCharacter = "hold_character";
 inline constexpr const char* holdRoot = "hold_root";
 } // namespace ids
@@ -110,11 +111,55 @@ enum class OutputMode
     MonoSum
 };
 
-enum class GlidePosition
+// Where the glide bar bends the reverse gate. IN: what goes into it, so the reflections repeat each
+// movement (the bar before the unit, as on the record); OUT: what comes out, the whole tail moving at
+// once; OFF: the gate stays still.
+enum class GateBend
 {
-    Pre,
-    Post
+    In,
+    Out,
+    Off
 };
+
+// The modules' names, the same on their panels and in the ROUTING (and in its descriptions). DRY is the
+// direct guitar: a path, not a panel.
+namespace names
+{
+inline constexpr const char* in = "IN";
+inline constexpr const char* out = "OUT";
+inline constexpr const char* glide = "GLIDE";
+inline constexpr const char* reverseGate = "REVERSE GATE";
+inline constexpr const char* hold = "HOLD";
+inline constexpr const char* dry = "DRY";
+} // namespace names
+
+// One ROUTING: which paths GLIDE bends and where HOLD goes. The description names the modules exactly as
+// their panels do. HOLD into REVERSE GATE bends as the gate does; with REVERSE GATE off it goes to OUT,
+// bent if the routing bends the gate.
+struct Routing
+{
+    const char* name;
+    const char* description;
+    bool bendDry;       // the direct guitar
+    GateBend gate;      // REVERSE GATE: going in, coming out, or not at all
+    bool holdIntoGate;  // HOLD into REVERSE GATE, or to OUT
+    bool bendHold;      // HOLD going to OUT
+};
+inline constexpr Routing kRoutings[] {
+    { "INTO THE SWELL", "GLIDE bends DRY and REVERSE GATE in; HOLD into REVERSE GATE", true, GateBend::In, true, false },
+    { "BENT TAIL", "GLIDE bends DRY and REVERSE GATE out; HOLD into REVERSE GATE", true, GateBend::Out, true, false },
+    { "STILL ROOM", "GLIDE bends DRY; HOLD into REVERSE GATE", true, GateBend::Off, true, false },
+    { "ROOM ONLY", "GLIDE bends REVERSE GATE in; HOLD into REVERSE GATE", false, GateBend::In, true, false },
+    { "HOLD BESIDE", "GLIDE bends DRY, REVERSE GATE in and HOLD; HOLD to OUT", true, GateBend::In, false, true },
+    { "DRONE UNDER", "GLIDE bends DRY and REVERSE GATE in; HOLD to OUT, unbent", true, GateBend::In, false, false },
+    { "BENT DRONE", "GLIDE bends HOLD only; HOLD to OUT", false, GateBend::Off, false, true },
+    { "TAIL + DRONE", "GLIDE bends DRY and REVERSE GATE out; HOLD to OUT, unbent", true, GateBend::Out, false, false },
+};
+inline constexpr int kNumRoutings = (int) std::size(kRoutings);
+inline const Routing& routingAt(int index)
+{
+    return kRoutings[juce::jlimit(0, kNumRoutings - 1, index)];
+}
 
 // Note values for SYNC: label and length in quarter notes.
 struct Division

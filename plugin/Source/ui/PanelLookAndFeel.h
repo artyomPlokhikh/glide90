@@ -136,8 +136,8 @@ float readoutWidth(const juce::String& text, bool large = false);
 // A line on a screen, with the theme's halo under it.
 void strokeGlowing(juce::Graphics&, const juce::Path&, juce::Colour, float width);
 
-// A module's backing; `lifted` while it is being dragged.
-void drawCard(juce::Graphics&, juce::Rectangle<float> area, bool lifted = false);
+// A module's backing.
+void drawCard(juce::Graphics&, juce::Rectangle<float> area);
 void drawCardTitle(juce::Graphics&, const juce::String& title, juce::Rectangle<float> area);
 // A rule across a group of controls with the group's name in a gap in the middle (`quiet`: the
 // group does nothing in the current mode).
@@ -147,12 +147,12 @@ void drawGlass(juce::Graphics&, juce::Rectangle<float> area, float corner = 4.0f
 // One segment of a meter.
 void drawLed(juce::Graphics&, juce::Rectangle<float> area, juce::Colour colour, bool on);
 // A knob in the theme's style, pointing at `position` (0-1 over +-135 degrees); with `scale`, a
-// ring of ticks round it.
-void drawKnob(juce::Graphics&, juce::Rectangle<float> area, float position, bool enabled, bool large, bool scale = true);
+// ring of ticks round it. `flash` (0-1) lights its pointer up, with a halo.
+void drawKnob(juce::Graphics&, juce::Rectangle<float> area, float position, bool enabled, bool large, bool scale = true,
+              float flash = 0.0f);
 
 // The window's background, behind all the modules: matte, a blurred wash, a moving wash or a
-// halftone print. Built once per size and theme; the SMEAR wash moves with the bar. While a module
-// is dragged it also shows where the module will land and the shadow of the lifted one.
+// halftone print. Built once per size and theme; the SMEAR wash moves with the bar.
 class Backdrop : public juce::Component
 {
 public:
@@ -160,8 +160,6 @@ public:
 
     // Once per frame: what the sound does now (SMEAR's wash follows the bar).
     void setMotion(const Motion& m);
-    // Where a dragged module will land and where it is now (empty: no drag).
-    void setDragGuides(juce::Rectangle<int> landing, juce::Rectangle<int> lifted);
     // Call after the theme changed.
     void themeChanged();
 
@@ -175,11 +173,10 @@ private:
     float smearOffset() const;
     juce::String motionKey() const;
 
-    juce::Image composite, streaks, shadow;
+    juce::Image composite, streaks;
     float compositeScale = 0.0f;
     Motion motion;
     juce::String shownKey;
-    juce::Rectangle<int> landing, lifted;
 };
 
 class PanelLookAndFeel : public juce::LookAndFeel_V4
