@@ -78,9 +78,8 @@ private:
     int searchCost = 0;
 };
 
-// Bends one path by the glide bar: the pitch shifter plus the optional twin string, mixed with the
-// path itself by MIX. The path comes out delayed by latencySamples() whether it is bent or not, so
-// bent and straight paths stay in time with each other.
+// Bends one path by the glide bar with the pitch shifter. The path comes out delayed by
+// latencySamples() whether it is bent or not, so bent and straight paths stay in time with each other.
 class Bender
 {
 public:
@@ -90,24 +89,23 @@ public:
     void reset();
 
     // `cents`: the bar, one value per sample. With `bend` false the path fades (20 ms) to itself,
-    // delayed; the shifters then only keep their delay lines filled.
-    void process(float* const* channels, int numChannels, int numSamples, const SwaySettings& s, const float* cents,
-                 bool bend);
+    // delayed; the shifter then only keeps its delay lines filled.
+    void process(float* const* channels, int numChannels, int numSamples, const float* cents, bool bend);
 
     int latencySamples() const { return latency; }
-    // How far the bend is in now (0 - MIX): 0 while straight.
-    float mix() const { return enabledMix; }
+    // How far the bend is in now (0 - 1): 0 while straight.
+    float amount() const { return bendAmount; }
     const DualHeadShifter& mainShifter() const { return main; }
 
 private:
-    DualHeadShifter main, twin;
+    DualHeadShifter main;
     DelayLine dryDelay[kMaxChannels];
     int latency = 0;
-    float enabledMix = 0.0f, twinMix = 0.0f, mixStep = 0.0f;
+    float bendAmount = 0.0f, fadeStep = 0.0f;
 };
 
 // The whole Sway block: one bar position drives the pitch shifter (the same bar moves both sides
-// when Sway sits after the stereo SPX90), plus the optional twin string.
+// when Sway sits after the stereo SPX90).
 class SwayProcessor
 {
 public:

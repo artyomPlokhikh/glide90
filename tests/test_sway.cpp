@@ -1,3 +1,4 @@
+#include "PickDetector.h"
 #include "SwayProcessor.h"
 #include "TestUtil.h"
 
@@ -241,6 +242,39 @@ TEST_CASE("pick attacks are caught in fast strumming over ringing chords, once e
     }
 }
 
+TEST_CASE("at sensitivity 0 the pick detector is off; turned back on, it hears the next pick only")
+{
+    // A hard pick on a silent string: loud enough to be heard at any sensitivity above 0.
+    const double rate = 48000.0;
+    std::vector<float> pick((size_t) (0.5 * rate), 0.0f);
+    uint32_t seed = 3;
+    for (size_t i = 0; i < pick.size(); ++i)
+    {
+        const double t = (double) i / rate;
+        double v = 0.0;
+        for (int h = 1; h <= 16; ++h)
+            v += std::sin(2.0 * test::kPi * 196.0 * h * t) / h * std::exp(-t * (0.8 + 0.6 * h));
+        if (i < (size_t) (0.002 * rate))
+        {
+            seed = seed * 1664525u + 1013904223u;
+            v += (double) (seed >> 8) / 8388608.0 - 1.0;
+        }
+        pick[i] = (float) (0.3 * v);
+    }
+    sway::PickDetector d;
+    d.prepare(rate);
+    auto play = [&](float sensitivity) {
+        d.setSensitivity(sensitivity);
+        int heard = 0;
+        for (float x : pick)
+            heard += d.detect(x) ? 1 : 0;
+        return heard;
+    };
+    CHECK(play(0.0f) == 0);
+    CHECK(play(0.0f) == 0);
+    CHECK(play(0.01f) == 1);
+}
+
 TEST_CASE("with DYNAMICS, a harder pick strike bends further")
 {
     // Single plucks with a pick click, alternating hard and 12 dB softer, half a second apart.
@@ -356,8 +390,6 @@ TEST_CASE("sway stays finite and bounded with every control at its extreme")
         s.sensitivity = 1.0f;
         s.direction = BendDirection::Both;
         s.manual = -1.0f;
-        s.twinDetuneCents = 30.0f;
-        s.twinLevel = 1.0f;
         std::vector<float> in((size_t) (6 * rate));
         uint32_t seed = 1;
         for (size_t i = 0; i < in.size(); ++i)
@@ -459,32 +491,6 @@ TEST_CASE("a handover search costs the same few tens of thousands of steps at an
     CHECK(cost[1] < 60000);
 }
 
-TEST_CASE("the twin string comes in with the present signal, not an old one")
-{
-    const double rate = 48000.0;
-    SwaySettings s = steady();
-    s.twinLevel = 0.0f;
-    SwayProcessor p;
-    p.prepare(rate);
-    auto loud = test::sine(330.0, rate, 256 * 200, 0.5f);
-    for (size_t i = 0; i < loud.size(); i += 256)
-        p.process(loud.data() + i, 256, s);
-    std::vector<float> quiet(256 * 200, 0.0f);
-    for (size_t i = 0; i < quiet.size(); i += 256)
-        p.process(quiet.data() + i, 256, s);
-
-    s.twinLevel = 1.0f; // turned up in silence: nothing may come out
-    std::vector<float> after(256 * 40, 0.0f);
-    float peak = 0.0f;
-    for (size_t i = 0; i < after.size(); i += 256)
-    {
-        p.process(after.data() + i, 256, s);
-        for (size_t k = i; k < i + 256; ++k)
-            peak = std::max(peak, std::abs(after[k]));
-    }
-    CHECK(peak < 1e-5f);
-}
-
 TEST_CASE("between strikes the bar rests at the open pitch, also when bending both ways")
 {
     const double rate = 48000.0;
@@ -537,7 +543,6 @@ TEST_CASE("a path that is not bent comes through delayed, and bending it in and 
     const double rate = 48000.0;
     const auto x = test::sine(440.0, rate, (size_t) (3.0 * rate), 0.3f);
     const std::vector<float> bar(x.size(), -150.0f);
-    SwaySettings s;
 
     // Straight: the path itself, one latency late, to the sample.
     {
@@ -547,7 +552,7 @@ TEST_CASE("a path that is not bent comes through delayed, and bending it in and 
         for (size_t i = 0; i < y.size(); i += 256)
         {
             float* ch[] = { y.data() + i };
-            b.process(ch, 1, (int) std::min<size_t>(256, y.size() - i), s, bar.data() + i, false);
+            b.process(ch, 1, (int) std::min<size_t>(256, y.size() - i), bar.data() + i, false);
         }
         const auto d = (size_t) b.latencySamples();
         float err = 0.0f;
@@ -564,7 +569,7 @@ TEST_CASE("a path that is not bent comes through delayed, and bending it in and 
     {
         float* ch[] = { y.data() + i };
         const bool bend = i >= (size_t) rate && i < (size_t) (2.0 * rate);
-        b.process(ch, 1, (int) std::min<size_t>(256, y.size() - i), s, bar.data() + i, bend);
+        b.process(ch, 1, (int) std::min<size_t>(256, y.size() - i), bar.data() + i, bend);
     }
     const auto at = [&](double seconds) { return (size_t) (seconds * rate); };
     CHECK(std::abs(1200.0 * std::log2(test::measureFrequency(y, at(1.3), at(1.9), rate) / 440.0) + 150.0) < 3.0);

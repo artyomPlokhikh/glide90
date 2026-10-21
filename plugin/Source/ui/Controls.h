@@ -68,6 +68,8 @@ public:
     juce::Rectangle<float> dialArea() const { return knobArea(); }
     // Lights the pointer up (0-1): PICK SENS on each pick heard.
     void setFlash(float amount);
+    // A padlock before the name: a control of the rig, which A/B and presets leave alone.
+    void setLocked(bool);
 
     // Every knob takes one column of the grid and one row (a hero two), whatever its size, so that
     // names and values line up.
@@ -94,6 +96,7 @@ private:
     Size size;
     float value = 0.0f; // plain value
     float flash = 0.0f;
+    bool locked = false;
     float dragNormalised = 0.0f;
     juce::Point<float> lastDrag;
     bool hover = false, dragging = false;

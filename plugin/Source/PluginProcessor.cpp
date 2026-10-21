@@ -4,6 +4,7 @@
 #include "RomPrograms.h"
 
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <utility>
 
@@ -19,16 +20,20 @@ const juce::Identifier kShapeTree { "SHAPE" }, kPointTree { "POINT" }, kXProp { 
 const juce::Identifier kPresetFileTree { "GLIDE90_PRESET" };
 const juce::Identifier kPresetIsUserProp { "presetIsUser" };
 const juce::Identifier kAbTree { "AB" }, kAbSlotProp { "slot" }, kAbIndexProp { "selected" };
+// HOLD's frozen sound, saved with the project (not a preset's or an A/B slot's).
+const juce::Identifier kHoldFrozenTree { "HoldFrozen" }, kHoldRateProp { "rate" }, kHoldReadFromProp { "readFrom" },
+    kHoldSamplesProp { "samples" };
 constexpr const char* kPresetExtension = ".glide90";
 
 // The only parameters that belong to the plugin instance rather than to the sound: INPUT and the
-// input mode, which match the plugin to the user's rig (the guitar's level, a mono or stereo track),
-// and HOLD's FREEZE key, which is played like a footswitch. A and B share them and presets leave them
-// alone. Everything else is part of the sound: in each A/B slot, in presets and in undo (INPUT and
-// the input mode are in undo too; FREEZE is not).
+// input and output modes, which match the plugin to the user's rig (the guitar's level, a mono or
+// stereo track, one amp or two), and HOLD's FREEZE key, which is played like a footswitch. A and B
+// share them and presets leave them alone; the editor marks the rig's ones with a lock. Everything
+// else is part of the sound: in each A/B slot, in presets and in undo (INPUT and the modes are in
+// undo too; FREEZE is not).
 const juce::StringArray& instanceParameters()
 {
-    static const juce::StringArray ids { ids::input, ids::inputMode, ids::holdFreeze };
+    static const juce::StringArray ids { ids::input, ids::inputMode, ids::outputMode, ids::holdFreeze };
     return ids;
 }
 
@@ -65,29 +70,23 @@ const std::vector<FactoryPreset>& factoryPresets()
             { ids::glideShape, shape(ShapePreset::Dive) }, { ids::glideRandom, 0.2f }, { ids::glideSmooth, 0.2f } } },
         { "Drowned Shimmy", true,
           { { ids::gateRoomSize, 20.0f }, { ids::gateLiveness, 7.0f }, { ids::gatePreDelay, 75.0f }, { ids::glidePeriod, 900.0f }, { ids::glideDepth, 45.0f }, { ids::glideShape, shape(ShapePreset::Shimmy) },
-            { ids::glideRandom, 0.5f }, { ids::glideSmooth, 0.35f }, { ids::glideTwinDetune, 10.0f },
-            { ids::glideTwinLevel, 0.4f } } },
-        // Two strings tuned almost alike, bent together.
-        { "Two-String Unison", true,
-          { { ids::gateRoomSize, 20.0f }, { ids::gateLiveness, 4.0f }, { ids::gatePreDelay, 25.0f }, { ids::glidePeriod, 1500.0f }, { ids::glideDepth, 15.0f }, { ids::glideRandom, 0.6f },
-            { ids::glideSmooth, 0.5f }, { ids::glideTwinDetune, 15.0f }, { ids::glideTwinLevel, 1.0f } } },
+            { ids::glideRandom, 0.5f }, { ids::glideSmooth, 0.35f } } },
         // Soft playing with the bar and the guitar's tone knob down.
         { "Dark Slow Bend", true,
           { { ids::gateRoomSize, 20.0f }, { ids::gateLiveness, 5.0f }, { ids::gatePreDelay, 25.0f }, { ids::gateLpf, 8.0f /* 2.5 kHz */ }, { ids::glidePeriod, 1200.0f }, { ids::glideDepth, 25.0f }, { ids::glideRandom, 0.4f },
             { ids::glideSmooth, 0.5f } } },
         // Hardly a bend at all: a clean part that never quite sits still.
         { "Slow Drift", true,
-          { { ids::gateRoomSize, 8.0f }, { ids::gateLiveness, 5.0f }, { ids::gatePreDelay, 10.0f }, { ids::gateMix, 0.45f }, { ids::glidePeriod, 2400.0f },
+          { { ids::gateRoomSize, 8.0f }, { ids::gateLiveness, 5.0f }, { ids::gatePreDelay, 10.0f }, { ids::dryLevel, -5.2f }, { ids::gateLevel, -6.9f },
+            { ids::glidePeriod, 2400.0f },
             { ids::glideDepth, 8.0f }, { ids::glideDirection, 1.0f }, { ids::glideRandom, 0.7f }, { ids::glideSmooth, 0.6f } } },
         // Everything at once, the bar after the reverb: a wall.
         { "Wall", true,
           { { ids::gateRoomSize, 20.0f }, { ids::gateLiveness, 10.0f }, { ids::gatePreDelay, 0.1f }, { ids::routing, 1.0f /* BENT TAIL */ }, { ids::glidePeriod, 1200.0f },
-            { ids::glideDepth, 25.0f }, { ids::glideRandom, 0.4f }, { ids::glideSmooth, 0.4f }, { ids::glideTwinDetune, 12.0f },
-            { ids::glideTwinLevel, 0.7f } } },
+            { ids::glideDepth, 25.0f }, { ids::glideRandom, 0.4f }, { ids::glideSmooth, 0.4f } } },
         { "Seasick (Sync)", true,
           { { ids::glideMode, 1.0f }, { ids::glideDivision, 3.0f }, { ids::glideShape, shape(ShapePreset::Sine) },
-            { ids::glideDepth, 15.0f }, { ids::glideDirection, 1.0f }, { ids::glideRandom, 0.3f },
-            { ids::glideTwinDetune, 12.0f }, { ids::glideTwinLevel, 0.5f } } },
+            { ids::glideDepth, 15.0f }, { ids::glideDirection, 1.0f }, { ids::glideRandom, 0.3f } } },
         { "Bar-Long Swell (Sync)", true,
           { { ids::gateRoomSize, 8.0f }, { ids::gateLiveness, 5.0f }, { ids::gatePreDelay, 10.0f }, { ids::glideMode, 1.0f }, { ids::glideDivision, 2.0f }, { ids::glideShape, shape(ShapePreset::Swell) },
             { ids::glideDepth, 30.0f }, { ids::glideRandom, 0.1f } } },
@@ -106,23 +105,23 @@ const std::vector<FactoryPreset>& factoryPresets()
         { "Sampled Feedback", true,
           { { ids::gateRoomSize, 20.0f }, { ids::gateLiveness, 5.0f }, { ids::glideMode, 3.0f },
             { ids::glideManualSource, (float) ManualSource::PitchBend }, { ids::glideDepth, 200.0f },
-            { ids::glideDirection, 1.0f }, { ids::glideSmooth, 0.15f }, { ids::glideMix, 0.0f }, { ids::holdOn, 1.0f },
+            { ids::glideDirection, 1.0f }, { ids::glideSmooth, 0.15f }, { ids::routing, 7.0f /* BENT SWELL */ }, { ids::holdOn, 1.0f },
             { ids::holdMode, (float) hold::Mode::Midi }, { ids::holdDuck, 0.3f }, { ids::holdLevel, -0.9f },
             { ids::holdSize, 250.0f }, { ids::holdDensity, 3.0f }, { ids::holdSpread, 4.0f } } },
         // FREEZE a chord into a slow, thick wall that keeps drifting with the bar.
         { "Frozen Wall", true,
           { { ids::gateRoomSize, 20.0f }, { ids::gateLiveness, 8.0f }, { ids::gatePreDelay, 50.0f }, { ids::glidePeriod, 2400.0f },
             { ids::glideDepth, 20.0f }, { ids::glideRandom, 0.6f }, { ids::glideSmooth, 0.5f }, { ids::holdOn, 1.0f },
-            { ids::holdMode, (float) hold::Mode::Latch }, { ids::holdSize, 300.0f }, { ids::holdDensity, 6.0f },
+            { ids::holdMode, (float) hold::Mode::Manual }, { ids::holdSize, 300.0f }, { ids::holdDensity, 6.0f },
             { ids::holdSmear, 400.0f }, { ids::holdSpread, 20.0f }, { ids::holdReverse, 0.2f }, { ids::holdDuck, 0.2f },
             { ids::holdLevel, -1.9f } } },
         // Grains of the last moments trailing behind the guitar, some backwards.
         { "Smear Trail", true,
-          { { ids::gateRoomSize, 8.0f }, { ids::gateLiveness, 5.0f }, { ids::gatePreDelay, 10.0f }, { ids::gateMix, 0.6f },
+          { { ids::gateRoomSize, 8.0f }, { ids::gateLiveness, 5.0f }, { ids::gatePreDelay, 10.0f }, { ids::dryLevel, -8.0f }, { ids::gateLevel, -4.4f },
             { ids::glidePeriod, 1200.0f }, { ids::glideDepth, 15.0f }, { ids::glideRandom, 0.4f }, { ids::holdOn, 1.0f },
             { ids::holdMode, (float) hold::Mode::Live }, { ids::holdSize, 120.0f }, { ids::holdDensity, 5.0f },
             { ids::holdSmear, 500.0f }, { ids::holdSpread, 12.0f }, { ids::holdReverse, 0.4f }, { ids::holdDuck, 0.5f },
-            { ids::routing, 4.0f /* HOLD BESIDE */ }, { ids::holdLevel, -4.4f } } },
+            { ids::routing, 3.0f /* HOLD BESIDE */ }, { ids::holdLevel, -4.4f } } },
         { "Reverse Gate Only", true, { { ids::glideOn, 0.0f } } },
         { "Short Reverse", true,
           { { ids::gateRoomSize, 8.0f }, { ids::gateLiveness, 5.0f }, { ids::gatePreDelay, 10.0f }, { ids::glideOn, 0.0f } } },
@@ -213,17 +212,18 @@ Glide90Processor::Glide90Processor()
 {
     auto p = [this](const char* id) { return apvts.getRawParameterValue(id); };
     raw = { p(ids::gateRoomSize),        p(ids::gateLiveness),     p(ids::gatePreDelay),
-            p(ids::gateLpf),          p(ids::gateMix),           p(ids::output),         p(ids::input),
+            p(ids::gateLpf),          p(ids::gateLevel),           p(ids::output),         p(ids::input),
             p(ids::gateOn),           p(ids::glideOn),
             p(ids::glideMode),        p(ids::glidePeriod),       p(ids::glideDivision),  p(ids::glideDepth),
             p(ids::glideDirection),   p(ids::glideRandom),       p(ids::glideSmooth),    p(ids::glideShape),
             p(ids::glideTriggerSource), p(ids::pickSensitivity), p(ids::glideManualSource), p(ids::glideBar),
-            p(ids::glideTwinDetune),  p(ids::glideTwinLevel),    p(ids::glideMix),       p(ids::routing),
+            p(ids::routing),
             p(ids::outputMode),       p(ids::glideDynamics),     p(ids::inputMode),
             p(ids::holdOn),           p(ids::holdMode),          p(ids::holdFreeze),
             p(ids::holdSize),         p(ids::holdDensity),       p(ids::holdSmear),      p(ids::holdSpread),
             p(ids::holdReverse),      p(ids::holdDuck),          p(ids::holdDecay),      p(ids::holdLevel),
-            p(ids::holdCharacter),     p(ids::holdRoot) };
+            p(ids::holdCharacter),     p(ids::holdRoot),          p(ids::holdSwell),      p(ids::holdTail),
+            p(ids::holdVoices),       p(ids::dryLevel) };
     for (size_t i = 0; i < presetShapes.size(); ++i)
         presetShapes[i] = sway::makeShape((sway::ShapePreset) i);
     customShape = audioCustomShape = presetShapes[0];
@@ -254,6 +254,13 @@ void Glide90Processor::prepareToPlay(double sampleRate, int samplesPerBlock)
     dryBender.prepare(sampleRate);
     gateBender.prepare(sampleRate);
     holdEngine.prepare(sampleRate);
+    {
+        // Room for a whole capture, so that the audio thread copies without allocating.
+        const juce::SpinLock::ScopedLockType lock(heldLock);
+        const auto room = (size_t) std::ceil(hold::HoldEngine::kSlotSeconds * sampleRate) + 8;
+        heldCopy.reserve(room);
+        recentCopy.reserve(room);
+    }
     // The inputs, their sum, a stand-in for a missing right output; the bar; HOLD's send and output;
     // the effect's input and output.
     work.setSize(11, maxBlock);
@@ -262,8 +269,8 @@ void Glide90Processor::prepareToPlay(double sampleRate, int samplesPerBlock)
     bypassDelay.setSize(2, latency + 1);
     dryOut.setSize(2, maxBlock);
     fadeLength = juce::jmax(1, juce::roundToInt(0.01 * sampleRate));
-    inputGain.reset(sampleRate, 0.02);
-    outputGain.reset(sampleRate, 0.02);
+    for (auto* gain : { &inputGain, &outputGain, &dryGain, &gateGain })
+        gain->reset(sampleRate, 0.02);
     reset();
 }
 
@@ -275,11 +282,14 @@ void Glide90Processor::reset()
     stereoMix = choice(raw.inputMode) == (int) InputMode::Stereo ? 1.0f : 0.0f;
     inputGain.setCurrentAndTargetValue(gainOf(raw.input->load()));
     outputGain.setCurrentAndTargetValue(gainOf(raw.output->load()));
+    dryGain.setCurrentAndTargetValue(gainOf(raw.dryLevel->load()));
+    gateGain.setCurrentAndTargetValue(gainOf(raw.gateLevel->load()));
     spxEngine.reset();
     glideProcessor.reset();
     dryBender.reset();
     gateBender.reset();
     holdEngine.reset();
+    holdAgainAfterReset();
     bypassDelay.clear();
     bypassPos = 0;
     wasBypassed = false;
@@ -324,6 +334,7 @@ void Glide90Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
         dryBender.reset();
         gateBender.reset();
         holdEngine.reset();
+        holdAgainAfterReset();
         inputRampLeft = fadeLength;
         wasBypassed = false;
         bypassFadeLeft = 0;
@@ -351,11 +362,27 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
     int noteAt = -1;
     float noteVelocity = 1.0f;
     numHoldMidi = 0;
+    if (!midi.isEmpty())
+        midiSeen.store(true);
+    // A project that reopened frozen: its sound, once FREEZE is on (so that FREEZE captures nothing).
+    if (heldPending.load(std::memory_order_acquire) && raw.holdFreeze->load() > 0.5f)
+    {
+        const juce::SpinLock::ScopedTryLockType lock(heldLock);
+        if (lock.isLocked())
+        {
+            holdEngine.restoreHeld(pendingHeld.data(), (int) pendingHeld.size(), pendingRate, pendingReadFrom);
+            heldPending.store(false);
+        }
+    }
     for (const auto meta : midi)
     {
         const auto m = meta.getMessage();
         if ((m.isNoteOn() || m.isNoteOff()) && numHoldMidi < kMaxHoldMidi)
-            holdMidi[(size_t) numHoldMidi++] = { meta.samplePosition, m.getNoteNumber(), m.isNoteOn() };
+            holdMidi[(size_t) numHoldMidi++] = { meta.samplePosition, m.getNoteNumber(), m.isNoteOn(),
+                                                 m.getFloatVelocity(), hold::MidiEvent::Kind::Note };
+        else if ((m.isSustainPedalOn() || m.isSustainPedalOff()) && numHoldMidi < kMaxHoldMidi)
+            holdMidi[(size_t) numHoldMidi++] = { meta.samplePosition, 0, m.isSustainPedalOn(), 1.0f,
+                                                 hold::MidiEvent::Kind::Sustain };
         if (m.isPitchWheel())
             pitchBend = (float) (m.getPitchWheelValue() - 8192) / 8192.0f;
         else if (m.isControllerOfType(1))
@@ -376,10 +403,12 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
     s.er.liveness = choice(raw.gateLiveness);
     s.er.delayMs = (float) juce::roundToInt(raw.gatePreDelay->load() * 10.0f) / 10.0f;
     s.er.lpfHz = spx::kLpfValuesHz[(size_t) juce::jlimit(0, (int) spx::kLpfValuesHz.size() - 1, choice(raw.gateLpf))];
-    s.balance = raw.gateMix->load();
+    s.unmixed = true; // DRY and the gate's LEVEL instead of the unit's BALANCE
     s.bypass = raw.gateOn->load() < 0.5f;
     inputGain.setTargetValue(gainOf(raw.input->load()));
     outputGain.setTargetValue(gainOf(raw.output->load()));
+    dryGain.setTargetValue(gainOf(raw.dryLevel->load()));
+    gateGain.setTargetValue(gainOf(raw.gateLevel->load()));
 
     // Host tempo and position for SYNC.
     double bpm = 120.0, hostBeats = -1.0;
@@ -408,9 +437,6 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
     w.sensitivity = raw.pickSensitivity->load();
     w.dynamics = raw.glideDynamics->load();
     w.midiTriggerVelocity = noteVelocity;
-    w.twinDetuneCents = raw.glideTwinDetune->load();
-    w.twinLevel = raw.glideTwinLevel->load();
-    w.mix = raw.glideMix->load();
 
     // MANUAL: where the bar is. Pitch bend is bipolar; the others push from rest, or sweep across
     // the open pitch when the direction is BOTH.
@@ -441,7 +467,12 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
     hold::HoldSettings h;
     h.enabled = raw.holdOn->load() > 0.5f;
     h.mode = (hold::Mode) choice(raw.holdMode);
-    h.latched = raw.holdFreeze->load() > 0.5f;
+    h.frozen = raw.holdFreeze->load() > 0.5f;
+    h.swellMs = raw.holdSwell->load();
+    h.tailMs = raw.holdTail->load();
+    const int voices = choice(raw.holdVoices);
+    h.voicing = voices == 0 ? hold::Voicing::Poly : voices == 1 ? hold::Voicing::Mono : hold::Voicing::Glide;
+    h.glideMs = kHoldGlideMs[(size_t) juce::jlimit(0, (int) std::size(kHoldGlideMs) - 1, voices - 2)];
     // One PICK SENS for the plugin: how hard the player picks is the same for the glide and HOLD.
     h.sensitivity = raw.pickSensitivity->load();
     h.sizeMs = raw.holdSize->load();
@@ -453,20 +484,16 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
     const float decay = raw.holdDecay->load();
     h.decaySeconds = decay >= kHoldDecayForever ? std::numeric_limits<float>::infinity() : decay;
     h.level = gainOf(raw.holdLevel->load());
-    // The ROUTING: where HOLD goes and what GLIDE bends. With the reverse gate bypassed there is no gate
-    // to feed: HOLD goes to the output instead.
+    // The ROUTING: where HOLD goes and how GLIDE bends the gate (DRY it bends whenever it is on). With
+    // the reverse gate bypassed there is no gate to feed: HOLD goes to the output instead.
     const auto& routing = routingAt(choice(raw.routing));
     h.feed = s.bypass || !routing.holdIntoGate ? hold::Feed::Out : hold::Feed::Gate;
-    // Each path is bent once at most: HOLD into the gate bends itself only when the gate bends its
-    // input; with the gate bent at its output the gate's bender bends it with the reverb. Sent out
-    // because the gate is off, HOLD bends if the routing bends the gate.
     const auto gateBend = routing.gate;
     const bool wantAfter = gateBend == GateBend::Out ? true : gateBend == GateBend::In ? false : gateBenderAfter;
-    h.bend = w.enabled
-             && (h.feed == hold::Feed::Gate ? gateBend == GateBend::In
-                                            : (routing.holdIntoGate ? gateBend != GateBend::Off : routing.bendHold));
+    h.bend = w.enabled && holdBendsItself(routing, h.feed == hold::Feed::Gate);
     h.character = (hold::Character) choice(raw.holdCharacter);
-    h.rootNote = choice(raw.holdRoot);
+    h.autoRoot = choice(raw.holdRoot) == kHoldRootAuto;
+    h.rootNote = h.autoRoot ? 60 : choice(raw.holdRoot); // AUTO plays at C3 until a clear note is picked
 
     const double beatsPerSample = bpm / 60.0 / currentRate;
     for (int start = 0; start < n;)
@@ -491,11 +518,14 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
         int chunkNotes = 0;
         for (int i = 0; i < numHoldMidi; ++i)
             if (const auto& e = holdMidi[(size_t) i]; e.sample >= start && (e.sample < start + num || start + num == n))
-                chunkMidi[(size_t) chunkNotes++] = { e.sample - start, e.note, e.on };
+            {
+                chunkMidi[(size_t) chunkNotes] = e;
+                chunkMidi[(size_t) chunkNotes++].sample -= start;
+            }
         holdChunk.midi = chunkMidi.data();
         holdChunk.numMidi = chunkNotes;
         Bends bends;
-        bends.dry = w.enabled && routing.bendDry;
+        bends.dry = w.enabled;
         // While it moves, the bender bends only where it is wanted (it fades out on the wrong side).
         bends.gate = w.enabled && gateBend != GateBend::Off && (gateBend == GateBend::Out) == gateBenderAfter;
         processChunk(buffer, start, num, s, chunk, noteAt >= start && noteAt < start + num ? noteAt - start : -1,
@@ -520,6 +550,7 @@ void Glide90Processor::processInternal(juce::AudioBuffer<float>& buffer, juce::M
     lastGlidePhase.store(glideProcessor.phase());
     lastPickAttacks.store(glideProcessor.pickAttacks());
     lastPicksHeard.store(holdEngine.pickAttacks()); // HOLD's detector listens even while HOLD is off
+    shareHeld();
 }
 
 void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start, int num, const spx::SpxSettings& s,
@@ -603,7 +634,7 @@ void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start,
     if (!gateBenderAfter)
     {
         float* channels[] = { effect };
-        gateBender.process(channels, 1, num, w, bar, bends.gate);
+        gateBender.process(channels, 1, num, bar, bends.gate);
     }
     if (holdHeard)
         juce::FloatVectorOperations::add(effect, holdGate, num);
@@ -614,7 +645,7 @@ void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start,
     // both) from a stereo one, in either mode.
     {
         float* channels[] = { inL, inR };
-        dryBender.process(channels, twoInputs ? 2 : 1, num, w, bar, bends.dry);
+        dryBender.process(channels, twoInputs ? 2 : 1, num, bar, bends.dry);
         if (!twoInputs)
             juce::FloatVectorOperations::copy(inR, inL, num);
     }
@@ -635,7 +666,7 @@ void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start,
     {
         // BEND OUT: the whole reverb, and HOLD in it, moves at once.
         float* channels[] = { wetL, wetR };
-        gateBender.process(channels, 2, num, w, bar, bends.gate);
+        gateBender.process(channels, 2, num, bar, bends.gate);
     }
     if (moveFadeLeft > 0)
     {
@@ -651,6 +682,19 @@ void Glide90Processor::processChunk(juce::AudioBuffer<float>& buffer, int start,
             wetR[i] *= gain;
         }
     }
+    // DRY and the reverse gate (HOLD in it included), each at its own level.
+    auto level = [num](juce::SmoothedValue<float>& gain, float* a, float* b) {
+        if (!gain.isSmoothing() && juce::exactlyEqual(gain.getTargetValue(), 1.0f))
+            return;
+        for (int i = 0; i < num; ++i)
+        {
+            const float g = gain.getNextValue();
+            a[i] *= g;
+            b[i] *= g;
+        }
+    };
+    level(dryGain, l, r);
+    level(gateGain, wetL, wetR);
     juce::FloatVectorOperations::add(l, wetL, num);
     juce::FloatVectorOperations::add(r, wetR, num);
     if (holdHeard)
@@ -690,10 +734,10 @@ double Glide90Processor::getTailLengthSeconds() const
     double tail = 2.2; // ROOM SIZE 20 plus 400 ms delay
     if (raw.holdOn->load() > 0.5f)
     {
-        // A held chord dies away over DECAY (three of them to silence), or never: then as long as a
-        // host will sensibly wait.
+        // A held chord falls 60 dB over DECAY, or never dies away: then as long as a host will sensibly
+        // wait.
         const float decay = raw.holdDecay->load();
-        tail += decay >= kHoldDecayForever ? 20.0 : std::min(20.0, 3.0 * (double) decay);
+        tail += decay >= kHoldDecayForever ? 20.0 : std::min(20.0, (double) decay);
     }
     return tail;
 }
@@ -1053,6 +1097,83 @@ void Glide90Processor::setParameter(const char* id, float plainValue)
     p->endChangeGesture();
 }
 
+// --- HOLD's held sound, shared ---
+
+void Glide90Processor::shareHeld()
+{
+    // After a new capture (or when FREEZE takes or lets go of it), and when the editor asks for LIVE's
+    // last moments: copied under a lock the message thread may hold, else next block.
+    const int version = holdEngine.display().heldVersion.load();
+    const bool frozen = holdEngine.heldIsFrozen();
+    if (version == heldCopiedVersion && frozen == heldCopyFrozen && !recentWanted.load())
+        return;
+    const juce::SpinLock::ScopedTryLockType lock(heldLock);
+    if (!lock.isLocked())
+        return;
+    if (version != heldCopiedVersion)
+    {
+        holdEngine.copyHeld(heldCopy, heldCopyReadFrom);
+        heldCopyRate = currentRate;
+        heldCopiedVersion = version;
+    }
+    heldCopyFrozen = frozen;
+    if (recentWanted.exchange(false))
+    {
+        holdEngine.copyRecent(recentCopy, (int) (hold::HoldEngine::kSlotSeconds * currentRate));
+        recentReady.store(true);
+    }
+}
+
+void Glide90Processor::holdAgainAfterReset()
+{
+    // A reset (the host's bypass, a new sample rate) clears HOLD; what FREEZE holds comes back.
+    if (raw.holdFreeze->load() < 0.5f)
+        return;
+    const juce::SpinLock::ScopedTryLockType lock(heldLock);
+    if (lock.isLocked() && heldCopyFrozen && !heldCopy.empty())
+        holdEngine.restoreHeld(heldCopy.data(), (int) heldCopy.size(), heldCopyRate, heldCopyReadFrom);
+}
+
+bool Glide90Processor::copyHoldSound(std::vector<float>& samples, float& readFrom, double& rate)
+{
+    bool live;
+    {
+        const juce::SpinLock::ScopedLockType lock(heldLock);
+        live = choice(raw.holdMode) == (int) hold::Mode::Live && !heldCopyFrozen;
+        if (!live)
+        {
+            samples = heldCopy;
+            readFrom = heldCopyReadFrom;
+            rate = heldCopyRate;
+            return samples.size() >= 4;
+        }
+    }
+    // LIVE: the audio thread copies the last moments at its next block; wait for it a little.
+    recentReady.store(false);
+    recentWanted.store(true);
+    for (int i = 0; i < 50 && !recentReady.load(); ++i)
+        juce::Thread::sleep(2);
+    const juce::SpinLock::ScopedLockType lock(heldLock);
+    if (!recentReady.exchange(false))
+        return false;
+    samples = recentCopy;
+    readFrom = 0.0f;
+    rate = currentRate;
+    return samples.size() >= 4;
+}
+
+hold::HoldSettings Glide90Processor::holdSoundSettings() const
+{
+    hold::HoldSettings h;
+    h.sizeMs = raw.holdSize->load();
+    h.density = choice(raw.holdDensity);
+    h.smearMs = raw.holdSmear->load();
+    h.spreadCents = raw.holdSpread->load();
+    h.reverse = raw.holdReverse->load();
+    h.character = (hold::Character) choice(raw.holdCharacter);
+    return h;
+}
+
 // --- State ---
 
 void Glide90Processor::getStateInformation(juce::MemoryBlock& destData)
@@ -1080,6 +1201,21 @@ void Glide90Processor::getStateInformation(juce::MemoryBlock& destData)
             ab.appendChild(slot.createCopy().setProperty(kAbSlotProp, i, nullptr), nullptr);
     }
     st.appendChild(ab, nullptr);
+    {
+        // What FREEZE holds (or a reopened project's frozen sound not yet played).
+        const juce::SpinLock::ScopedLockType lock(heldLock);
+        const bool pending = heldPending.load();
+        const auto& samples = pending ? pendingHeld : heldCopy;
+        if (raw.holdFreeze->load() > 0.5f && (pending || heldCopyFrozen) && samples.size() >= 4)
+        {
+            juce::MemoryBlock block(samples.data(), samples.size() * sizeof(float));
+            juce::ValueTree frozen(kHoldFrozenTree);
+            frozen.setProperty(kHoldRateProp, pending ? pendingRate : heldCopyRate, nullptr)
+                .setProperty(kHoldReadFromProp, pending ? pendingReadFrom : heldCopyReadFrom, nullptr)
+                .setProperty(kHoldSamplesProp, block.toBase64Encoding(), nullptr);
+            st.appendChild(frozen, nullptr);
+        }
+    }
     if (auto xml = st.createXml())
         copyXmlToBinary(*xml, destData);
 }
@@ -1108,6 +1244,25 @@ void Glide90Processor::setStateInformation(const void* data, int sizeInBytes)
     st.removeChild(st.getChildWithName(kAbTree), nullptr);
     st.removeProperty(kScaleProp, nullptr);
 
+    // HOLD's frozen sound: handed to the audio thread before FREEZE is set, so that a block seeing
+    // FREEZE on finds it there.
+    bool frozenSound = false;
+    if (const auto frozen = st.getChildWithName(kHoldFrozenTree); frozen.isValid())
+    {
+        juce::MemoryBlock block;
+        if (block.fromBase64Encoding(frozen.getProperty(kHoldSamplesProp).toString()) && block.getSize() >= 4 * sizeof(float))
+        {
+            const juce::SpinLock::ScopedLockType lock(heldLock);
+            pendingHeld.resize(block.getSize() / sizeof(float));
+            std::memcpy(pendingHeld.data(), block.getData(), pendingHeld.size() * sizeof(float));
+            pendingRate = (double) frozen.getProperty(kHoldRateProp, 48000.0);
+            pendingReadFrom = (float) frozen.getProperty(kHoldReadFromProp, 0.0f);
+            frozenSound = true;
+        }
+        st.removeChild(frozen, nullptr);
+    }
+    heldPending.store(frozenSound, std::memory_order_release);
+
     // The rest is the slot that plays: the parameters (the instance's own too), and the slot's
     // other parts beside them.
     juce::ValueTree active(kPresetFileTree), params(st.getType());
@@ -1123,6 +1278,9 @@ void Glide90Processor::setStateInformation(const void* data, int sizeInBytes)
     // state at whatever they were. Set every value exactly, missing ones to their default; not as
     // edits, so a host in touch or latch mode records nothing.
     applySlotState(active, true, false);
+    // FREEZE on with nothing saved to hold would hold silence: it opens off.
+    if (!frozenSound && raw.holdFreeze->load() > 0.5f)
+        apvts.getParameter(ids::holdFreeze)->setValueNotifyingHost(0.0f);
     for (auto& u : undos)
         u.clearUndoHistory();
 }

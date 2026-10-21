@@ -3,7 +3,7 @@
 //   glide90_render in=guitar.wav out=wet.wav program=17 rs=20 liv=4 delay=25 balance=1
 //   glide90_render in=impulse rate=44100 seconds=2 out=ir.wav program=17
 //   input=-6 output=0 (the plugin's INPUT and OUTPUT, in dB)
-//   sway=1 depth=30 period=333 shape=0 random=0.15 smooth=0.2 direction=0 twin=0 twinlevel=0
+//   sway=1 depth=30 period=333 shape=0 random=0.15 smooth=0.2 direction=0
 //   (shape: index into sway::kShapePresetNames; direction: 0 down, 1 both, 2 up)
 
 #include "RomPrograms.h"
@@ -79,8 +79,6 @@ int main(int argc, char** argv)
     w.random = (float) num("random", w.random);
     w.smooth = (float) num("smooth", w.smooth);
     w.direction = (sway::BendDirection) (int) num("direction", 0);
-    w.twinDetuneCents = (float) num("twin", w.twinDetuneCents);
-    w.twinLevel = (float) num("twinlevel", w.twinLevel);
 
     const int block = 512;
     spx::SpxEngine engine;

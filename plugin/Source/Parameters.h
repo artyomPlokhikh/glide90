@@ -10,14 +10,16 @@ namespace glide90
 
 namespace ids
 {
-// The plugin's first and last stage: every sound passes through both. INPUT and the input mode
-// belong to the rig (presets and A/B leave them alone); OUTPUT is part of the sound.
+// The plugin's first and last stage: every sound passes through both. INPUT and both modes belong
+// to the rig (presets and A/B leave them alone); OUTPUT is part of the sound.
 inline constexpr const char* input = "input";
 inline constexpr const char* inputMode = "input_mode";
 inline constexpr const char* output = "output";
 inline constexpr const char* outputMode = "output_mode";
 // The pick detector both GLIDE (TRIGGER) and HOLD (STRIKE, MIDI) listen to.
 inline constexpr const char* pickSensitivity = "pick_sensitivity";
+// DRY: the direct guitar to OUT, off by default (the reverse gate's swell alone). Part of the sound.
+inline constexpr const char* dryLevel = "dry_level";
 
 // The reverse gate: the SPX90's program 17, the only one kept.
 inline constexpr const char* gateOn = "gate_on";
@@ -25,7 +27,7 @@ inline constexpr const char* gateRoomSize = "gate_room_size";
 inline constexpr const char* gateLiveness = "gate_liveness";
 inline constexpr const char* gatePreDelay = "gate_pre_delay";
 inline constexpr const char* gateLpf = "gate_lpf";
-inline constexpr const char* gateMix = "gate_mix";
+inline constexpr const char* gateLevel = "gate_level";
 
 // Glide: the vibrato bar.
 inline constexpr const char* glideOn = "glide_on";
@@ -41,11 +43,8 @@ inline constexpr const char* glideTriggerSource = "glide_trigger_source";
 inline constexpr const char* glideDynamics = "glide_dynamics";
 inline constexpr const char* glideManualSource = "glide_manual_source";
 inline constexpr const char* glideBar = "glide_bar";
-inline constexpr const char* glideTwinDetune = "glide_twin_detune";
-inline constexpr const char* glideTwinLevel = "glide_twin_level";
-inline constexpr const char* glideMix = "glide_mix";
 
-// The ROUTING: where HOLD goes and which paths GLIDE bends, one of kRoutings.
+// The ROUTING: where HOLD goes and how GLIDE bends the reverse gate, one of kRoutings.
 inline constexpr const char* routing = "routing";
 
 // Hold: captures the chord and holds it, bent by the glide bar.
@@ -62,8 +61,15 @@ inline constexpr const char* holdDecay = "hold_decay";
 inline constexpr const char* holdLevel = "hold_level";
 inline constexpr const char* holdCharacter = "hold_character";
 inline constexpr const char* holdRoot = "hold_root";
+inline constexpr const char* holdSwell = "hold_swell";   // how HOLD comes in
+inline constexpr const char* holdTail = "hold_tail";     // how it goes once let go
+inline constexpr const char* holdVoices = "hold_voices"; // MIDI: POLY, MONO or GLIDE with its time
 } // namespace ids
 
+// hold_root below C1: AUTO, ROOT from the capture when it is one clear note.
+inline constexpr int kHoldRootAuto = 23;
+// hold_voices: POLY, MONO, then GLIDE at these times.
+inline constexpr float kHoldGlideMs[] { 50.0f, 100.0f, 200.0f, 400.0f, 1000.0f };
 // hold_decay at its top (and above this) holds forever.
 inline constexpr float kHoldDecayForever = 30.5f;
 
@@ -72,6 +78,8 @@ inline constexpr float kOffDb = -60.0f;
 inline constexpr float kInputRangeDb = 24.0f;        // INPUT: -24 ... +24 dB
 inline constexpr float kOutputMaxDb = 12.0f;         // OUTPUT: off ... +12 dB
 inline constexpr float kHoldLevelMaxDb = 6.0f;       // HOLD LEVEL: off ... +6 dB
+inline constexpr float kGateLevelMaxDb = 6.0f;       // REVERSE GATE LEVEL: off ... +6 dB
+inline constexpr float kDryLevelMaxDb = 6.0f;        // DRY: off ... +6 dB
 // The gain of a level in dB; silence at kOffDb and below.
 inline float gainOf(float db)
 {
@@ -121,8 +129,8 @@ enum class GateBend
     Off
 };
 
-// The modules' names, the same on their panels and in the ROUTING (and in its descriptions). DRY is the
-// direct guitar: a path, not a panel.
+// The modules' names, the same on their panels and in the ROUTING. DRY is the direct guitar: a path
+// with its own knob above OUT, not a panel.
 namespace names
 {
 inline constexpr const char* in = "IN";
@@ -133,32 +141,41 @@ inline constexpr const char* hold = "HOLD";
 inline constexpr const char* dry = "DRY";
 } // namespace names
 
-// One ROUTING: which paths GLIDE bends and where HOLD goes. The description names the modules exactly as
-// their panels do. HOLD into REVERSE GATE bends as the gate does; with REVERSE GATE off it goes to OUT,
-// bent if the routing bends the gate.
+// One ROUTING: how GLIDE bends the reverse gate and where HOLD goes. DRY is not part of it: GLIDE
+// bends it whenever GLIDE is on (the bar bends the strings), and its knob says whether it is heard.
+// HOLD into REVERSE GATE bends as the gate does, or by itself into a straight gate; with REVERSE GATE
+// off it goes to OUT, bent if the routing bends the gate or HOLD.
 struct Routing
 {
     const char* name;
-    const char* description;
-    bool bendDry;       // the direct guitar
     GateBend gate;      // REVERSE GATE: going in, coming out, or not at all
     bool holdIntoGate;  // HOLD into REVERSE GATE, or to OUT
-    bool bendHold;      // HOLD going to OUT
+    bool bendHold;      // HOLD bent by itself where the gate does not bend it: going to OUT, or into a straight gate
 };
 inline constexpr Routing kRoutings[] {
-    { "INTO THE SWELL", "GLIDE bends DRY and REVERSE GATE in; HOLD into REVERSE GATE", true, GateBend::In, true, false },
-    { "BENT TAIL", "GLIDE bends DRY and REVERSE GATE out; HOLD into REVERSE GATE", true, GateBend::Out, true, false },
-    { "STILL ROOM", "GLIDE bends DRY; HOLD into REVERSE GATE", true, GateBend::Off, true, false },
-    { "ROOM ONLY", "GLIDE bends REVERSE GATE in; HOLD into REVERSE GATE", false, GateBend::In, true, false },
-    { "HOLD BESIDE", "GLIDE bends DRY, REVERSE GATE in and HOLD; HOLD to OUT", true, GateBend::In, false, true },
-    { "DRONE UNDER", "GLIDE bends DRY and REVERSE GATE in; HOLD to OUT, unbent", true, GateBend::In, false, false },
-    { "BENT DRONE", "GLIDE bends HOLD only; HOLD to OUT", false, GateBend::Off, false, true },
-    { "TAIL + DRONE", "GLIDE bends DRY and REVERSE GATE out; HOLD to OUT, unbent", true, GateBend::Out, false, false },
+    { "INTO THE SWELL", GateBend::In, true, false },
+    { "BENT TAIL", GateBend::Out, true, false },
+    { "STILL ROOM", GateBend::Off, true, false },
+    { "HOLD BESIDE", GateBend::In, false, true },
+    { "DRONE UNDER", GateBend::In, false, false },
+    { "BENT DRONE", GateBend::Off, false, true },
+    { "TAIL + DRONE", GateBend::Out, false, false },
+    { "BENT SWELL", GateBend::Off, true, true },
 };
 inline constexpr int kNumRoutings = (int) std::size(kRoutings);
 inline const Routing& routingAt(int index)
 {
     return kRoutings[juce::jlimit(0, kNumRoutings - 1, index)];
+}
+// Whether HOLD bends itself, going into the gate or to OUT. Each path is bent once at most: into a gate
+// bent at its input HOLD bends itself (it joins after the gate's bender); into a gate bent at its output
+// the gate's bender bends it with the reverb. Sent to OUT although the routing feeds the gate (the gate
+// is off), it bends if the routing bends the gate or HOLD.
+inline bool holdBendsItself(const Routing& r, bool intoGate)
+{
+    if (intoGate)
+        return r.gate == GateBend::In || (r.gate == GateBend::Off && r.bendHold);
+    return r.holdIntoGate ? (r.gate != GateBend::Off || r.bendHold) : r.bendHold;
 }
 
 // Note values for SYNC: label and length in quarter notes.

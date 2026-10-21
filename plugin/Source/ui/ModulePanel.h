@@ -21,6 +21,8 @@ public:
     static constexpr int widthFor(int columns) { return 2 * PanelLookAndFeel::kMargin + columns * Knob::kColumn; }
 
     const juce::String& getTitle() const { return title; }
+    // Whether the names over the second row are all drawn quiet (the controls under them not listened to).
+    virtual bool groupNamesQuiet() const { return false; }
 
     void paint(juce::Graphics&) override;
 

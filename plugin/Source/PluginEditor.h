@@ -59,6 +59,8 @@ private:
     ui::HeaderBar header;
     ui::PickSense pickSense;
     ui::RoutingPanel routing;
+    // DRY above OUT, bare like PICK SENS above IN: the direct guitar's level, at the end of its path.
+    ui::Knob dry;
     ui::IoColumn input, output;
     ui::GlidePanel glide;
     ui::GatePanel gate;

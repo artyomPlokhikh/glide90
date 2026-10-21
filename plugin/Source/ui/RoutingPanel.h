@@ -20,15 +20,16 @@ struct RoutingLabel
     bool dimmed;
 };
 
-// Which modules are on: a module that is off draws its path faint and dashed; with GLIDE off nothing
-// bends, the GLIDE marks are only outlined; with REVERSE GATE off HOLD goes to OUT.
+// Which modules are on: a module that is off draws its path faint and dashed (DRY too, with its knob
+// at OFF); with GLIDE off nothing bends, the GLIDE marks are only outlined; with REVERSE GATE off HOLD
+// goes to OUT.
 struct RoutingModules
 {
-    bool glideOn = true, gateOn = true, holdOn = true;
+    bool glideOn = true, gateOn = true, holdOn = true, dryOn = true;
 };
 
 // Draws routing `r` in `area`: IN splits three ways, DRY straight through, REVERSE GATE, HOLD rising
-// into REVERSE GATE or running on to OUT; a GLIDE mark where GLIDE bends a path. Every module is named
+// into REVERSE GATE or running on to OUT; a GLIDE mark where GLIDE bends a path (always on DRY). Every module is named
 // as on its panel (names::). `small`: the chart's version, without the IN, OUT and DRY words.
 // `background` fills the boxes, `ink` draws the lines and words (the panel's text on the strip, the
 // menus' ink on the chart). With no Graphics, only says what it would write.
@@ -41,6 +42,11 @@ class RoutingChart : public juce::Component
 {
 public:
     RoutingChart(Glide90Processor& p, juce::Rectangle<int> card);
+
+    // The cards, four to a row, each as tall as the chart's name and diagram need.
+    static constexpr int kColumns = 4, kRows = (kNumRoutings + kColumns - 1) / kColumns;
+    static constexpr int kPad = 14, kGap = 10, kCardHeight = 99;
+    static constexpr int kHeight = 2 * kPad + kRows * kCardHeight + (kRows - 1) * kGap;
 
     // Where routing `index`'s card is.
     juce::Rectangle<float> cardArea(int index) const;
@@ -64,8 +70,8 @@ private:
     int hover = -1;
 };
 
-// The ROUTING strip under the header, beside PICK SENS: on the left the routing's name and what it
-// does, stepped with the arrows; a click on the name opens the chart of all of them. On the right the
+// The ROUTING strip under the header, beside PICK SENS: on the left the routing's name, stepped with
+// the arrows; a click on the name opens the chart of all of them. On the right the
 // routing's diagram, which only shows.
 class RoutingPanel : public juce::Component, public juce::TooltipClient
 {
@@ -75,7 +81,8 @@ public:
 
     static constexpr int kHeight = 68;
 
-    juce::Rectangle<float> selectorArea() const { return { 10.0f, 9.0f, 366.0f, 50.0f }; }
+    // As tall as the preset's window in the header.
+    juce::Rectangle<float> selectorArea() const { return { 10.0f, (kHeight - 32) * 0.5f, 366.0f, 32.0f }; }
     juce::Rectangle<float> diagramArea() const;
 
     int current() const;

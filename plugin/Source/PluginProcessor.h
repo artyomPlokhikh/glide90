@@ -112,6 +112,14 @@ public:
     double hostBpm() const { return lastBpm.load(); }
     // What HOLD holds and plays, for its screen.
     hold::HoldDisplay& holdDisplay() { return holdEngine.display(); }
+    // HOLD's held sound, for dragging it out of the screen (message thread): what plays, or in LIVE
+    // (unless frozen) the last moments; its sample rate, and where grains start reading it (0 - 1).
+    // False when there is nothing.
+    bool copyHoldSound(std::vector<float>& samples, float& readFrom, double& rate);
+    // HOLD's grain settings now, for playing a held sound on its own.
+    hold::HoldSettings holdSoundSettings() const;
+    // Some MIDI has arrived since the plugin started (HOLD's screen says when none has).
+    bool midiArrived() const { return midiSeen.load(); }
 
 private:
     struct Batch;
@@ -178,11 +186,26 @@ private:
     static constexpr int kMaxHoldMidi = 64;
     std::array<hold::MidiEvent, kMaxHoldMidi> holdMidi {}, chunkMidi {};
     int numHoldMidi = 0;
+    std::atomic<bool> midiSeen { false };
+    // HOLD's held sound, shared with the message thread (the project, dragging out) under a lock the
+    // audio thread only ever tries. The audio thread copies it after each new capture; a project that
+    // reopens frozen hands one back (`pendingHeld`), played once FREEZE is on.
+    juce::SpinLock heldLock;
+    std::vector<float> heldCopy, pendingHeld, recentCopy;
+    float heldCopyReadFrom = 0.0f, pendingReadFrom = 0.0f;
+    double heldCopyRate = 48000.0, pendingRate = 48000.0;
+    bool heldCopyFrozen = false;
+    int heldCopiedVersion = -1;
+    std::atomic<bool> heldPending { false }, recentWanted { false }, recentReady { false };
+    void shareHeld();
+    void holdAgainAfterReset();
     juce::AudioBuffer<float> work;
     // Where the input stands between MONO (0) and STEREO (1), gliding when the mode changes.
     float stereoMix = 1.0f;
     // INPUT and OUTPUT, the first and the last stage, as gains.
     juce::SmoothedValue<float> inputGain, outputGain;
+    // DRY and the reverse gate into OUT, each at its own level.
+    juce::SmoothedValue<float> dryGain, gateGain;
     int maxBlock = 0;
     double currentRate = 48000.0;
 
@@ -211,13 +234,13 @@ private:
 
     struct RawParams
     {
-        std::atomic<float>*gateRoomSize, *gateLiveness, *gatePreDelay, *gateLpf, *gateMix, *output, *input, *gateOn,
+        std::atomic<float>*gateRoomSize, *gateLiveness, *gatePreDelay, *gateLpf, *gateLevel, *output, *input, *gateOn,
             *glideOn, *glideMode, *glidePeriod, *glideDivision, *glideDepth, *glideDirection,
             *glideRandom, *glideSmooth, *glideShape, *glideTriggerSource, *pickSensitivity, *glideManualSource,
-            *glideBar, *glideTwinDetune, *glideTwinLevel, *glideMix, *routing, *outputMode, *glideDynamics,
+            *glideBar, *routing, *outputMode, *glideDynamics,
             *inputMode, *holdOn, *holdMode, *holdFreeze, *holdSize, *holdDensity,
             *holdSmear, *holdSpread, *holdReverse, *holdDuck, *holdDecay, *holdLevel, *holdCharacter,
-            *holdRoot;
+            *holdRoot, *holdSwell, *holdTail, *holdVoices, *dryLevel;
     } raw;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Glide90Processor)

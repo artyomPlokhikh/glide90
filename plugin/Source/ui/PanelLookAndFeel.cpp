@@ -481,6 +481,31 @@ void drawCardTitle(juce::Graphics& g, const juce::String& title, juce::Rectangle
     g.drawText(themed(title), area, juce::Justification::centredLeft);
 }
 
+void drawLockedText(juce::Graphics& g, const juce::String& text, juce::Rectangle<float> area)
+{
+    const auto font = g.getCurrentFont();
+    // The lock as tall as a capital, its foot on the text's baseline.
+    const float h = juce::jmax(7.0f, font.getAscent() * 0.78f), w = h * 0.78f, gap = h * 0.45f;
+    const float textW = juce::GlyphArrangement::getStringWidth(font, text);
+    const float x = area.getCentreX() - (w + gap + textW) * 0.5f;
+    const float baseline = area.getCentreY() - font.getHeight() * 0.5f + font.getAscent();
+    const juce::Rectangle<float> lock(x, baseline - h, w, h);
+
+    const float stroke = juce::jmax(1.1f, w * 0.17f);
+    const auto body = lock.withTrimmedTop(h * 0.44f);
+    g.fillRoundedRectangle(body, 1.0f);
+    const float sw = w * 0.64f, sx = lock.getCentreX() - sw * 0.5f, top = lock.getY() + stroke * 0.5f;
+    juce::Path shackle;
+    shackle.startNewSubPath(sx, body.getY());
+    shackle.lineTo(sx, top + sw * 0.5f);
+    shackle.addArc(sx, top, sw, sw, -juce::MathConstants<float>::halfPi, juce::MathConstants<float>::halfPi);
+    shackle.lineTo(sx + sw, body.getY());
+    g.strokePath(shackle, juce::PathStrokeType(stroke));
+
+    g.drawText(text, juce::Rectangle<float>(lock.getRight() + gap, area.getY(), textW + 2.0f, area.getHeight()),
+               juce::Justification::centredLeft, false);
+}
+
 void drawGlass(juce::Graphics& g, juce::Rectangle<float> r, float corner)
 {
     const auto& t = theme();
@@ -1079,6 +1104,11 @@ void PanelLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton& b, bo
     }
     const bool led = rack && b.getProperties()[kLed];
     g.setFont(legendFont(rack && !dialog ? 12.0f : 14.0f, rack));
+    if (b.getProperties()[kLocked])
+    {
+        drawLockedText(g, themed(b.getButtonText()), cap.withTrimmedTop(led ? cap.getHeight() * 0.3f : 0.0f));
+        return;
+    }
     g.drawFittedText(themed(b.getButtonText()),
                      cap.toNearestInt().reduced(2, 1).withTrimmedTop(led ? (int) (cap.getHeight() * 0.3f) : 0),
                      juce::Justification::centred, 2, 0.8f);

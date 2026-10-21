@@ -25,10 +25,12 @@ juce::StringArray choicesOf(juce::AudioProcessorValueTreeState& state, const cha
 }
 
 void drawLegend(juce::Graphics& g, const juce::String& text, juce::Rectangle<float> area, bool enabled,
-                juce::Justification j = juce::Justification::centred)
+                juce::Justification j = juce::Justification::centred, bool locked = false)
 {
     g.setFont(legendFont(13.5f));
     g.setColour(enabled ? theme().text : theme().textDim.withMultipliedAlpha(kDimmedAlpha));
+    if (locked)
+        return drawLockedText(g, themed(text), area);
     // A long name is narrowed a little rather than cut.
     g.drawFittedText(themed(text), area.toNearestInt().expanded(6, 0), j, 1, 0.75f);
 }
@@ -314,13 +316,19 @@ float Knob::snapped(float normalised) const
 void Knob::paint(juce::Graphics& g)
 {
     const bool enabled = isEnabled();
-    drawLegend(g, label, getLocalBounds().removeFromTop(15).toFloat(), enabled);
+    drawLegend(g, label, getLocalBounds().removeFromTop(15).toFloat(), enabled, juce::Justification::centred, locked);
     drawKnob(g, knobArea(), param.convertTo0to1(value), enabled, size != Size::Small, true, flash);
     if (editor == nullptr)
     {
         const auto colour = !enabled ? theme().textDim.withMultipliedAlpha(kDimmedAlpha) : (hover || dragging ? theme().accent : theme().textDim);
         drawReadout(g, param.getCurrentValueAsText(), valueArea().toFloat(), colour, juce::Justification::centred);
     }
+}
+
+void Knob::setLocked(bool shouldBe)
+{
+    locked = shouldBe;
+    repaint();
 }
 
 void Knob::setFlash(float amount)

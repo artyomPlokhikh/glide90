@@ -5,7 +5,7 @@ namespace glide90
 
 Glide90Editor::Glide90Editor(Glide90Processor& p)
     : AudioProcessorEditor(p), proc(p), header(p), pickSense(p.state(), ids::pickSensitivity, [&p] { return p.picksHeard(); }),
-      routing(p),
+      routing(p), dry(p.state(), ids::dryLevel, names::dry),
       input(p.state(), ids::input, names::in, "INPUT", [&p] { return p.takeInputPeak(); }, ids::inputMode,
             (int) InputMode::Stereo),
       output(p.state(), ids::output, names::out, "OUTPUT", [&p] { return p.takeOutputPeak(); }, ids::outputMode,
@@ -16,19 +16,28 @@ Glide90Editor::Glide90Editor(Glide90Processor& p)
     lookAndFeel.applyTheme();
     setLookAndFeel(&lookAndFeel);
     addAndMakeVisible(content);
-    for (auto* c : std::initializer_list<juce::Component*> { &header, &pickSense, &routing, &input, &glide, &gate, &holdPanel, &output })
+    for (auto* c : std::initializer_list<juce::Component*> { &header, &pickSense, &routing, &dry, &input, &glide, &gate, &holdPanel, &output })
         content.addAndMakeVisible(c);
     content.setSize(kWidth, contentHeight());
     input.markClip();
+    // The rig's controls, which A/B and presets leave alone, carry a padlock.
+    for (auto* key : { &input.modeKey(), &output.modeKey() })
+        key->getProperties().set(ui::PanelLookAndFeel::kLocked, true);
+    input.levelKnob().setLocked(true);
+    const juce::String rig = ". Set for the rig: A/B and presets leave it alone";
     input.modeKey().setTooltip("Stereo: the direct sound keeps its sides, the reverse gate hears both. "
-                               "Mono: one input, like the SPX90's");
+                               "Mono: one input, like the SPX90's" + rig);
     input.levelKnob().setTooltip("The guitar's level into everything: the glide, HOLD, the pick detector and the "
-                                 "reverse gate. Set it so the meter's CLIP light stays dark. Presets leave it alone");
+                                 "reverse gate. Set it so the meter's CLIP light stays dark" + rig);
     pickSense.knob().setTooltip("How easily a pick attack is heard: it restarts GLIDE (TRIGGER from PICK ATTACK) and "
-                                "captures a new chord in HOLD (STRIKE, MIDI). The ring flashes on each pick heard");
-    output.modeKey().setTooltip("Stereo, the left output on both sides (one amp), or both outputs summed");
+                                "captures a new chord in HOLD (STRIKE, MIDI). Its pointer flashes on each pick heard. "
+                                "At 0 it is off: no pick is heard");
+    dry.setTooltip("The direct guitar, straight to OUT beside the reverse gate, bent whenever GLIDE is on. Off, only "
+                   "the effects are heard: the reverse gate's swell without the attack. Part of the sound: each of A "
+                   "and B has its own");
+    output.modeKey().setTooltip("Stereo, the left output on both sides (one amp), or both outputs summed" + rig);
     output.levelKnob().setTooltip("The level of everything that leaves the plugin: the modules and HOLD, with the "
-                                  "reverse gate on or off");
+                                  "reverse gate on or off. Part of the sound: each of A and B has its own");
     content.themeChanged();
 
     // Each unit is kept as a picture: moving one, or repainting the moving background behind it,
@@ -138,9 +147,10 @@ void Glide90Editor::resized()
 {
     const int m = ui::PanelLookAndFeel::kMargin;
     header.setBounds(0, 0, kWidth, kHeaderHeight);
-    // PICK SENS above IN, bare; the ROUTING strip beside it, over the modules and OUT.
+    // PICK SENS above IN and DRY above OUT, bare; the ROUTING strip between them, over the modules.
     pickSense.setBounds(m, kRouteTop, ui::IoColumn::kWidth, ui::RoutingPanel::kHeight);
-    routing.setBounds(modulesLeft(), kRouteTop, kWidth - m - modulesLeft(), ui::RoutingPanel::kHeight);
+    routing.setBounds(modulesLeft(), kRouteTop, kModulesWidth, ui::RoutingPanel::kHeight);
+    dry.setBounds(kWidth - m - ui::IoColumn::kWidth, kRouteTop, ui::IoColumn::kWidth, ui::RoutingPanel::kHeight);
     const int glideW = ui::GlidePanel::widthFor(ui::GlidePanel::kColumns);
     const int gateW = ui::GatePanel::widthFor(ui::GatePanel::kColumns);
     glide.setBounds(modulesLeft(), kBodyTop, glideW, ui::ModulePanel::kHeight);

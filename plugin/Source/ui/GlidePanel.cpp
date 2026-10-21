@@ -15,13 +15,10 @@ GlidePanel::GlidePanel(Glide90Processor& p)
       division(p.state(), ids::glideDivision, "RATE", Knob::Size::Large),
       bar(p.state(), ids::glideBar, "BAR", Knob::Size::Large),
       depth(p.state(), ids::glideDepth, "DEPTH", Knob::Size::Large), random(p.state(), ids::glideRandom, "RANDOM"),
-      smooth(p.state(), ids::glideSmooth, "SMOOTH"), twinDetune(p.state(), ids::glideTwinDetune, "DETUNE"),
-      twinLevel(p.state(), ids::glideTwinLevel, "TWIN"), mix(p.state(), ids::glideMix, "MIX"),
-      dynamics(p.state(), ids::glideDynamics, "DYNAMICS")
+      smooth(p.state(), ids::glideSmooth, "SMOOTH"), dynamics(p.state(), ids::glideDynamics, "DYNAMICS")
 {
     for (auto* c : std::initializer_list<juce::Component*> { &on, &mode, &source, &display, &period, &division, &bar,
-                                                             &depth, &random, &smooth, &twinDetune, &twinLevel, &mix,
-                                                             &dynamics, &direction })
+                                                             &depth, &random, &smooth, &dynamics, &direction })
         addAndMakeVisible(c);
 
     // Names that fit the window: these where the look has room, the shorter ones where it has not (the
@@ -74,10 +71,6 @@ GlidePanel::GlidePanel(Glide90Processor& p)
     depth.setTooltip("How far the bar bends the pitch, in cents (100 = a semitone)");
     random.setTooltip("A human hand: each cycle a little different in depth and timing, plus drift");
     smooth.setTooltip("How lazily the bar follows the shape or the controller");
-    twinDetune.setTooltip("How sharp the second string is tuned: moved by the same bar, the two beat against each "
-                          "other");
-    twinLevel.setTooltip("How much of the second string is heard (the sum keeps its loudness)");
-    mix.setTooltip("Glide wet / dry, wherever the route strip says it bends. At 0 only HOLD still follows the bar");
     dynamics.setTooltip("How much a strike's strength sets the depth: 0 = every strike bends the full DEPTH, "
                         "100 = a soft strike bends a little, a hard one all the way (pick attack or MIDI velocity)");
     direction.setTooltip("DOWN: like a Jazzmaster bar. BOTH: around the open pitch. UP: above it");
@@ -132,11 +125,9 @@ void GlidePanel::paint(juce::Graphics& g)
     // SOURCE has no knob to carry its name.
     g.setFont(legendFont(13.5f));
     g.setColour(source.isEnabled() ? theme().text : theme().textDim.withMultipliedAlpha(kDimmedAlpha));
-    g.drawFittedText(themed("SOURCE"), juce::Rectangle<int>(columnX(4), kRow2, Knob::kColumn, 15), juce::Justification::centred, 1);
+    g.drawFittedText(themed("SOURCE"), juce::Rectangle<int>(columnX(0), kRow2, Knob::kColumn, 15), juce::Justification::centred, 1);
 
-    drawGroupRule(g, "Sound", (float) columnX(0), (float) (3 * Knob::kColumn - 8), (float) kRuleY);
-    drawGroupRule(g, "Control", (float) columnX(4) + 8.0f, (float) (2 * Knob::kColumn - 8), (float) kRuleY,
-                  !controlGroupActive);
+    drawGroupRule(g, "Control", (float) columnX(0), (float) (2 * Knob::kColumn - 8), (float) kRuleY, !controlGroupActive);
 }
 
 void GlidePanel::resized()
@@ -154,12 +145,9 @@ void GlidePanel::resized()
     random.setBounds(columnX(4), kRow1, w, h);
     smooth.setBounds(columnX(5), kRow1, w, h);
 
-    // SOUND, and CONTROL (what TRIGGER and MANUAL listen to) at the far end.
-    twinDetune.setBounds(columnX(0), kRow2, w, h);
-    twinLevel.setBounds(columnX(1), kRow2, w, h);
-    mix.setBounds(columnX(2), kRow2, w, h);
-    source.setBounds(juce::Rectangle<int>(Knob::kColumn, 26).withCentre({ columnX(4) + w / 2, kRow2 + 50 }));
-    dynamics.setBounds(columnX(5), kRow2, w, h);
+    // CONTROL: what TRIGGER and MANUAL listen to, under MODE.
+    source.setBounds(juce::Rectangle<int>(Knob::kColumn, 26).withCentre({ columnX(0) + w / 2, kRow2 + 50 }));
+    dynamics.setBounds(columnX(1), kRow2, w, h);
 }
 
 } // namespace glide90::ui

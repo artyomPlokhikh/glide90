@@ -55,17 +55,21 @@ std::vector<RoutingLabel> drawRouting(juce::Graphics* g, juce::Rectangle<float> 
     const float boxH = small ? 14.0f : 20.0f, boxPad = small ? 5.0f : 12.0f;
     const float pillW = widthOf(pillFont, names::glide) + (small ? 10.0f : 16.0f), pillH = small ? 12.0f : 16.0f;
     const float holdX = split + (small ? 8.0f : 22.0f), holdW = widthOf(font, names::hold) + 2.0f * boxPad;
-    const float riseX = holdX + holdW + (small ? 8.0f : 26.0f);
+    // With REVERSE GATE off there is no gate to go into: HOLD goes to OUT, bent if the gate would be.
+    // Into a gate bent at its input or output the gate's mark stands for HOLD too; into a straight gate
+    // HOLD carries its own.
+    const bool holdIntoGate = r.holdIntoGate && on.gateOn;
+    const bool holdBent = holdIntoGate ? r.gate == GateBend::Off && r.bendHold : holdBendsItself(r, false);
+    // HOLD bent on its way into the gate: its mark sits before the rise.
+    const float holdPillGap = small ? 6.0f : 16.0f;
+    const float riseX = holdX + holdW + (holdIntoGate && holdBent ? 2.0f * holdPillGap + pillW : (small ? 8.0f : 26.0f));
     const float gateW = widthOf(font, names::reverseGate) + 2.0f * boxPad;
     const float gateX = small ? riseX + 6.0f + pillW + 8.0f : juce::jmax(x0 + w * 0.52f, riseX + pillW + 16.0f);
     const float gateInX = small ? gateX - 4.0f - pillW * 0.5f : gateX - 10.0f - pillW * 0.5f;
     const float gateOutX = (gateX + gateW + join) * 0.5f;
     const float dryX = small ? split + (gateInX - split) * 0.45f : x0 + w * 0.3f;
-    const float holdPillX = juce::jmax(dryX, holdX + holdW + (small ? 6.0f : 16.0f) + pillW * 0.5f);
-
-    // With REVERSE GATE off there is no gate to go into: HOLD goes to OUT, bent if the gate would be.
-    const bool holdIntoGate = r.holdIntoGate && on.gateOn;
-    const bool holdBent = !holdIntoGate && (r.holdIntoGate ? r.gate != GateBend::Off : r.bendHold);
+    const float holdPillX = holdIntoGate ? holdX + holdW + holdPillGap + pillW * 0.5f
+                                         : juce::jmax(dryX, holdX + holdW + holdPillGap + pillW * 0.5f);
 
     const auto live = ink.withMultipliedAlpha(0.6f), faint = ink.withMultipliedAlpha(0.25f);
     const float lw = small ? 1.2f : 1.5f;
@@ -159,7 +163,7 @@ std::vector<RoutingLabel> drawRouting(juce::Graphics* g, juce::Rectangle<float> 
     if (!holdIntoGate)
         vLine(join, y[1], y[2], holdCol, !on.holdOn);
     hLine(join, outX, y[0], live, false);
-    hLine(split, join, y[0], live, false); // DRY
+    hLine(split, join, y[0], on.dryOn ? live : faint, !on.dryOn); // DRY
     hLine(split, gateX, y[1], gateCol, !on.gateOn);
     hLine(gateX + gateW, join, y[1], gateCol, !on.gateOn);
     hLine(split, holdX, y[2], holdCol, !on.holdOn);
@@ -185,8 +189,7 @@ std::vector<RoutingLabel> drawRouting(juce::Graphics* g, juce::Rectangle<float> 
     box(names::reverseGate, gateX, gateW, y[1], on.gateOn);
     box(names::hold, holdX, holdW, y[2], on.holdOn);
 
-    if (r.bendDry)
-        pill(dryX, y[0], true);
+    pill(dryX, y[0], on.dryOn);
     if (on.gateOn && r.gate == GateBend::In)
         pill(gateInX, y[1], true);
     if (on.gateOn && r.gate == GateBend::Out)
@@ -199,7 +202,7 @@ std::vector<RoutingLabel> drawRouting(juce::Graphics* g, juce::Rectangle<float> 
         const float lineH = 12.0f;
         text(names::in, { x0 + 8.0f, y[0] - lineH * 0.5f, inX - x0 - 12.0f, lineH }, false, juce::Justification::centredLeft);
         text(names::out, { outX + 6.0f, y[0] - lineH * 0.5f, x0 + w - outX - 6.0f, lineH }, false, juce::Justification::centredLeft);
-        text(names::dry, { split + 10.0f, y[0] - lineH - 2.0f, widthOf(font, names::dry) + 4.0f, lineH }, false,
+        text(names::dry, { split + 10.0f, y[0] - lineH - 2.0f, widthOf(font, names::dry) + 4.0f, lineH }, !on.dryOn,
              juce::Justification::centredLeft);
     }
     return labels;
@@ -214,10 +217,9 @@ RoutingChart::RoutingChart(Glide90Processor& p, juce::Rectangle<int> card) : pro
 
 juce::Rectangle<float> RoutingChart::cardArea(int index) const
 {
-    constexpr int kColumns = 4, kPad = 14, kGap = 10;
     const auto inner = panel.toFloat().reduced((float) kPad);
     const float w = (inner.getWidth() - (kColumns - 1) * kGap) / kColumns;
-    const float h = (inner.getHeight() - kGap) / 2.0f;
+    const float h = (inner.getHeight() - (kRows - 1) * kGap) / kRows;
     return { inner.getX() + (float) (index % kColumns) * (w + kGap), inner.getY() + (float) (index / kColumns) * (h + kGap), w, h };
 }
 
@@ -265,10 +267,10 @@ void RoutingChart::paint(juce::Graphics& g)
         }
         auto inner = c.reduced(10.0f, 8.0f);
         drawReadout(g, nameOf(i), inner.removeFromTop(18.0f), t.ink);
-        drawRouting(&g, inner.removeFromTop(64.0f), routingAt(i), {}, true, t.menu, t.ink);
-        g.setFont(legendFont(12.5f));
-        g.setColour(t.ink.withMultipliedAlpha(0.8f));
-        g.drawFittedText(themed(routingAt(i).description), inner.toNearestInt(), juce::Justification::topLeft, 2, 0.9f);
+        // Every module on, DRY as it is now: the cards differ only in what a routing decides.
+        RoutingModules mods;
+        mods.dryOn = proc.state().getRawParameterValue(ids::dryLevel)->load() > kOffDb;
+        drawRouting(&g, inner.withSizeKeepingCentre(inner.getWidth(), 64.0f), routingAt(i), mods, true, t.menu, t.ink);
     }
 }
 
@@ -332,7 +334,8 @@ int RoutingPanel::current() const
 
 RoutingModules RoutingPanel::modules() const
 {
-    return { choiceOf(proc, ids::glideOn) != 0, choiceOf(proc, ids::gateOn) != 0, choiceOf(proc, ids::holdOn) != 0 };
+    return { choiceOf(proc, ids::glideOn) != 0, choiceOf(proc, ids::gateOn) != 0, choiceOf(proc, ids::holdOn) != 0,
+             proc.state().getRawParameterValue(ids::dryLevel)->load() > kOffDb };
 }
 
 juce::String RoutingPanel::nameText() const
@@ -353,7 +356,7 @@ void RoutingPanel::openChart()
         return;
     // Under the strip, across the window's width.
     const auto card = juce::Rectangle<int>(PanelLookAndFeel::kMargin, getBottom() + 8,
-                                           parent->getWidth() - 2 * PanelLookAndFeel::kMargin, 310);
+                                           parent->getWidth() - 2 * PanelLookAndFeel::kMargin, RoutingChart::kHeight);
     chartWindow = std::make_unique<RoutingChart>(proc, card);
     chartWindow->onClose = [safe = juce::Component::SafePointer<RoutingPanel>(this)] {
         // After the chart's own mouse or key handler has returned.
@@ -384,7 +387,7 @@ void RoutingPanel::frame()
     const int now = current();
     const auto mods = modules();
     if (now != shownRouting || mods.glideOn != shownModules.glideOn || mods.gateOn != shownModules.gateOn
-        || mods.holdOn != shownModules.holdOn)
+        || mods.holdOn != shownModules.holdOn || mods.dryOn != shownModules.dryOn)
     {
         shownRouting = now;
         shownModules = mods;
@@ -399,9 +402,9 @@ RoutingPanel::Spot RoutingPanel::spotAt(juce::Point<float> p) const
     const auto s = selectorArea();
     if (!s.contains(p))
         return Spot::Nowhere;
-    if (p.x < s.getX() + 26.0f && p.y < s.getY() + 30.0f)
+    if (p.x < s.getX() + 26.0f)
         return Spot::Previous;
-    if (p.x > s.getRight() - 26.0f && p.y < s.getY() + 30.0f)
+    if (p.x > s.getRight() - 26.0f)
         return Spot::Next;
     return Spot::Name;
 }
@@ -411,8 +414,7 @@ std::vector<RoutingLabel> RoutingPanel::labels() const
     const auto s = selectorArea();
     std::vector<RoutingLabel> out;
     const float nameW = readoutWidth(nameText(), true);
-    out.push_back({ nameText(), juce::Rectangle<float>(nameW + 4.0f, 22.0f).withCentre({ s.getCentreX(), s.getY() + 16.0f }), false });
-    out.push_back({ routingAt(current()).description, { s.getX() + 10.0f, s.getY() + 32.0f, s.getWidth() - 20.0f, 14.0f }, false });
+    out.push_back({ nameText(), juce::Rectangle<float>(nameW + 4.0f, 22.0f).withCentre(s.getCentre()), false });
     for (auto& l : drawRouting(nullptr, diagramArea(), routingAt(current()), modules(), false, theme().card, theme().text))
         out.push_back(l);
     return out;
@@ -423,10 +425,10 @@ void RoutingPanel::paint(juce::Graphics& g)
     const auto& t = theme();
     drawCard(g, getLocalBounds().toFloat());
 
-    // The selector: the name on its glass, stepped with the arrows, what it does under it.
+    // The selector: the name on its glass, stepped with the arrows.
     const auto s = selectorArea();
     drawGlass(g, s);
-    const float nameY = s.getY() + 16.0f;
+    const float nameY = s.getCentreY();
     for (int side : { -1, 1 })
     {
         const bool hot = hover == (side < 0 ? Spot::Previous : Spot::Next);
@@ -436,11 +438,6 @@ void RoutingPanel::paint(juce::Graphics& g)
     drawReadout(g, nameText(), { s.getX() + 26.0f, nameY - 11.0f, s.getWidth() - 52.0f, 22.0f },
                 t.ink.withMultipliedAlpha(hover == Spot::Name || chartWindow != nullptr ? 1.0f : 0.92f),
                 juce::Justification::centred, true, true);
-    g.setFont(legendFont(12.5f));
-    g.setColour(t.ink.withMultipliedAlpha(0.8f));
-    g.drawFittedText(themed(routingAt(current()).description),
-                     juce::Rectangle<float>(s.getX() + 10.0f, s.getY() + 32.0f, s.getWidth() - 20.0f, 14.0f).toNearestInt(),
-                     juce::Justification::centred, 1, 0.85f);
 
     drawRouting(&g, diagramArea(), routingAt(current()), modules(), false, t.card, t.text);
 }
@@ -487,8 +484,9 @@ juce::String RoutingPanel::getTooltip()
         case Spot::Name: return "Click for the chart of every routing";
         case Spot::Nowhere: break;
     }
-    return "Where HOLD goes and which paths GLIDE bends: a lit GLIDE mark bends the path it sits on. "
-           "With REVERSE GATE off, HOLD goes to OUT";
+    return "Where HOLD goes and how GLIDE bends the reverse gate: a lit GLIDE mark bends the path it sits on. "
+           "DRY bends whenever GLIDE is on, and is heard when its knob above OUT is up. With REVERSE GATE off, "
+           "HOLD goes to OUT";
 }
 
 } // namespace glide90::ui

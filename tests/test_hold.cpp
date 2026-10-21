@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <functional>
 #include <ostream> // doctest prints string_view through it (MSVC does not pull it in)
 
@@ -14,6 +15,7 @@ using hold::HoldEngine;
 using hold::HoldSettings;
 using hold::MidiEvent;
 using hold::Mode;
+using hold::Voicing;
 using test::db;
 
 namespace
@@ -46,7 +48,10 @@ Out run(const std::vector<float>& in, const SettingsAt& at, const std::vector<fl
         std::vector<MidiEvent> events;
         for (const auto& m : midi)
             if (m.sample >= (int) start && m.sample < (int) start + n)
-                events.push_back({ m.sample - (int) start, m.note, m.on });
+            {
+                events.push_back(m);
+                events.back().sample -= (int) start;
+            }
         HoldSettings s = at(start);
         s.midi = events.data();
         s.numMidi = (int) events.size();
@@ -116,6 +121,41 @@ float peak(const std::vector<float>& v, size_t from, size_t to)
 size_t at(double seconds)
 {
     return (size_t) (seconds * kRate);
+}
+
+// How strong `freq` is in v[from, to), as an amplitude (Goertzel, Hann window).
+double toneAt(const std::vector<float>& v, size_t from, size_t to, double freq)
+{
+    const double w = 2.0 * test::kPi * freq / kRate, c = 2.0 * std::cos(w);
+    double s1 = 0.0, s2 = 0.0;
+    const double n = (double) (to - from);
+    for (size_t i = from; i < to; ++i)
+    {
+        const double hann = 0.5 - 0.5 * std::cos(2.0 * test::kPi * (double) (i - from) / n);
+        const double s0 = v[i] * hann + c * s1 - s2;
+        s2 = s1;
+        s1 = s0;
+    }
+    return 2.0 * std::sqrt(std::max(0.0, s1 * s1 + s2 * s2 - c * s1 * s2)) / (0.5 * n);
+}
+
+MidiEvent note(double seconds, int number, bool on, float velocity = 1.0f)
+{
+    return { (int) at(seconds), number, on, velocity, MidiEvent::Kind::Note };
+}
+
+MidiEvent pedal(double seconds, bool down)
+{
+    return { (int) at(seconds), 0, down, 1.0f, MidiEvent::Kind::Sustain };
+}
+
+// The lowest level over 20 ms windows in [from, to), in dB.
+double lowestDb(const std::vector<float>& v, size_t from, size_t to)
+{
+    double lowest = 1e9;
+    for (size_t a = from; a + at(0.02) <= to; a += at(0.02))
+        lowest = std::min(lowest, db(test::rms(v, a, a + at(0.02))));
+    return lowest;
 }
 
 } // namespace
@@ -203,6 +243,24 @@ TEST_CASE("DUCK: the layer stays down while you play and comes up when you stop"
     }
 }
 
+TEST_CASE("DECAY: a held chord falls 60 dB over DECAY")
+{
+    std::vector<float> in(at(4.0), 0.0f);
+    strike(in, 0.2, 220.0, 0.3);
+    for (float decay : { 1.0f, 2.0f, 5.0f })
+    {
+        CAPTURE(decay);
+        HoldSettings s = plain();
+        s.decaySeconds = decay;
+        const auto out = run(in, s);
+        // The fall over one second, once the chord is held: 60 dB per DECAY.
+        const double first = test::rms(out.l, at(1.0), at(1.25)), second = test::rms(out.l, at(2.0), at(2.25));
+        const double fall = db(first) - db(second);
+        MESSAGE("falls " << fall << " dB in a second");
+        CHECK(fall == doctest::Approx(60.0 / decay).epsilon(0.05));
+    }
+}
+
 TEST_CASE("LIVE: grains read the recent past without ever catching up with the present")
 {
     // A steady tone, the bar twice as far up as it goes: the grains read 1.4 times as fast as the
@@ -265,16 +323,16 @@ TEST_CASE("REVERSE: grains play their stretch backwards")
     }
 }
 
-TEST_CASE("LATCH: FREEZE holds what just played, for as long as it is down")
+TEST_CASE("MANUAL: silent until FREEZE, which holds what just played for as long as it is on")
 {
     std::vector<float> in = test::sine(330.0, kRate, at(6.0), 0.2f);
     for (size_t i = at(2.0); i < in.size(); ++i)
         in[i] = 0.0f;
     HoldSettings s = plain();
-    s.mode = Mode::Latch;
+    s.mode = Mode::Manual;
     const auto out = run(in, [s](size_t sample) {
         HoldSettings t = s;
-        t.latched = sample >= at(1.0) && sample < at(4.0);
+        t.frozen = sample >= at(1.0) && sample < at(4.0);
         return t;
     });
     CHECK(peak(out.l, 0, at(1.0)) == 0.0f);
@@ -296,10 +354,12 @@ TEST_CASE("MIDI: a note plays the held chord at its pitch, for as long as it is 
     CHECK(std::abs(cents(test::measureFrequency(out.l, at(2.5), at(3.9), kRate), 440.0)) < 3.0);
     CHECK(peak(out.l, at(4.0) + at(1.2), at(6.0)) < 1e-4f); // released
 
-    // The newest of two held notes sounds; letting it go goes back to the first.
+    // MONO: the newest of two held notes sounds; letting it go goes back to the first.
+    HoldSettings mono = s;
+    mono.voicing = Voicing::Mono;
     const std::vector<MidiEvent> two { { (int) at(2.0), 60, true }, { (int) at(3.0), 67, true },
                                        { (int) at(4.0), 67, false } };
-    const auto both = run(in, [s](size_t) { return s; }, {}, two);
+    const auto both = run(in, [mono](size_t) { return mono; }, {}, two);
     CHECK(std::abs(cents(test::measureFrequency(both.l, at(3.3), at(3.9), kRate), 220.0) - 700.0) < 3.0);
     CHECK(std::abs(cents(test::measureFrequency(both.l, at(4.3), at(5.5), kRate), 220.0)) < 3.0);
 }
@@ -403,13 +463,13 @@ TEST_CASE("HOLD stays finite and bounded with every control at its extreme")
     std::vector<float> in(at(4.0), 0.0f);
     for (double t = 0.1; t < 3.5; t += 0.06)
         strike(in, t, 82.4 + 40.0 * t, 0.4, 0.4f, (uint32_t) (t * 1000));
-    for (auto mode : { Mode::Strike, Mode::Latch, Mode::Live, Mode::Midi })
+    for (auto mode : { Mode::Strike, Mode::Manual, Mode::Live, Mode::Midi })
         for (float size : { 20.0f, 500.0f })
             for (int density : { 1, 8 })
             {
                 HoldSettings s;
                 s.mode = mode;
-                s.latched = true;
+                s.frozen = true;
                 s.sizeMs = size;
                 s.density = density;
                 s.smearMs = 1000.0f;
@@ -430,4 +490,401 @@ TEST_CASE("HOLD stays finite and bounded with every control at its extreme")
                         REQUIRE(std::abs(v) < 8.0f);
                     }
             }
+}
+
+// --- FREEZE in every mode ---
+
+TEST_CASE("FREEZE pressed with the strum holds the chord, not the silence before it")
+{
+    std::vector<float> in(at(4.0), 0.0f);
+    strike(in, 1.0, 220.0, 0.6);
+    HoldSettings s = plain();
+    s.mode = Mode::Manual;
+    const auto out = run(in, [s](size_t sample) {
+        HoldSettings t = s;
+        t.frozen = sample >= at(1.02);
+        return t;
+    });
+    CHECK(db(test::rms(out.l, at(2.0), at(4.0))) > -30.0);
+    CHECK(std::abs(cents(test::measureFrequency(out.l, at(2.5), at(3.5), kRate), 220.0)) < 3.0);
+}
+
+TEST_CASE("FREEZE in STRIKE: what plays stays, new picks no longer replace it")
+{
+    std::vector<float> in(at(4.0), 0.0f);
+    strike(in, 0.2, 220.0, 0.5);
+    strike(in, 1.5, 330.0, 0.5, 0.3f, 9);
+    HoldSettings s = plain();
+    const auto free = run(in, s);
+    CHECK(std::abs(cents(test::measureFrequency(free.l, at(2.5), at(3.5), kRate), 330.0)) < 3.0);
+    const auto frozen = run(in, [s](size_t sample) {
+        HoldSettings t = s;
+        t.frozen = sample >= at(1.0);
+        return t;
+    });
+    CHECK(std::abs(cents(test::measureFrequency(frozen.l, at(2.5), at(3.5), kRate), 220.0)) < 3.0);
+}
+
+TEST_CASE("FREEZE in LIVE holds the last moments after the guitar stops")
+{
+    std::vector<float> in = test::sine(330.0, kRate, at(4.0), 0.2f);
+    for (size_t i = at(2.0); i < in.size(); ++i)
+        in[i] = 0.0f;
+    HoldSettings s = plain();
+    s.mode = Mode::Live;
+    const auto passing = run(in, s);
+    CHECK(peak(passing.l, at(3.0), at(4.0)) < 1e-3f); // LIVE alone has nothing left to read
+    const auto frozen = run(in, [s](size_t sample) {
+        HoldSettings t = s;
+        t.frozen = sample >= at(1.5);
+        return t;
+    });
+    CHECK(db(test::rms(frozen.l, at(3.0), at(4.0))) > -30.0);
+    CHECK(std::abs(cents(test::measureFrequency(frozen.l, at(3.0), at(4.0), kRate), 330.0)) < 3.0);
+}
+
+TEST_CASE("FREEZE in MIDI keeps the sample however the guitar plays on")
+{
+    std::vector<float> in(at(4.0), 0.0f);
+    strike(in, 0.2, 220.0, 0.5);
+    strike(in, 1.5, 330.0, 0.5, 0.3f, 9);
+    HoldSettings s = plain();
+    s.mode = Mode::Midi;
+    s.rootNote = 60;
+    const std::vector<MidiEvent> key { note(2.5, 60, true), note(3.9, 60, false) };
+    const auto out = run(in, [s](size_t sample) {
+        HoldSettings t = s;
+        t.frozen = sample >= at(1.0);
+        return t;
+    }, {}, key);
+    CHECK(std::abs(cents(test::measureFrequency(out.l, at(2.8), at(3.8), kRate), 220.0)) < 3.0);
+}
+
+TEST_CASE("outside MIDI the sustain pedal freezes too")
+{
+    std::vector<float> in = test::sine(330.0, kRate, at(4.0), 0.2f);
+    for (size_t i = at(2.0); i < in.size(); ++i)
+        in[i] = 0.0f;
+    HoldSettings s = plain();
+    s.mode = Mode::Manual;
+    const auto out = run(in, [s](size_t) { return s; }, {}, { pedal(1.0, true), pedal(3.0, false) });
+    CHECK(peak(out.l, 0, at(1.0)) == 0.0f);
+    CHECK(db(test::rms(out.l, at(2.2), at(2.9))) > -30.0);
+    CHECK(peak(out.l, at(3.6), at(4.0)) < 1e-4f);
+}
+
+TEST_CASE("STRIKE keeps up with fast strumming: every chord is captured")
+{
+    for (double gap : { 0.25, 0.4 })
+    {
+        CAPTURE(gap);
+        std::vector<float> in(at(4.0), 0.0f);
+        int strokes = 0;
+        for (double t = 0.2; t < 3.0; t += gap, ++strokes)
+            strike(in, t, strokes % 2 == 0 ? 196.0 : 247.0, 0.4, 0.3f, (uint32_t) (t * 1000));
+        HoldEngine e;
+        e.prepare(kRate);
+        run(in, [](size_t) { return plain(); }, {}, {}, { 256 }, &e);
+        MESSAGE("strokes " << strokes << ", captures " << e.capturesFinished());
+        CHECK(e.capturesFinished() >= strokes - 1);
+    }
+}
+
+TEST_CASE("a new capture comes in over the old one without a dip")
+{
+    // STRIKE: the same chord struck again.
+    std::vector<float> in(at(4.0), 0.0f);
+    strike(in, 0.2, 220.0, 3.0);
+    strike(in, 2.0, 220.0, 3.0, 0.3f, 9);
+    const auto out = run(in, plain());
+    const double before = db(test::rms(out.l, at(1.5), at(1.9)));
+    CHECK(lowestDb(out.l, at(1.9), at(3.0)) > before - 6.0);
+
+    // MANUAL: FREEZE let go and pressed again at once.
+    std::vector<float> tone = test::sine(330.0, kRate, at(4.0), 0.2f);
+    HoldSettings s = plain();
+    s.mode = Mode::Manual;
+    const auto again = run(tone, [s](size_t sample) {
+        HoldSettings t = s;
+        t.frozen = sample >= at(1.0) && (sample < at(2.0) || sample >= at(2.05));
+        return t;
+    });
+    const double held = db(test::rms(again.l, at(1.5), at(1.95)));
+    CHECK(lowestDb(again.l, at(1.95), at(2.8)) > held - 9.0);
+}
+
+TEST_CASE("DECAY fades what is held, not what is frozen")
+{
+    std::vector<float> in(at(4.0), 0.0f);
+    strike(in, 0.2, 220.0, 0.5);
+    HoldSettings s = plain();
+    s.decaySeconds = 1.0f;
+    const auto frozen = run(in, [s](size_t sample) {
+        HoldSettings t = s;
+        t.frozen = sample >= at(0.8);
+        return t;
+    });
+    const double early = db(test::rms(frozen.l, at(1.0), at(1.5))), late = db(test::rms(frozen.l, at(3.0), at(3.5)));
+    MESSAGE("frozen: " << early << " dB, then " << late << " dB");
+    CHECK(late > early - 3.0);
+}
+
+TEST_CASE("a held sound restored (a project reopening frozen) plays at once, at its pitch, from any rate")
+{
+    const double sourceRate = 44100.0;
+    std::vector<float> saved((size_t) (0.6 * sourceRate));
+    for (size_t i = 0; i < saved.size(); ++i)
+        saved[i] = 0.2f * (float) std::sin(2.0 * test::kPi * 330.0 * (double) i / sourceRate);
+    HoldEngine e;
+    e.prepare(kRate);
+    e.restoreHeld(saved.data(), (int) saved.size(), sourceRate, 0.0f);
+    CHECK(e.heldIsFrozen());
+    HoldSettings s = plain();
+    s.mode = Mode::Manual;
+    s.frozen = true; // as the project has it: nothing new is captured
+    const std::vector<float> silence(at(2.0), 0.0f);
+    const auto out = run(silence, [s](size_t) { return s; }, {}, {}, { 256 }, &e);
+    CHECK(e.heldLength() == (int) std::lround(saved.size() * kRate / sourceRate));
+    CHECK(db(test::rms(out.l, at(0.2), at(2.0))) > -30.0);
+    CHECK(std::abs(cents(test::measureFrequency(out.l, at(0.5), at(1.8), kRate), 330.0)) < 3.0);
+
+    // What is held comes back out as it went in.
+    std::vector<float> copy;
+    float readFrom = -1.0f;
+    e.copyHeld(copy, readFrom);
+    CHECK((int) copy.size() == e.heldLength());
+    CHECK(readFrom >= 0.0f);
+}
+
+TEST_CASE("a held sound from a broken project (no sensible rate) is not held")
+{
+    std::vector<float> saved(4800, 0.1f);
+    for (double rate : { std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity(), -48000.0, 0.0, 1.0e9 })
+    {
+        CAPTURE(rate);
+        HoldEngine e;
+        e.prepare(kRate);
+        e.restoreHeld(saved.data(), (int) saved.size(), rate, std::numeric_limits<float>::quiet_NaN());
+        CHECK_FALSE(e.heldIsFrozen());
+    }
+}
+
+// --- SWELL and TAIL ---
+
+TEST_CASE("SWELL brings the layer in, TAIL lets it go")
+{
+    std::vector<float> in(at(6.0), 0.0f);
+    strike(in, 0.2, 220.0, 0.5);
+    HoldSettings s = plain();
+    s.mode = Mode::Midi;
+    const std::vector<MidiEvent> key { note(2.0, 60, true), note(4.0, 60, false) };
+
+    HoldSettings slow = s;
+    slow.swellMs = 1000.0f;
+    slow.tailMs = 2000.0f;
+    const auto out = run(in, [slow](size_t) { return slow; }, {}, key);
+    const double full = db(test::rms(out.l, at(3.3), at(3.9)));
+    CHECK(db(test::rms(out.l, at(2.0), at(2.2))) < full - 10.0); // still coming in
+    CHECK(db(test::rms(out.l, at(4.8), at(5.0))) > full - 20.0); // still going
+    const auto quick = run(in, [s](size_t) { return s; }, {}, key);
+    CHECK(peak(quick.l, at(4.8), at(5.0)) < 1e-4f);
+}
+
+// --- MIDI ---
+
+TEST_CASE("MIDI POLY: a chord from the keys sounds as a chord")
+{
+    std::vector<float> in(at(4.0), 0.0f);
+    strike(in, 0.2, 220.0, 0.5);
+    HoldSettings s = plain();
+    s.mode = Mode::Midi;
+    s.rootNote = 57; // the captured A3 is A3
+    const std::vector<MidiEvent> chord { note(2.0, 57, true), note(2.0, 61, true), note(2.0, 64, true),
+                                         note(3.8, 57, false), note(3.8, 61, false), note(3.8, 64, false) };
+    const auto out = run(in, [s](size_t) { return s; }, {}, chord);
+    const auto semis = [](int n) { return 220.0 * std::pow(2.0, n / 12.0); };
+    const double a = toneAt(out.l, at(2.5), at(3.7), semis(0)), cs = toneAt(out.l, at(2.5), at(3.7), semis(4)),
+                 e = toneAt(out.l, at(2.5), at(3.7), semis(7)), none = toneAt(out.l, at(2.5), at(3.7), semis(2));
+    MESSAGE("A " << a << ", C# " << cs << ", E " << e << ", B (not played) " << none);
+    CHECK(a > 10.0 * none);
+    CHECK(cs > 10.0 * none);
+    CHECK(e > 10.0 * none);
+
+    // The same, whatever the block sizes.
+    const auto other = run(in, [s](size_t) { return s; }, {}, chord, { 37, 512, 100 });
+    CHECK(other.l == out.l);
+}
+
+TEST_CASE("MIDI POLY: a ninth key takes the oldest voice")
+{
+    std::vector<float> in(at(4.0), 0.0f);
+    strike(in, 0.2, 220.0, 0.5);
+    HoldSettings s = plain();
+    s.mode = Mode::Midi;
+    s.rootNote = 57;
+    std::vector<MidiEvent> keys;
+    for (int k = 0; k < 9; ++k)
+        keys.push_back(note(1.5 + 0.1 * k, 57 + k, true));
+    HoldEngine e;
+    e.prepare(kRate);
+    const auto out = run(in, [s](size_t) { return s; }, {}, keys, { 256 }, &e);
+    CHECK(e.activeVoices() == HoldEngine::kMaxVoices);
+    const double ninth = toneAt(out.l, at(3.0), at(4.0), 220.0 * std::pow(2.0, 8 / 12.0));
+    const double first = toneAt(out.l, at(3.0), at(4.0), 220.0);
+    MESSAGE("ninth " << ninth << ", first (taken) " << first);
+    CHECK(ninth > 10.0 * first);
+}
+
+TEST_CASE("MIDI MONO plays legato; GLIDE slides to the new key")
+{
+    std::vector<float> in(at(5.0), 0.0f);
+    strike(in, 0.2, 220.0, 0.5);
+    HoldSettings s = plain();
+    s.mode = Mode::Midi;
+    s.rootNote = 57;
+    const std::vector<MidiEvent> keys { note(2.0, 57, true), note(3.0, 69, true), note(4.5, 69, false),
+                                        note(4.5, 57, false) };
+    HoldSettings mono = s;
+    mono.voicing = Voicing::Mono;
+    const auto jumped = run(in, [mono](size_t) { return mono; }, {}, keys);
+    CHECK(std::abs(cents(test::measureFrequency(jumped.l, at(3.05), at(3.3), kRate), 440.0)) < 5.0);
+    CHECK(lowestDb(jumped.l, at(2.5), at(4.0)) > db(test::rms(jumped.l, at(2.5), at(2.9))) - 6.0); // not started again
+
+    HoldSettings glide = s;
+    glide.voicing = Voicing::Glide;
+    glide.glideMs = 600.0f;
+    const auto slid = run(in, [glide](size_t) { return glide; }, {}, keys);
+    const double midway = cents(test::measureFrequency(slid.l, at(3.25), at(3.35), kRate), 220.0);
+    MESSAGE("midway through the glide: " << midway << " cents above the first key");
+    CHECK(midway > 300.0);
+    CHECK(midway < 900.0);
+    CHECK(std::abs(cents(test::measureFrequency(slid.l, at(3.8), at(4.4), kRate), 440.0)) < 5.0);
+}
+
+TEST_CASE("MIDI: soft keys play quieter, the sustain pedal holds keys let go")
+{
+    std::vector<float> in(at(5.0), 0.0f);
+    strike(in, 0.2, 220.0, 0.5);
+    HoldSettings s = plain();
+    s.mode = Mode::Midi;
+    const auto hard = run(in, [s](size_t) { return s; }, {}, { note(2.0, 60, true, 1.0f), note(3.5, 60, false) });
+    const auto soft = run(in, [s](size_t) { return s; }, {}, { note(2.0, 60, true, 0.1f), note(3.5, 60, false) });
+    const double drop = db(test::rms(hard.l, at(2.5), at(3.4))) - db(test::rms(soft.l, at(2.5), at(3.4)));
+    MESSAGE("soft is " << drop << " dB down");
+    CHECK(drop > 5.0);
+    CHECK(drop < 9.0);
+
+    const auto held = run(in, [s](size_t) { return s; }, {},
+                          { pedal(1.9, true), note(2.0, 60, true), note(2.5, 60, false), pedal(3.5, false) });
+    CHECK(db(test::rms(held.l, at(2.8), at(3.4))) > -30.0);
+    CHECK(peak(held.l, at(4.0), at(5.0)) < 1e-4f);
+}
+
+TEST_CASE("MIDI: keys up to two octaves above ROOT keep their level; higher ones stay silent")
+{
+    // A chord still ringing: a key up high reads the capture faster, and there is enough of it.
+    std::vector<float> in(at(4.0), 0.0f);
+    strike(in, 0.2, 220.0, 8.0);
+    HoldSettings s = plain();
+    s.mode = Mode::Midi;
+    s.sizeMs = 250.0f;
+    s.density = 3;
+    const auto level = [&](int key) {
+        const auto out = run(in, [s](size_t) { return s; }, {}, { note(1.5, key, true), note(3.9, key, false) });
+        return db(test::rms(out.l, at(2.0), at(3.8)));
+    };
+    const double root = level(60), octave = level(72), two = level(84);
+    MESSAGE("root " << root << " dB, +12 " << octave << " dB, +24 " << two << " dB");
+    CHECK(std::abs(octave - root) < 1.5);
+    CHECK(std::abs(two - root) < 1.5);
+    CHECK(level(85) < -100.0);
+}
+
+// --- AUTO ROOT ---
+
+namespace
+{
+// A plucked string: the fundamental and five harmonics dying away, a burst of pick noise on top.
+void pluck(std::vector<float>& v, double at_, double freq, double rate = kRate, float amp = 0.25f)
+{
+    const auto start = (size_t) (at_ * rate);
+    uint32_t seed = 11;
+    for (size_t i = start; i < v.size(); ++i)
+    {
+        const double t = (double) (i - start) / rate;
+        double x = 0.0;
+        for (int k = 1; k <= 6; ++k)
+            x += std::sin(2.0 * test::kPi * freq * k * t) / k * std::exp(-t * (0.8 + 0.3 * k));
+        x *= amp;
+        if (i - start < (size_t) (0.002 * rate))
+        {
+            seed = seed * 1664525u + 1013904223u;
+            x += 0.6 * ((double) (seed >> 8) / 8388608.0 - 1.0);
+        }
+        v[i] += (float) x;
+    }
+}
+
+double semitones(int n)
+{
+    return std::pow(2.0, n / 12.0);
+}
+} // namespace
+
+TEST_CASE("detectNote: a single note anywhere on the neck, at any rate; not a chord, not silence")
+{
+    for (double rate : { 44100.0, 48000.0, 96000.0 })
+        for (int note : { 40, 45, 52, 57, 64, 69, 76, 81 }) // E2 up to A5
+        {
+            CAPTURE(rate);
+            CAPTURE(note);
+            std::vector<float> v((size_t) (0.4 * rate), 0.0f);
+            pluck(v, 0.0, 440.0 * semitones(note - 69), rate);
+            const auto from = (size_t) (0.05 * rate);
+            CHECK(hold::detectNote(v.data() + from, (int) (v.size() - from), rate) == note);
+        }
+    std::vector<float> chord(at(0.4), 0.0f);
+    for (int n : { 57, 61, 64 }) // A major, equal tempered
+        pluck(chord, 0.0, 440.0 * semitones(n - 69));
+    CHECK(hold::detectNote(chord.data() + at(0.05), (int) (chord.size() - at(0.05)), kRate) == -1);
+    std::vector<float> third(at(0.4), 0.0f);
+    for (int n : { 57, 61 })
+        pluck(third, 0.0, 440.0 * semitones(n - 69));
+    CHECK(hold::detectNote(third.data() + at(0.05), (int) (third.size() - at(0.05)), kRate) == -1);
+    const std::vector<float> quiet(at(0.4), 0.0f);
+    CHECK(hold::detectNote(quiet.data(), (int) quiet.size(), kRate) == -1);
+}
+
+TEST_CASE("AUTO ROOT: a single note sets ROOT to itself, a chord keeps the last one")
+{
+    HoldSettings s = plain();
+    s.mode = Mode::Midi;
+    s.autoRoot = true;
+    s.rootNote = 60;
+    const auto settings = [s](size_t) { return s; };
+    HoldEngine e;
+    e.prepare(kRate);
+    const std::vector<MidiEvent> keyA { note(1.0, 57, true), note(1.95, 57, false) };
+
+    // A3 picked: the key A3 plays it as it is.
+    std::vector<float> a(at(2.0), 0.0f);
+    pluck(a, 0.2, 220.0);
+    const auto first = run(a, settings, {}, keyA, { 256 }, &e);
+    CHECK(e.display().autoRoot.load() == 57);
+    // (the key held before the capture is in plays it at its pitch once it is)
+    CHECK(std::abs(cents(test::measureFrequency(first.l, at(1.6), at(1.9), kRate), 220.0)) < 5.0);
+
+    // An A major chord: ROOT stays A3.
+    std::vector<float> chord(at(2.0), 0.0f);
+    for (int n : { 57, 61, 64 })
+        pluck(chord, 0.2, 440.0 * semitones(n - 69));
+    run(chord, settings, {}, {}, { 256 }, &e);
+    CHECK(e.display().autoRoot.load() == 57);
+
+    // G3 picked: ROOT G3, so the key A3 plays it a tone up.
+    std::vector<float> g(at(2.0), 0.0f);
+    pluck(g, 0.2, 196.0);
+    const auto third = run(g, settings, {}, keyA, { 256 }, &e);
+    CHECK(e.display().autoRoot.load() == 55);
+    CHECK(std::abs(cents(test::measureFrequency(third.l, at(1.6), at(1.9), kRate), 220.0)) < 5.0);
 }

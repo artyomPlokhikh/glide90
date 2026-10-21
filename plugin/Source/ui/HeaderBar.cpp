@@ -40,8 +40,8 @@ HeaderBar::HeaderBar(Glide90Processor& p) : proc(p)
 
     a.getProperties().set(PanelLookAndFeel::kSegment, "left");
     b.getProperties().set(PanelLookAndFeel::kSegment, "right");
-    a.setTooltip("Compare: two working versions of the setting");
-    b.setTooltip("Compare: two working versions of the setting (B starts as a copy of A)");
+    a.setTooltip("Compare: two working versions of the setting. The controls with a padlock and FREEZE stay as they are");
+    b.setTooltip("Compare: two working versions of the setting (B starts as a copy of A). The controls with a padlock and FREEZE stay as they are");
     a.onClick = [this] { proc.selectAB(0); };
     b.onClick = [this] { proc.selectAB(1); };
 

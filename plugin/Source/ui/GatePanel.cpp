@@ -173,9 +173,9 @@ void GateDisplay::paint(juce::Graphics& g)
 GatePanel::GatePanel(Glide90Processor& p)
     : ModulePanel(names::reverseGate), on(p.state(), ids::gateOn, "ON"), display(p),
       roomSize(p.state(), ids::gateRoomSize, "ROOM SIZE", Knob::Size::Hero), liveness(p.state(), ids::gateLiveness, "LIVENESS"),
-      delay(p.state(), ids::gatePreDelay, "PRE-DELAY"), lpf(p.state(), ids::gateLpf, "LPF"), mix(p.state(), ids::gateMix, "MIX")
+      delay(p.state(), ids::gatePreDelay, "PRE-DELAY"), lpf(p.state(), ids::gateLpf, "LPF"), level(p.state(), ids::gateLevel, "LEVEL")
 {
-    for (auto* c : std::initializer_list<juce::Component*> { &on, &display, &roomSize, &liveness, &delay, &lpf, &mix })
+    for (auto* c : std::initializer_list<juce::Component*> { &on, &display, &roomSize, &liveness, &delay, &lpf, &level })
         addAndMakeVisible(c);
 
     on.setTooltip("Reverse gate on/off. Off is the unit's analog bypass: the direct sound is then full bandwidth, "
@@ -184,14 +184,14 @@ GatePanel::GatePanel(Glide90Processor& p)
     liveness.setTooltip("How steeply the reflections swell");
     delay.setTooltip("Time before the first reflection");
     lpf.setTooltip("Low-pass on the effect, 1-11 kHz or THRU");
-    mix.setTooltip("0 = dry only, 100 = effect only. The unit mixes digitally, so even the dry signal is band-limited "
-                   "to 12 kHz");
+    level.setTooltip("How loud the reverse gate comes out, HOLD in it included. The direct guitar has its own knob: "
+                     "DRY, above OUT");
 }
 
 void GatePanel::paint(juce::Graphics& g)
 {
     ModulePanel::paint(g);
-    drawGroupRule(g, "Mix", (float) knobX(1), (float) (2 * Knob::kColumn), (float) kRuleY);
+    drawGroupRule(g, juce::String::fromUTF8("Tone \xc2\xb7 Level"), (float) knobX(1), (float) (2 * Knob::kColumn), (float) kRuleY);
 }
 
 void GatePanel::resized()
@@ -203,7 +203,7 @@ void GatePanel::resized()
     liveness.setBounds(knobX(1), kRow1, w, h);
     delay.setBounds(knobX(2), kRow1, w, h);
     lpf.setBounds(knobX(1), kRow2, w, h);
-    mix.setBounds(knobX(2), kRow2, w, h);
+    level.setBounds(knobX(2), kRow2, w, h);
 }
 
 // --- PickSense ---

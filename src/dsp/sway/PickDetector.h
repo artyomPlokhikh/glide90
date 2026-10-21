@@ -16,7 +16,7 @@ public:
     void prepare(double sampleRate);
     void reset();
 
-    // 0 - 1: how small a jump in top end counts as an attack.
+    // 0 - 1: how small a jump in top end counts as an attack. 0: none does, the detector is off.
     void setSensitivity(float sensitivity);
 
     // One sample in; true on the sample an attack is found.
@@ -38,6 +38,7 @@ private:
     std::vector<float> levelHistory; // the top-end level over the last 10 ms
     int historyPos = 0;
     float jumpRatio = 1.88f; // level rise that counts as an attack
+    bool enabled = true;
     int refractory = 0;
     int triggers = 0;
     float averageStrikeDb = 0.0f;

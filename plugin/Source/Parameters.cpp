@@ -139,7 +139,7 @@ std::optional<float> parseText(const juce::String& id, const juce::String& text,
     if (id == ids::gateLpf)
         return readLpf(text);
     if (id == ids::holdRoot)
-        return readNote(text);
+        return normalised(text) == "auto" ? std::optional<float>((float) kHoldRootAuto) : readNote(text);
     if (id == ids::holdDecay)
     {
         const auto word = normalised(text);
@@ -153,9 +153,11 @@ std::optional<float> parseText(const juce::String& id, const juce::String& text,
     }
     if (!choices.isEmpty())
         return matchChoice(text, choices);
+    if (id == ids::pickSensitivity && normalised(text) == "off")
+        return 0.0f;
     // Levels in dB: "-6", "-6 dB", "+3"; "-inf", "off" or the infinity sign for silence (on INPUT,
     // which goes no lower than -24 dB, its bottom).
-    if (isOneOf(id, { ids::input, ids::output, ids::holdLevel }))
+    if (isOneOf(id, { ids::input, ids::output, ids::holdLevel, ids::gateLevel, ids::dryLevel }))
     {
         const auto word = normalised(text).removeCharacters("+");
         if (word == "inf" || word == "infdb" || word == "off" || word == "mute"
@@ -172,17 +174,17 @@ std::optional<float> parseText(const juce::String& id, const juce::String& text,
     double v = n->value;
 
     // Shown as percentages, typed as percentages: "50" and "50 %" are both one half.
-    if (isOneOf(id, { ids::gateMix, ids::glideRandom, ids::glideSmooth, ids::pickSensitivity, ids::glideDynamics,
-                      ids::glideBar, ids::glideTwinLevel, ids::glideMix, ids::holdReverse, ids::holdDuck }))
+    if (isOneOf(id, { ids::glideRandom, ids::glideSmooth, ids::pickSensitivity, ids::glideDynamics,
+                      ids::glideBar, ids::holdReverse, ids::holdDuck }))
         return (float) (v / 100.0);
     // Milliseconds, or seconds when said so ("1.2 s").
-    if (isOneOf(id, { ids::gatePreDelay, ids::glidePeriod, ids::holdSize, ids::holdSmear }))
+    if (isOneOf(id, { ids::gatePreDelay, ids::glidePeriod, ids::holdSize, ids::holdSmear, ids::holdSwell, ids::holdTail }))
     {
         const bool seconds = (unit.startsWithChar('s') || unit.startsWith(secondsWord()));
         return (float) (seconds ? v * 1000.0 : v);
     }
     // Cents, or semitones when said so ("2 st").
-    if (isOneOf(id, { ids::glideDepth, ids::glideTwinDetune, ids::holdSpread }) && (unit.startsWith("st") || unit.startsWith("semi")))
+    if (isOneOf(id, { ids::glideDepth, ids::holdSpread }) && (unit.startsWith("st") || unit.startsWith("semi")))
         return (float) (v * 100.0);
     return (float) v;
 }
@@ -302,7 +304,11 @@ Layout createParameterLayout()
     layout.add(choiceParam(ids::inputMode, "Input Mode", { "MONO", "STEREO" }, (int) InputMode::Stereo));
     layout.add(dbParam(ids::output, "Output", kOffDb, kOutputMaxDb, 0.0f));
     layout.add(choiceParam(ids::outputMode, "Output Mode", { "STEREO", "L ONLY", "MONO" }, 0));
-    layout.add(percentParam(ids::pickSensitivity, "Pick Sensitivity", 0.55f));
+    // At 0 no pick is heard at all.
+    layout.add(floatParam(ids::pickSensitivity, "Pick Sensitivity", NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.55f,
+                          [](float v) { return v <= 0.0f ? juce::String("OFF") : juce::String(juce::roundToInt(v * 100.0f)) + "%"; }));
+    // DRY: off, the reverse gate's swell alone.
+    layout.add(dbParam(ids::dryLevel, "Dry Level", kOffDb, kDryLevelMaxDb, kOffDb));
 
     // The reverse gate: the SPX90's program 17, here at its longest swell.
     layout.add(boolParam(ids::gateOn, "Gate On", true));
@@ -314,7 +320,7 @@ Layout createParameterLayout()
     for (float hz : spx::kLpfValuesHz)
         lpfNames.add(lpfLabel(hz));
     layout.add(choiceParam(ids::gateLpf, "Gate LPF", lpfNames, lpfNames.size() - 1));
-    layout.add(percentParam(ids::gateMix, "Gate Mix", 1.0f));
+    layout.add(dbParam(ids::gateLevel, "Gate Level", kOffDb, kGateLevelMaxDb, 0.0f));
 
     layout.add(boolParam(ids::glideOn, "Glide On", true));
     layout.add(choiceParam(ids::glideMode, "Glide Mode", { "FREE", "SYNC", "TRIGGER", "MANUAL" }, 2));
@@ -339,10 +345,6 @@ Layout createParameterLayout()
     layout.add(choiceParam(ids::glideManualSource, "Glide Manual Source",
                            { "BAR KNOB", "PITCH BEND", "MOD WHEEL", "EXPRESSION (CC11)" }, 0));
     layout.add(percentParam(ids::glideBar, "Glide Bar", 0.0f, 0.001f));
-    layout.add(floatParam(ids::glideTwinDetune, "Glide Twin Detune", NormalisableRange<float>(0.0f, 30.0f, 0.1f), 8.0f,
-                          [](float v) { return juce::String(v, 1) + " ct"; }));
-    layout.add(percentParam(ids::glideTwinLevel, "Glide Twin Level", 0.0f));
-    layout.add(percentParam(ids::glideMix, "Glide Mix", 1.0f));
     juce::StringArray routings;
     for (const auto& r : kRoutings)
         routings.add(r.name);
@@ -350,7 +352,7 @@ Layout createParameterLayout()
 
     // HOLD: off by default.
     layout.add(boolParam(ids::holdOn, "Hold On", false));
-    layout.add(choiceParam(ids::holdMode, "Hold Mode", { "STRIKE", "LATCH", "LIVE", "MIDI" }, 0));
+    layout.add(choiceParam(ids::holdMode, "Hold Mode", { "STRIKE", "MANUAL", "LIVE", "MIDI" }, 0));
     layout.add(boolParam(ids::holdFreeze, "Hold Freeze", false));
     const auto ms = [](float v) { return juce::String(juce::roundToInt(v)) + " ms"; };
     layout.add(floatParam(ids::holdSize, "Hold Size", steppedRange(20.0f, 500.0f, 1.0f, 150.0f), 180.0f, ms));
@@ -367,7 +369,15 @@ Layout createParameterLayout()
     }));
     layout.add(dbParam(ids::holdLevel, "Hold Level", kOffDb, kHoldLevelMaxDb, -3.0f));
     layout.add(choiceParam(ids::holdCharacter, "Hold Character", { "CLEAN", "12-BIT" }, 0));
-    layout.add(intParam(ids::holdRoot, "Hold Root", 24, 96, 60, [](int v) { return noteName(v); }));
+    layout.add(intParam(ids::holdRoot, "Hold Root", kHoldRootAuto, 96, kHoldRootAuto,
+                        [](int v) { return v == kHoldRootAuto ? juce::String("AUTO") : noteName(v); }));
+    layout.add(floatParam(ids::holdSwell, "Hold Swell", steppedRange(10.0f, 4000.0f, 1.0f, 300.0f), 10.0f, ms));
+    layout.add(floatParam(ids::holdTail, "Hold Tail", steppedRange(20.0f, 8000.0f, 1.0f, 600.0f), 200.0f, ms));
+    juce::StringArray voices { "POLY", "MONO" };
+    for (float glide : kHoldGlideMs)
+        voices.add(glide >= 1000.0f ? "GLIDE " + juce::String(glide / 1000.0f, 0) + " S"
+                                    : "GLIDE " + juce::String(juce::roundToInt(glide)) + " MS");
+    layout.add(choiceParam(ids::holdVoices, "Hold Voices", voices, 0));
     return layout;
 }
 

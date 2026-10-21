@@ -42,7 +42,7 @@ private:
 };
 
 // The Reverse Gate module: the screen across four columns, and under it ROOM SIZE (what the reverse
-// gate is about) two rows tall, liveness and pre-delay, and the MIX group: low-pass and mix.
+// gate is about) two rows tall, liveness and pre-delay, and the TONE · LEVEL group: low-pass and level.
 class GatePanel : public ModulePanel
 {
 public:
@@ -61,7 +61,7 @@ private:
 
     ToggleKey on;
     GateDisplay display;
-    Knob roomSize, liveness, delay, lpf, mix;
+    Knob roomSize, liveness, delay, lpf, level;
 };
 
 // PICK SENS on its own, above IN: how easily the pick detector GLIDE and HOLD both listen to hears a

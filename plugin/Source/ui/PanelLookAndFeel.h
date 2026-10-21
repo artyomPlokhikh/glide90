@@ -144,6 +144,9 @@ void drawCardTitle(juce::Graphics&, const juce::String& title, juce::Rectangle<f
 void drawGroupRule(juce::Graphics&, const juce::String& name, float x, float width, float y, bool quiet = false);
 // A screen's window.
 void drawGlass(juce::Graphics&, juce::Rectangle<float> area, float corner = 4.0f);
+// A control of the rig (A/B and presets leave it alone): its text, in the current font and colour,
+// after a small padlock, the two centred in `area` as one.
+void drawLockedText(juce::Graphics&, const juce::String& text, juce::Rectangle<float> area);
 // One segment of a meter.
 void drawLed(juce::Graphics&, juce::Rectangle<float> area, juce::Colour colour, bool on);
 // A knob in the theme's style, pointing at `position` (0-1 over +-135 degrees); with `scale`, a
@@ -214,6 +217,8 @@ public:
     static constexpr const char* kSegment = "segment";
     // "onMenu": a key on a dialog's card, in the menus' colours rather than the panel's.
     static constexpr const char* kOnMenu = "onMenu";
+    // "locked": a key of the rig, its legend after a padlock (drawLockedText).
+    static constexpr const char* kLocked = "locked";
 
     juce::Rectangle<int> getTooltipBounds(const juce::String& text, juce::Point<int> screenPos, juce::Rectangle<int> parentArea) override;
     void drawTooltip(juce::Graphics&, const juce::String& text, int width, int height) override;

@@ -143,10 +143,11 @@ void SpxEngine::processDsp(int numDsp, const SpxSettings& s)
     {
         const auto i = (size_t) n;
         balance += smoothCoeff * (targetBal - balance);
-        dspOutL[i] = dacFilterL.process(quantise16(dspInL[i] * (1.0f - balance)));
-        dspOutR[i] = dacFilterR.process(quantise16(dspInR[i] * (1.0f - balance)));
-        dspOutWetL[i] = dacFilterWetL.process(quantise16(dspWetL[i] * balance));
-        dspOutWetR[i] = dacFilterWetR.process(quantise16(dspWetR[i] * balance));
+        const float direct = s.unmixed ? 1.0f : 1.0f - balance, effect = s.unmixed ? 1.0f : balance;
+        dspOutL[i] = dacFilterL.process(quantise16(dspInL[i] * direct));
+        dspOutR[i] = dacFilterR.process(quantise16(dspInR[i] * direct));
+        dspOutWetL[i] = dacFilterWetL.process(quantise16(dspWetL[i] * effect));
+        dspOutWetR[i] = dacFilterWetR.process(quantise16(dspWetR[i] * effect));
     }
 }
 

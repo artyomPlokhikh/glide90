@@ -16,6 +16,8 @@ struct SpxSettings
     ErSettings er = {};
     float balance = 1.0f; // 0 = direct only, 1 = effect only
     bool bypass = false;  // analog bypass: full bandwidth
+    // Direct and effect both at full level, BALANCE left out: whoever takes them apart sets their levels.
+    bool unmixed = false;
 };
 
 // The whole SPX90 at unity gain (the plugin's INPUT and OUTPUT do the levels): mono or stereo in,
@@ -31,8 +33,8 @@ public:
     // Clears the effect's tail only; the direct signal plays on undisturbed.
     void resetEffect();
 
-    // The direct signal and the effect come out apart (each after BALANCE, the D/A and the analog
-    // bypass), so something can happen to one and not the other, and the effect hears its own input:
+    // The direct signal and the effect come out apart (each after BALANCE, unless `unmixed`, the D/A
+    // and the analog bypass), so something can happen to one and not the other, and the effect hears its own input:
     // `effectIn` (mono) instead of the inputs' sum. direct + wet is the unit's output.
     void process(const float* directL, const float* directR, const float* effectIn, float* directOutL,
                  float* directOutR, float* wetOutL, float* wetOutR, int numSamples, const SpxSettings& s);

@@ -13,8 +13,8 @@ namespace glide90::ui
 {
 
 // The Glide module: the shape screen, then MOTION (mode, rate, depth, direction, random, smooth) and
-// below it SOUND (the twin string's detune and level, mix) and CONTROL (source, dynamics: what
-// TRIGGER and MANUAL listen to, dimmed in the other modes). RATE becomes a note value in SYNC and the
+// below MODE the CONTROL group (source, dynamics: what TRIGGER and MANUAL listen to, dimmed in the
+// other modes). RATE becomes a note value in SYNC and the
 // BAR in MANUAL. PICK SENS is IN's: HOLD listens to the picking too.
 class GlidePanel : public ModulePanel, private juce::Timer
 {
@@ -26,6 +26,7 @@ public:
 
     void paint(juce::Graphics&) override;
     void resized() override;
+    bool groupNamesQuiet() const override { return !controlGroupActive; }
 
 private:
     void timerCallback() override;
@@ -37,7 +38,7 @@ private:
     ChoiceList mode, direction;
     GlassSelector source { false };
     ShapeDisplay display;
-    Knob period, division, bar, depth, random, smooth, twinDetune, twinLevel, mix, dynamics;
+    Knob period, division, bar, depth, random, smooth, dynamics;
     int shownMode = -1, shownTrigger = -1, shownManual = -1;
     bool controlGroupActive = false;
 };

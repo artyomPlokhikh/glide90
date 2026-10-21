@@ -36,6 +36,7 @@ void PickDetector::reset()
 
 void PickDetector::setSensitivity(float sensitivity)
 {
+    enabled = sensitivity > 0.0f;
     const float jumpDb = 9.0f - 7.0f * std::clamp(sensitivity, 0.0f, 1.0f); // 5.5 dB at 0.5
     jumpRatio = std::pow(10.0f, jumpDb / 20.0f);
 }
@@ -60,7 +61,9 @@ bool PickDetector::detect(float input)
         --refractory;
         return false;
     }
-    if (now > past * jumpRatio && envFast > 0.0005f)
+    // Off: the level is still followed, so that turning it back on does not take the ringing chord
+    // for a new attack.
+    if (enabled && now > past * jumpRatio && envFast > 0.0005f)
     {
         refractory = (int) (rate * 0.05); // sixteenths up to ~280 BPM
         ++triggers;

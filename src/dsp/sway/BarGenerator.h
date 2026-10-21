@@ -47,10 +47,6 @@ struct SwaySettings
     float dynamics = 0.0f;        // Trigger: 0 = every strike or note at full depth, 1 = depth follows its strength
 
     float manual = 0.0f;          // Manual: -1 - 1, positive pushes the bar (towards `direction`)
-
-    float twinDetuneCents = 0.0f; // 0 - 30: second string tuned slightly sharp
-    float twinLevel = 0.0f;       // 0 - 1
-    float mix = 1.0f;             // 0 - 1
 };
 
 // Position of a vibrato bar in cents (negative = pitch down), one value per sample.
