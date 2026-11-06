@@ -31,8 +31,6 @@ juce::String timeText(float ms)
 
 GateDisplay::GateDisplay(Glide90Processor& p) : proc(p)
 {
-    setTooltip("The reflections of the reverse gate: they swell up and stop. ROOM SIZE stretches them, LIVENESS "
-               "sets how steeply they swell, PRE-DELAY moves them later");
     update();
     shownScaleMs = scaleFor(lengthMs);
 }
@@ -173,30 +171,22 @@ void GateDisplay::paint(juce::Graphics& g)
 GatePanel::GatePanel(Glide90Processor& p)
     : ModulePanel(names::reverseGate), on(p.state(), ids::gateOn, "ON"), display(p),
       roomSize(p.state(), ids::gateRoomSize, "ROOM SIZE", Knob::Size::Hero), liveness(p.state(), ids::gateLiveness, "LIVENESS"),
-      delay(p.state(), ids::gatePreDelay, "PRE-DELAY"), lpf(p.state(), ids::gateLpf, "LPF"), level(p.state(), kLite ? ids::gateMix : ids::gateLevel, kLite ? "MIX" : "LEVEL")
+      delay(p.state(), ids::gatePreDelay, "PRE-DELAY"), lpf(p.state(), ids::gateLpf, "LPF"), mix(p.state(), ids::gateMix, "MIX")
 {
-    for (auto* c : std::initializer_list<juce::Component*> { &on, &display, &roomSize, &liveness, &delay, &lpf, &level })
+    for (auto* c : std::initializer_list<juce::Component*> { &on, &display, &roomSize, &liveness, &delay, &lpf, &mix })
         addAndMakeVisible(c);
 
-    on.setTooltip(kLite ? "Reverse gate on/off. Off is the unit's analog bypass: the direct sound is then full bandwidth"
-                        : "Reverse gate on/off. Off is the unit's analog bypass: the direct sound is then full bandwidth, "
-                          "and HOLD goes to the output");
-    roomSize.setTooltip("Spacing of the reflections. At 20 the reverse gate swells for over a second");
-    liveness.setTooltip("How steeply the reflections swell");
-    delay.setTooltip("Time before the first reflection");
-    lpf.setTooltip("Low-pass on the effect, 1-11 kHz or THRU");
-    if constexpr (kLite)
-        level.setTooltip("0 = dry only, 100 = effect only. The unit mixes digitally, so even the dry signal is "
-                         "band-limited to 12 kHz");
-    else
-        level.setTooltip("How loud the reverse gate comes out, HOLD in it included. The direct guitar has its own knob: "
-                         "DRY, above OUT");
+    roomSize.setTooltip("How long the swell lasts");
+    liveness.setTooltip("Shape of the swell: low = steep rise, high = gradual");
+    delay.setTooltip("Delay before the swell starts");
+    lpf.setTooltip("Low-pass on the reverse gate only. THRU: off");
+    mix.setTooltip("0: direct only. 100: reverse gate only");
 }
 
 void GatePanel::paint(juce::Graphics& g)
 {
     ModulePanel::paint(g);
-    drawGroupRule(g, kLite ? juce::String("Mix") : juce::String::fromUTF8("Tone \xc2\xb7 Level"), (float) knobX(1), (float) (2 * Knob::kColumn), (float) kRuleY);
+    drawGroupRule(g, juce::String::fromUTF8("Tone \xc2\xb7 Mix"), (float) columnX(1), (float) (2 * Knob::kColumn), (float) kRuleY);
 }
 
 void GatePanel::resized()
@@ -204,11 +194,11 @@ void GatePanel::resized()
     const int h = Knob::kHeight, w = Knob::kColumn;
     on.setBounds(onKeyBounds());
     display.setBounds(columnX(0), kScreenTop, kColumns * w, kScreenHeight);
-    roomSize.setBounds(knobX(0), kRow1, w, kRow2 + h - kRow1);
-    liveness.setBounds(knobX(1), kRow1, w, h);
-    delay.setBounds(knobX(2), kRow1, w, h);
-    lpf.setBounds(knobX(1), kRow2, w, h);
-    level.setBounds(knobX(2), kRow2, w, h);
+    roomSize.setBounds(columnX(0), kRow1, w, kRow2 + h - kRow1);
+    liveness.setBounds(columnX(1), kRow1, w, h);
+    delay.setBounds(columnX(2), kRow1, w, h);
+    lpf.setBounds(columnX(1), kRow2, w, h);
+    mix.setBounds(columnX(2), kRow2, w, h);
 }
 
 // --- PickSense ---

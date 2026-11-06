@@ -11,15 +11,14 @@ namespace sway
 
 enum class GlideMode
 {
-    Free,    // the shape loops every cycleSeconds
-    Sync,    // the shape loops every syncBeats, locked to the host's beat position
-    Trigger, // each picking attack (or MIDI note) plays the shape once, over cycleSeconds
-    Manual,  // no movement of its own: the bar follows `manual` (knob, pitch bend, CC)
+    Loop,    // the shape repeats, once per cycle
+    Trigger, // each picking attack plays the shape once, over one cycle
+    Manual,  // no movement of its own: the bar follows `manual`
 };
 
 enum class BendDirection
 {
-    Down, // a Jazzmaster bar: pushing only lowers the pitch
+    Down, // pushing only lowers the pitch
     Both, // around the open pitch
     Up,
 };
@@ -27,24 +26,24 @@ enum class BendDirection
 struct SwaySettings
 {
     bool enabled = true;
-    GlideMode mode = GlideMode::Free;
+    GlideMode mode = GlideMode::Loop;
     const Shape* shape = nullptr; // nullptr: sine
 
-    double cycleSeconds = 0.33;   // Free, Trigger
-    double syncBeats = 1.0;       // Sync: one cycle in quarter notes
-    double bpm = 120.0;           // Sync
-    double hostBeats = -1.0;      // Sync: host position in quarter notes at the block start; < 0 when stopped
+    // One cycle: cycleSeconds, or with `sync` syncBeats at the host's tempo. LOOP then also keeps its
+    // phase on the host's beat position.
+    bool sync = false;
+    double cycleSeconds = 0.33;
+    double syncBeats = 1.0;       // one cycle in quarter notes
+    double bpm = 120.0;
+    double hostBeats = -1.0;      // host position in quarter notes at the block start; < 0 when stopped
 
     float depthCents = 30.0f;     // 0 - 300
     BendDirection direction = BendDirection::Down;
     float random = 0.15f;         // 0 - 1: cycle-to-cycle variation of depth and timing, plus drift
     float smooth = 0.2f;          // 0 - 1: how lazily the hand follows (2 - 150 ms)
 
-    bool triggerFromPick = true;  // Trigger: picking attacks; otherwise MIDI notes
     float sensitivity = 0.5f;     // Trigger: attack detector sensitivity
-    int midiTriggerAt = -1;       // Trigger: sample index of a MIDI note-on in this block, or -1
-    float midiTriggerVelocity = 1.0f;
-    float dynamics = 0.0f;        // Trigger: 0 = every strike or note at full depth, 1 = depth follows its strength
+    float dynamics = 0.0f;        // Trigger: 0 = every strike at full depth, 1 = depth follows its strength
 
     float manual = 0.0f;          // Manual: -1 - 1, positive pushes the bar (towards `direction`)
 };
@@ -56,14 +55,14 @@ public:
     void prepare(double sampleRate);
     void reset();
 
-    // Call at the start of each block (Sync locks its phase to the host here).
+    // Call at the start of each block (a synced LOOP locks its phase to the host here).
     void beginBlock(const SwaySettings& s);
-    // `input` is the dry signal, used to detect picking attacks; `index` the sample within the block.
-    float next(float input, int index, const SwaySettings& s);
+    // `input` is the dry signal, used to detect picking attacks.
+    float next(float input, const SwaySettings& s);
 
     // Position in the cycle (0 - 1) of the last sample, for display.
     float phase() const { return (float) cyclePhase; }
-    // Picking attacks detected so far (TRIGGER from PICK ATTACK), for display and tests.
+    // Picking attacks detected so far (TRIGGER), for display and tests.
     int pickAttacks() const { return detector.attacks(); }
 
 private:

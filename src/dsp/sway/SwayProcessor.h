@@ -120,7 +120,7 @@ public:
     void process(float* const* channels, int numChannels, int numSamples, const SwaySettings& s,
                  const float* detector = nullptr);
 
-    // The same in two steps, for when something else follows the bar too (HOLD, other paths): first
+    // The same in two steps, for when other paths follow the bar too: first
     // where the bar is, one value per sample in cents, from what the pick detector listens to; then
     // the shifting, from those positions. Call computeBar() once per block, or for pieces of one with
     // `continuing` set after the first.

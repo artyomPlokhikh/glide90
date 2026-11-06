@@ -17,8 +17,6 @@ constexpr float kPointSize = 7.0f;
 
 ShapeDisplay::ShapeDisplay(Glide90Processor& p) : proc(p), shapeParam(*p.state().getParameter(ids::glideShape))
 {
-    setTooltip("Drag a point to reshape the cycle; double-click to add or remove one. Arrows at the top step "
-               "through the shapes");
     shape = proc.currentShape();
 }
 
@@ -33,6 +31,11 @@ bool ShapeDisplay::pushIsDown() const
 {
     // Pushing the bar is drawn downwards unless the direction is UP.
     return (sway::BendDirection) choice(ids::glideDirection) != sway::BendDirection::Up;
+}
+
+juce::String ShapeDisplay::getTooltip()
+{
+    return editable() ? juce::String("Drag a point to reshape the cycle; double-click to add or remove one") : juce::String();
 }
 
 bool ShapeDisplay::editable() const
@@ -98,15 +101,14 @@ int ShapeDisplay::pointAt(juce::Point<float> p) const
 
 juce::String ShapeDisplay::statusText() const
 {
-    const auto ms = juce::String(juce::roundToInt(proc.state().getRawParameterValue(ids::glidePeriod)->load())) + "MS";
+    const bool sync = choice(ids::glideSync) != 0;
+    const auto rate = sync ? juce::String(kDivisions[juce::jlimit(0, (int) std::size(kDivisions) - 1, choice(ids::glideDivision))].label)
+                           : juce::String(juce::roundToInt(proc.state().getRawParameterValue(ids::glidePeriod)->load())) + "MS";
     switch ((sway::GlideMode) choice(ids::glideMode))
     {
-        case sway::GlideMode::Free: return "FREE " + ms;
-        case sway::GlideMode::Sync:
-            return "SYNC " + juce::String(kDivisions[juce::jlimit(0, (int) std::size(kDivisions) - 1, choice(ids::glideDivision))].label)
-                   + " AT " + juce::String(juce::roundToInt(proc.hostBpm())) + " BPM";
-        case sway::GlideMode::Trigger:
-            return ((TriggerSource) choice(ids::glideTriggerSource) == TriggerSource::Pick ? "ON EACH PICK " : "ON EACH NOTE ") + ms;
+        case sway::GlideMode::Loop:
+            return "LOOP " + rate + (sync ? " AT " + juce::String(juce::roundToInt(proc.hostBpm())) + " BPM" : juce::String());
+        case sway::GlideMode::Trigger: return "ON EACH PICK " + rate;
         case sway::GlideMode::Manual:
         default: return "MANUAL";
     }
@@ -116,8 +118,8 @@ juce::String ShapeDisplay::settingsKey() const
 {
     // Everything the screen shows that is not the moving bar.
     juce::String key;
-    for (const char* id : { ids::glideOn, ids::glideMode, ids::glideDirection, ids::glideDepth, ids::glideShape,
-                            ids::glideTriggerSource, ids::glidePeriod, ids::glideDivision })
+    for (const char* id : { ids::glideOn, ids::glideMode, ids::glideSync, ids::glideDirection, ids::glideDepth, ids::glideShape,
+                            ids::glidePeriod, ids::glideDivision })
         key << proc.state().getRawParameterValue(id)->load() << ' ';
     return key << juce::roundToInt(proc.hostBpm());
 }
@@ -341,9 +343,8 @@ void ShapeDisplay::paintMoving(juce::Graphics& g)
         drawReadout(g, (cents > 0.5f ? "+" : "") + juce::String(juce::roundToInt(cents)) + "CT",
                     { bounds.getRight() - 120.0f, 6.0f, 108.0f, 22.0f }, ink, juce::Justification::right, true, true);
 
-    // TRIGGER from the pick: flashes on every attack it hears, to set PICK SENS by.
-    if (on && (sway::GlideMode) choice(ids::glideMode) == sway::GlideMode::Trigger
-        && (TriggerSource) choice(ids::glideTriggerSource) == TriggerSource::Pick)
+    // TRIGGER: flashes on every attack it hears, to set PICK SENS by.
+    if (on && (sway::GlideMode) choice(ids::glideMode) == sway::GlideMode::Trigger)
     {
         const bool flash = juce::Time::getMillisecondCounter() < attackFlashUntil;
         drawReadout(g, "PICK", { r.getX(), r.getBottom() + 8.0f, r.getWidth(), 14.0f },

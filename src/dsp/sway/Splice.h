@@ -7,7 +7,7 @@ namespace sway
 {
 
 // Where to start a second read of a signal so that it lines up with a first one: the glide's
-// handovers between read heads and HOLD's grains both need it. `at(i)` is the signal at position i;
+// handovers between read heads need it. `at(i)` is the signal at position i;
 // a match compares `length` samples from each candidate start with as many from the reference.
 
 // How alike the signal from `b` is to the signal from `a`, normalised by b's energy (a's is the same

@@ -2,7 +2,6 @@
 
 #include "Controls.h"
 #include "ModulePanel.h"
-#include "Product.h"
 
 #include "ErEngine.h"
 
@@ -16,7 +15,7 @@ namespace glide90::ui
 
 // The reverse gate's screen: its reflections as they come, swelling up to the cut, with the
 // pre-delay before them and the total length.
-class GateDisplay : public juce::Component, public juce::SettableTooltipClient
+class GateDisplay : public juce::Component
 {
 public:
     explicit GateDisplay(Glide90Processor& p);
@@ -42,8 +41,8 @@ private:
     juce::VBlankAttachment vblank { this, [this](double seconds) { frame(seconds); } };
 };
 
-// The Reverse Gate module: the screen across four columns, and under it ROOM SIZE (what the reverse
-// gate is about) two rows tall, liveness and pre-delay, and the TONE · LEVEL group: low-pass and level.
+// The Reverse Gate module: the screen across its columns, and under it ROOM SIZE (what the reverse
+// gate is about) two rows tall, liveness and pre-delay, and the TONE · MIX group: low-pass and mix.
 class GatePanel : public ModulePanel
 {
 public:
@@ -51,23 +50,19 @@ public:
     // What the sound does, for the screen's motion (the editor's, read every frame).
     void setMotion(const Motion* m) { display.motion = m; }
 
-    // LITE: three, the screen as wide as the knobs.
-    static constexpr int kColumns = kLite ? 3 : 4;
+    static constexpr int kColumns = 3;
 
     void paint(juce::Graphics&) override;
     void resized() override;
 
 private:
-    // The knobs take three columns, centred under the screen.
-    static constexpr int knobX(int column) { return columnX(column) + (kColumns - 3) * Knob::kColumn / 2; }
-
     ToggleKey on;
     GateDisplay display;
-    Knob roomSize, liveness, delay, lpf, level;
+    Knob roomSize, liveness, delay, lpf, mix;
 };
 
-// PICK SENS on its own, above IN: how easily the pick detector GLIDE and HOLD both listen to hears a
-// pick attack. No card: a bare knob. Its pointer lights up on each pick heard (`picksHeard` counts them).
+// PICK SENS: how easily the pick detector TRIGGER listens to hears a pick attack. Its pointer lights up
+// on each pick heard (`picksHeard` counts them).
 class PickSense : public juce::Component
 {
 public:

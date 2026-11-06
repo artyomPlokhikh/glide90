@@ -4,9 +4,7 @@
 #include "ui/GatePanel.h"
 #include "ui/GlidePanel.h"
 #include "ui/HeaderBar.h"
-#include "ui/HoldPanel.h"
 #include "ui/PanelLookAndFeel.h"
-#include "ui/RoutingPanel.h"
 
 #include <array>
 #include <optional>
@@ -14,12 +12,8 @@
 namespace glide90
 {
 
-// GLIDE90: under the header, PICK SENS above IN, DRY above OUT and the ROUTING strip between them:
-// where HOLD goes and how GLIDE bends the gate. Under them, left to right: IN, GLIDE, the reverse gate,
-// OUT; under the modules, between IN and OUT, the HOLD strip, as it plays beside them (folded to its
-// title bar, the window is shorter).
-// GLIDE90 LITE: under the header, IN, the two modules in the order they play, OUT. Dragging a module
-// by its title bar to the other place turns the order round.
+// Under the header, IN, the two modules in the order they play, OUT. Dragging a module by its title bar
+// to the other place turns the order round.
 class Glide90Editor : public juce::AudioProcessorEditor
 {
 public:
@@ -27,18 +21,9 @@ public:
     static constexpr int kModulesWidth = ui::GlidePanel::widthFor(ui::GlidePanel::kColumns) + kGap
                                          + ui::GatePanel::widthFor(ui::GatePanel::kColumns);
     static constexpr int kWidth = 2 * ui::PanelLookAndFeel::kMargin + 2 * ui::IoColumn::kWidth + 2 * kGap + kModulesWidth;
-    static constexpr int kHeaderHeight = 56, kRouteTop = 64;
-    static constexpr int kBodyTop = kLite ? kRouteTop : kRouteTop + ui::RoutingPanel::kHeight + kGap;
-    static constexpr int kHoldTop = kBodyTop + ui::ModulePanel::kHeight + kGap;
-    static constexpr int heightFor(bool holdFolded)
-    {
-        if constexpr (kLite)
-            return kBodyTop + ui::ModulePanel::kHeight + ui::PanelLookAndFeel::kMargin;
-        return kHoldTop + (holdFolded ? ui::HoldPanel::kFoldedHeight : ui::HoldPanel::kOpenHeight)
-               + ui::PanelLookAndFeel::kMargin;
-    }
-    // The height at 100 %, with HOLD open or folded.
-    int contentHeight() const { return heightFor(holdPanel && holdPanel->isFolded()); }
+    static constexpr int kHeaderHeight = 56, kBodyTop = 64;
+    // The height at 100 %.
+    static constexpr int kHeight = kBodyTop + ui::ModulePanel::kHeight + ui::PanelLookAndFeel::kMargin;
 
     explicit Glide90Editor(Glide90Processor&);
     ~Glide90Editor() override;
@@ -60,7 +45,7 @@ private:
     // Reads what the sound does into `motion`, for the background and the screens.
     void updateMotion(double seconds);
 
-    // --- LITE: the modules' order, dragged ---
+    // --- The modules' order, dragged ---
     // Puts the modules in their places for the order the parameter says, sliding them there or not.
     void layoutModules(bool animate);
     // Where each module goes with GLIDE first or second.
@@ -82,14 +67,6 @@ private:
     ui::IoColumn input, output;
     ui::GlidePanel glide;
     ui::GatePanel gate;
-    // GLIDE90 only.
-    std::optional<ui::PickSense> pickSense;
-    std::optional<ui::RoutingPanel> routing;
-    // DRY above OUT, bare like PICK SENS above IN: the direct guitar's level, at the end of its path.
-    std::optional<ui::Knob> dry;
-    std::optional<ui::HoldPanel> holdPanel;
-
-    // LITE only.
     std::optional<juce::ParameterAttachment> position;
     bool glideFirst = true;
     ui::ModulePanel* dragged = nullptr;

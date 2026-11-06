@@ -12,8 +12,6 @@ HeaderBar::HeaderBar(Glide90Processor& p) : proc(p)
     for (auto* c : std::initializer_list<juce::Component*> { &presets, &save, &a, &b, &undoKey, &redoKey, &setup })
         addAndMakeVisible(c);
 
-    presets.setTooltip("Preset: the whole plugin, reverb and glide. Arrows step through the list; * means changed. "
-                       "The menu can delete the current user preset");
     presets.getText = [this] { return proc.currentPresetName() + (proc.isPresetModified() ? " *" : ""); };
     presets.onStep = [this](int d) { stepPreset(d); };
     presets.fillMenu = [this](juce::PopupMenu& menu) {
@@ -40,8 +38,8 @@ HeaderBar::HeaderBar(Glide90Processor& p) : proc(p)
 
     a.getProperties().set(PanelLookAndFeel::kSegment, "left");
     b.getProperties().set(PanelLookAndFeel::kSegment, "right");
-    a.setTooltip("Compare: two working versions of the setting. The controls with a padlock and FREEZE stay as they are");
-    b.setTooltip("Compare: two working versions of the setting (B starts as a copy of A). The controls with a padlock and FREEZE stay as they are");
+    for (auto* key : { &a, &b })
+        key->setTooltip("Two versions of the setting to compare; B starts as a copy of A. Locked controls stay as they are");
     a.onClick = [this] { proc.selectAB(0); };
     b.onClick = [this] { proc.selectAB(1); };
 
@@ -52,7 +50,6 @@ HeaderBar::HeaderBar(Glide90Processor& p) : proc(p)
     undoKey.onClick = [this] { proc.undoManager().undo(); };
     redoKey.onClick = [this] { proc.undoManager().redo(); };
 
-    setup.setTooltip("Window size, look and motion");
     setup.onClick = [this] { showSetup(); };
 
     refreshUserFiles();
@@ -206,15 +203,6 @@ void HeaderBar::paint(juce::Graphics& g)
     g.setFont(logo);
     g.setColour(theme().text);
     g.drawText(name, PanelLookAndFeel::kMargin + 2, 0, 140, getHeight(), juce::Justification::centredLeft);
-    if constexpr (kLite)
-    {
-        // LITE: small after the name.
-        const float x = (float) PanelLookAndFeel::kMargin + 2.0f + juce::GlyphArrangement::getStringWidth(logo, name) + 5.0f;
-        g.setFont(legendFont(12.0f, true).withExtraKerningFactor(0.16f));
-        g.setColour(theme().textDim);
-        g.drawText(themed("LITE"), juce::Rectangle<float>(x, (float) getHeight() * 0.5f - 1.0f, 154.0f - x, 13.0f),
-                   juce::Justification::centredLeft, false);
-    }
 }
 
 void HeaderBar::resized()

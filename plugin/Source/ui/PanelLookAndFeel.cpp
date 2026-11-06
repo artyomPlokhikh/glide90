@@ -73,13 +73,6 @@ std::unique_ptr<juce::PropertiesFile> settings()
 
 constexpr const char* kLookKey = "look";
 constexpr const char* kMotionKey = "motion";
-constexpr const char* kHoldFoldedKey = "holdFolded";
-
-bool& currentHoldFolded()
-{
-    static bool folded = settings()->getBoolValue(kHoldFoldedKey, false);
-    return folded;
-}
 
 MotionLevel& currentMotion()
 {
@@ -309,19 +302,6 @@ void setMotionLevel(MotionLevel level)
     currentMotion() = level;
     auto file = settings();
     file->setValue(kMotionKey, level == MotionLevel::Full ? "full" : (level == MotionLevel::Subtle ? "subtle" : "off"));
-    file->saveIfNeeded();
-}
-
-bool holdFolded()
-{
-    return currentHoldFolded();
-}
-
-void setHoldFolded(bool folded)
-{
-    currentHoldFolded() = folded;
-    auto file = settings();
-    file->setValue(kHoldFoldedKey, folded);
     file->saveIfNeeded();
 }
 
@@ -1071,7 +1051,8 @@ void PanelLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Button& b, 
             g.drawRoundedRectangle(cap.expanded(0.5f), 2.5f, 1.0f);
             g.setColour(juce::Colours::white.withAlpha(down ? 0.04f : 0.1f));
             g.drawHorizontalLine((int) cap.getY(), cap.getX() + 1.0f, cap.getRight() - 1.0f);
-            if (b.getProperties()[kLed])
+            // (A key with a note lights the note itself: it has no room for an LED.)
+            if (b.getProperties()[kLed] && b.getProperties()[kIcon].toString() != "note")
             {
                 const auto led = juce::Rectangle<float>(juce::jmin(cap.getWidth() * 0.37f, 16.0f), 3.5f)
                                      .withCentre({ cap.getCentreX(), cap.getY() + 6.0f });
@@ -1137,6 +1118,19 @@ void PanelLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton& b, bo
         colour = colour.withMultipliedAlpha(kDimmedAlpha);
     g.setColour(colour);
 
+    if (b.getProperties()[kIcon].toString() == "note")
+    {
+        // An eighth note, in a 16-point box; on the rack's keys it lights up by itself.
+        if (on && rack)
+            g.setColour(b.isEnabled() ? t.accent : t.accent.withMultipliedAlpha(kDimmedAlpha));
+        const auto at = juce::AffineTransform::translation(-8.0f, -8.0f).translated(cap.getCentre());
+        juce::Path head;
+        head.addEllipse(3.2f, 10.0f, 5.0f, 3.8f);
+        g.fillPath(head, at);
+        g.strokePath(juce::Drawable::parseSVGPath("M7.8 11.5V3c.4 2.2 4.4 2.6 4 6"),
+                     juce::PathStrokeType(1.3f, juce::PathStrokeType::mitered, juce::PathStrokeType::rounded), at);
+        return;
+    }
     if (const auto icon = b.getProperties()[kIcon].toString(); icon == "undo" || icon == "redo")
     {
         // A hooked arrow: back (undo) or, mirrored, forward (redo). Drawn in a 16-point box.

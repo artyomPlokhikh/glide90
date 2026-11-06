@@ -263,9 +263,7 @@ void SwayProcessor::process(float* const* channels, int numChannels, int numSamp
                 pieceDetector[(size_t) n] = total / (float) numChannels;
             }
         }
-        SwaySettings piece = s;
-        piece.midiTriggerAt = s.midiTriggerAt - start; // the bar counts samples from the piece's start
-        computeBar(pieceDetector.data(), num, piece, pieceBar.data(), start > 0);
+        computeBar(pieceDetector.data(), num, s, pieceBar.data(), start > 0);
         float* shifted[kMaxChannels] {};
         for (int ch = 0; ch < numChannels; ++ch)
             shifted[ch] = channels[ch] + start;
@@ -279,7 +277,7 @@ void SwayProcessor::computeBar(const float* detector, int numSamples, const Sway
     if (!continuing)
         bar.beginBlock(s);
     for (int n = 0; n < numSamples; ++n)
-        centsOut[n] = bar.next(detector[n], n, s);
+        centsOut[n] = bar.next(detector[n], s);
     // Where the bar is, for the display: 0 while the glide is off. processWithBar() refines this to
     // what the shifter applies.
     if (numSamples > 0)

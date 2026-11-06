@@ -48,6 +48,27 @@ SwaySettings steady()
     return s;
 }
 
+// A hard pick on a silent string: loud enough to be heard at any sensitivity above 0.
+std::vector<float> hardPick(double rate, double seconds)
+{
+    std::vector<float> pick((size_t) (seconds * rate), 0.0f);
+    uint32_t seed = 3;
+    for (size_t i = 0; i < pick.size(); ++i)
+    {
+        const double t = (double) i / rate;
+        double v = 0.0;
+        for (int h = 1; h <= 16; ++h)
+            v += std::sin(2.0 * test::kPi * 196.0 * h * t) / h * std::exp(-t * (0.8 + 0.6 * h));
+        if (i < (size_t) (0.002 * rate))
+        {
+            seed = seed * 1664525u + 1013904223u;
+            v += (double) (seed >> 8) / 8388608.0 - 1.0;
+        }
+        pick[i] = (float) (0.3 * v);
+    }
+    return pick;
+}
+
 } // namespace
 
 TEST_CASE("shapes are smooth, periodic and pass through their points")
@@ -135,7 +156,8 @@ TEST_CASE("sync mode follows the host's beat position")
 {
     const double rate = 48000.0, bpm = 120.0;
     SwaySettings s = steady();
-    s.mode = GlideMode::Sync;
+    s.mode = GlideMode::Loop;
+    s.sync = true;
     s.syncBeats = 1.0;
     s.bpm = bpm;
     SwayProcessor p;
@@ -154,13 +176,12 @@ TEST_CASE("sync mode follows the host's beat position")
     }
 }
 
-TEST_CASE("trigger mode plays the shape once per MIDI note, then rests")
+TEST_CASE("trigger mode plays the shape once per pick, then rests")
 {
     const double rate = 48000.0;
     const auto shape = sway::makeShape(sway::ShapePreset::Dive);
     SwaySettings s = steady();
     s.mode = GlideMode::Trigger;
-    s.triggerFromPick = false;
     s.shape = &shape;
     s.depthCents = 50.0f;
     s.cycleSeconds = 0.25;
@@ -172,20 +193,64 @@ TEST_CASE("trigger mode plays the shape once per MIDI note, then rests")
             p.process(block.data(), 256, s);
     };
 
-    runBlocks(40); // no note yet: the bar rests
+    runBlocks(40); // no pick yet: the bar rests
     CHECK(p.phase() == 0.0f);
     CHECK(std::abs(p.barCents()) < 0.01f);
 
-    s.midiTriggerAt = 200;
-    runBlocks(1);
-    s.midiTriggerAt = -1;
-    runBlocks(5); // ~32 ms into the dive
+    auto pick = hardPick(rate, 256.0 * 6.0 / rate);
+    for (size_t i = 0; i + 256 <= pick.size(); i += 256)
+        p.process(pick.data() + i, 256, s);
+    REQUIRE(p.pickAttacks() == 1);
+    runBlocks(1); // ~32 ms into the dive
     CHECK(p.phase() > 0.05f);
     CHECK(p.barCents() < -10.0f);
 
     runBlocks(60); // well past one cycle: back at rest and staying there
     CHECK(p.phase() == 0.0f);
     CHECK(std::abs(p.barCents()) < 1.0f);
+}
+
+TEST_CASE("trigger with sync: one pass as long as the note at the host's tempo, not on its beat, RANDOM leaves its length")
+{
+    const double rate = 48000.0;
+    for (float random : { 0.0f, 1.0f })
+    {
+        CAPTURE(random);
+        SwaySettings s = steady();
+        s.mode = GlideMode::Trigger;
+        s.sync = true;
+        s.random = random;
+        s.syncBeats = 0.5; // an eighth at 120 BPM: 0.25 s
+        s.bpm = 120.0;
+        s.cycleSeconds = 4.0; // not this
+        s.hostBeats = 7.3;
+        SwayProcessor p;
+        p.prepare(rate);
+        std::vector<float> block(256, 0.0f);
+        auto silentBlocks = [&](int n) {
+            for (int b = 0; b < n; ++b)
+            {
+                std::fill(block.begin(), block.end(), 0.0f);
+                p.process(block.data(), 256, s);
+                s.hostBeats += 256.0 * s.bpm / 60.0 / rate;
+            }
+        };
+
+        silentBlocks(40); // no pick: the host's beat alone does not start it
+        CHECK(p.phase() == 0.0f);
+
+        auto pick = hardPick(rate, 0.1);
+        int played = 0;
+        for (size_t i = 0; i + 256 <= pick.size() && p.pickAttacks() == 0; i += 256)
+            p.process(pick.data() + i, 256, s);
+        REQUIRE(p.pickAttacks() == 1);
+        while (p.phase() > 0.0f && played < 500)
+        {
+            silentBlocks(1);
+            ++played;
+        }
+        CHECK(played * 256.0 / rate == doctest::Approx(0.25).epsilon(0.03));
+    }
 }
 
 TEST_CASE("pick attacks are caught in fast strumming over ringing chords, once each")
@@ -244,23 +309,8 @@ TEST_CASE("pick attacks are caught in fast strumming over ringing chords, once e
 
 TEST_CASE("at sensitivity 0 the pick detector is off; turned back on, it hears the next pick only")
 {
-    // A hard pick on a silent string: loud enough to be heard at any sensitivity above 0.
     const double rate = 48000.0;
-    std::vector<float> pick((size_t) (0.5 * rate), 0.0f);
-    uint32_t seed = 3;
-    for (size_t i = 0; i < pick.size(); ++i)
-    {
-        const double t = (double) i / rate;
-        double v = 0.0;
-        for (int h = 1; h <= 16; ++h)
-            v += std::sin(2.0 * test::kPi * 196.0 * h * t) / h * std::exp(-t * (0.8 + 0.6 * h));
-        if (i < (size_t) (0.002 * rate))
-        {
-            seed = seed * 1664525u + 1013904223u;
-            v += (double) (seed >> 8) / 8388608.0 - 1.0;
-        }
-        pick[i] = (float) (0.3 * v);
-    }
+    const auto pick = hardPick(rate, 0.5);
     sway::PickDetector d;
     d.prepare(rate);
     auto play = [&](float sensitivity) {
@@ -378,7 +428,7 @@ TEST_CASE("the pitch shifter keeps a steady level through its head handovers, up
 TEST_CASE("sway stays finite and bounded with every control at its extreme")
 {
     const double rate = 44100.0;
-    for (auto mode : { GlideMode::Free, GlideMode::Trigger, GlideMode::Manual })
+    for (auto mode : { GlideMode::Loop, GlideMode::Trigger, GlideMode::Manual })
     {
         CAPTURE((int) mode);
         SwaySettings s;
@@ -499,7 +549,6 @@ TEST_CASE("between strikes the bar rests at the open pitch, also when bending bo
         CAPTURE((int) direction);
         SwaySettings s = steady();
         s.mode = GlideMode::Trigger;
-        s.triggerFromPick = false;
         s.direction = direction;
         s.depthCents = 100.0f;
         const auto shape = sway::makeShape(sway::ShapePreset::RampUp); // starts pushed all the way

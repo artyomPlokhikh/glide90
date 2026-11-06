@@ -1,7 +1,5 @@
 #pragma once
 
-#include "Product.h"
-
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <iterator>
@@ -18,10 +16,8 @@ inline constexpr const char* input = "input";
 inline constexpr const char* inputMode = "input_mode";
 inline constexpr const char* output = "output";
 inline constexpr const char* outputMode = "output_mode";
-// The pick detector both GLIDE (TRIGGER) and HOLD (STRIKE, MIDI) listen to.
+// How easily the pick detector, which TRIGGER listens to, hears a pick.
 inline constexpr const char* pickSensitivity = "pick_sensitivity";
-// DRY: the direct guitar to OUT, off by default (the reverse gate's swell alone). Part of the sound.
-inline constexpr const char* dryLevel = "dry_level";
 
 // The reverse gate: the SPX90's program 17, the only one kept.
 inline constexpr const char* gateOn = "gate_on";
@@ -29,13 +25,13 @@ inline constexpr const char* gateRoomSize = "gate_room_size";
 inline constexpr const char* gateLiveness = "gate_liveness";
 inline constexpr const char* gatePreDelay = "gate_pre_delay";
 inline constexpr const char* gateLpf = "gate_lpf";
-inline constexpr const char* gateLevel = "gate_level";
-// LITE only: the unit's BALANCE between the direct guitar and the reverse gate (GLIDE90 has DRY and LEVEL).
+// The unit's BALANCE between the direct guitar and the reverse gate.
 inline constexpr const char* gateMix = "gate_mix";
 
 // Glide: the vibrato bar.
 inline constexpr const char* glideOn = "glide_on";
 inline constexpr const char* glideMode = "glide_mode";
+inline constexpr const char* glideSync = "glide_sync"; // RATE as a note value (glide_division) or as time (glide_period)
 inline constexpr const char* glidePeriod = "glide_period";
 inline constexpr const char* glideDivision = "glide_division";
 inline constexpr const char* glideDepth = "glide_depth";
@@ -43,70 +39,21 @@ inline constexpr const char* glideDirection = "glide_direction";
 inline constexpr const char* glideRandom = "glide_random";
 inline constexpr const char* glideSmooth = "glide_smooth";
 inline constexpr const char* glideShape = "glide_shape";
-inline constexpr const char* glideTriggerSource = "glide_trigger_source";
 inline constexpr const char* glideDynamics = "glide_dynamics";
-inline constexpr const char* glideManualSource = "glide_manual_source";
 inline constexpr const char* glideBar = "glide_bar";
-// LITE only: GLIDE before or after the reverse gate (the modules' order, dragged by their title bars).
+// GLIDE before or after the reverse gate (the modules' order, dragged by their title bars).
 inline constexpr const char* glidePosition = "glide_position";
-
-// The ROUTING: where HOLD goes and how GLIDE bends the reverse gate, one of kRoutings.
-inline constexpr const char* routing = "routing";
-
-// Hold: captures the chord and holds it, bent by the glide bar.
-inline constexpr const char* holdOn = "hold_on";
-inline constexpr const char* holdMode = "hold_mode";
-inline constexpr const char* holdFreeze = "hold_freeze";
-inline constexpr const char* holdSize = "hold_size";
-inline constexpr const char* holdDensity = "hold_density";
-inline constexpr const char* holdSmear = "hold_smear";
-inline constexpr const char* holdSpread = "hold_spread";
-inline constexpr const char* holdReverse = "hold_reverse";
-inline constexpr const char* holdDuck = "hold_duck";
-inline constexpr const char* holdDecay = "hold_decay";
-inline constexpr const char* holdLevel = "hold_level";
-inline constexpr const char* holdCharacter = "hold_character";
-inline constexpr const char* holdRoot = "hold_root";
-inline constexpr const char* holdSwell = "hold_swell";   // how HOLD comes in
-inline constexpr const char* holdTail = "hold_tail";     // how it goes once let go
-inline constexpr const char* holdVoices = "hold_voices"; // MIDI: POLY, MONO or GLIDE with its time
 } // namespace ids
-
-// hold_root below C1: AUTO, ROOT from the capture when it is one clear note.
-inline constexpr int kHoldRootAuto = 23;
-// hold_voices: POLY, MONO, then GLIDE at these times.
-inline constexpr float kHoldGlideMs[] { 50.0f, 100.0f, 200.0f, 400.0f, 1000.0f };
-// hold_decay at its top (and above this) holds forever.
-inline constexpr float kHoldDecayForever = 30.5f;
 
 // Levels in dB. A range that goes down to kOffDb is silent at its bottom ("-inf dB").
 inline constexpr float kOffDb = -60.0f;
 inline constexpr float kInputRangeDb = 24.0f;        // INPUT: -24 ... +24 dB
 inline constexpr float kOutputMaxDb = 12.0f;         // OUTPUT: off ... +12 dB
-inline constexpr float kHoldLevelMaxDb = 6.0f;       // HOLD LEVEL: off ... +6 dB
-inline constexpr float kGateLevelMaxDb = 6.0f;       // REVERSE GATE LEVEL: off ... +6 dB
-inline constexpr float kDryLevelMaxDb = 6.0f;        // DRY: off ... +6 dB
 // The gain of a level in dB; silence at kOffDb and below.
 inline float gainOf(float db)
 {
     return juce::Decibels::decibelsToGain(db, kOffDb);
 }
-// MIDI note names as in most hosts: middle C (60) is C3.
-juce::String noteName(int note);
-
-enum class TriggerSource
-{
-    Pick,
-    MidiNote
-};
-
-enum class ManualSource
-{
-    BarKnob,
-    PitchBend,
-    ModWheel,
-    Expression // CC 11
-};
 
 // What comes in: the sum of both inputs, as into the unit's one input, or both, the direct signal
 // keeping its sides (the effect hears their sum either way).
@@ -125,71 +72,21 @@ enum class OutputMode
     MonoSum
 };
 
-// LITE: the bar before the reverse gate (it bends what goes in) or after it (it bends what comes out).
+// The bar before the reverse gate (it bends what goes in) or after it (it bends what comes out).
 enum class GlidePosition
 {
     Pre,
     Post
 };
 
-// Where the glide bar bends the reverse gate. IN: what goes into it, so the reflections repeat each
-// movement (the bar before the unit, as on the record); OUT: what comes out, the whole tail moving at
-// once; OFF: the gate stays still.
-enum class GateBend
-{
-    In,
-    Out,
-    Off
-};
-
-// The modules' names, the same on their panels and in the ROUTING. DRY is the direct guitar: a path
-// with its own knob above OUT, not a panel.
+// The modules' names on their panels.
 namespace names
 {
 inline constexpr const char* in = "IN";
 inline constexpr const char* out = "OUT";
 inline constexpr const char* glide = "GLIDE";
 inline constexpr const char* reverseGate = "REVERSE GATE";
-inline constexpr const char* hold = "HOLD";
-inline constexpr const char* dry = "DRY";
 } // namespace names
-
-// One ROUTING: how GLIDE bends the reverse gate and where HOLD goes. DRY is not part of it: GLIDE
-// bends it whenever GLIDE is on (the bar bends the strings), and its knob says whether it is heard.
-// HOLD into REVERSE GATE bends as the gate does, or by itself into a straight gate; with REVERSE GATE
-// off it goes to OUT, bent if the routing bends the gate or HOLD.
-struct Routing
-{
-    const char* name;
-    GateBend gate;      // REVERSE GATE: going in, coming out, or not at all
-    bool holdIntoGate;  // HOLD into REVERSE GATE, or to OUT
-    bool bendHold;      // HOLD bent by itself where the gate does not bend it: going to OUT, or into a straight gate
-};
-inline constexpr Routing kRoutings[] {
-    { "INTO THE SWELL", GateBend::In, true, false },
-    { "BENT TAIL", GateBend::Out, true, false },
-    { "STILL ROOM", GateBend::Off, true, false },
-    { "HOLD BESIDE", GateBend::In, false, true },
-    { "DRONE UNDER", GateBend::In, false, false },
-    { "BENT DRONE", GateBend::Off, false, true },
-    { "TAIL + DRONE", GateBend::Out, false, false },
-    { "BENT SWELL", GateBend::Off, true, true },
-};
-inline constexpr int kNumRoutings = (int) std::size(kRoutings);
-inline const Routing& routingAt(int index)
-{
-    return kRoutings[juce::jlimit(0, kNumRoutings - 1, index)];
-}
-// Whether HOLD bends itself, going into the gate or to OUT. Each path is bent once at most: into a gate
-// bent at its input HOLD bends itself (it joins after the gate's bender); into a gate bent at its output
-// the gate's bender bends it with the reverb. Sent to OUT although the routing feeds the gate (the gate
-// is off), it bends if the routing bends the gate or HOLD.
-inline bool holdBendsItself(const Routing& r, bool intoGate)
-{
-    if (intoGate)
-        return r.gate == GateBend::In || (r.gate == GateBend::Off && r.bendHold);
-    return r.holdIntoGate ? (r.gate != GateBend::Off || r.bendHold) : r.bendHold;
-}
 
 // Note values for SYNC: label and length in quarter notes.
 struct Division
@@ -207,13 +104,7 @@ inline constexpr int kDefaultDivision = 6; // 1/4
 // The glide_shape choice after the preset shapes.
 inline constexpr const char* kCustomShapeName = "Custom";
 
-// This product's parameters (kProduct): GLIDE90 has them all but LITE's own two (gate MIX, glide
-// position); LITE has no HOLD, no ROUTING and no DRY / gate LEVEL.
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
-bool inProduct(const juce::String& id);
-// What a parameter this product lacks stands at (plain): its default, or what this product fixes it to
-// (HOLD off in LITE).
-float fixedValue(const juce::String& id);
 
 // A value typed by the user, as a plain value of `p`: "50" on a percentage is 50 %, "1.2 s" is 1200 ms,
 // "2.5" on the LPF is 2.5 kHz, "thru", "1/4d". Nothing when the text names no value.

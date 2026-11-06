@@ -26,9 +26,8 @@ add_library(glide90_dsp STATIC
     src/dsp/sway/Shape.cpp
     src/dsp/sway/PickDetector.cpp
     src/dsp/sway/BarGenerator.cpp
-    src/dsp/sway/SwayProcessor.cpp
-    src/dsp/hold/HoldEngine.cpp)
-target_include_directories(glide90_dsp PUBLIC src/dsp src/dsp/sway src/dsp/hold)
+    src/dsp/sway/SwayProcessor.cpp)
+target_include_directories(glide90_dsp PUBLIC src/dsp src/dsp/sway)
 if(MSVC)
     target_compile_options(glide90_dsp PRIVATE /W4 /fp:fast)
 else()
@@ -49,8 +48,7 @@ if(GLIDE90_BUILD_TESTS)
         tests/test_resampler.cpp
         tests/test_er.cpp
         tests/test_spx.cpp
-        tests/test_sway.cpp
-        tests/test_hold.cpp)
+        tests/test_sway.cpp)
     target_link_libraries(glide90_tests PRIVATE glide90_dsp)
     target_include_directories(glide90_tests PRIVATE tests ${doctest_SOURCE_DIR})
     target_compile_definitions(glide90_tests PRIVATE GLIDE90_IR_DIR="${CMAKE_SOURCE_DIR}/ir")

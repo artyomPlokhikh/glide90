@@ -20,7 +20,7 @@ namespace glide90::ui
 // The Glide screen: one cycle of the bar's movement with a playhead, editable by dragging its
 // points (double-click adds or removes a point, right-click removes). The shape's name at the top
 // steps with its arrows or opens a menu. In MANUAL mode it shows a scrolling trace of the bar.
-class ShapeDisplay : public juce::Component, public juce::SettableTooltipClient
+class ShapeDisplay : public juce::Component, public juce::TooltipClient
 {
 public:
     explicit ShapeDisplay(Glide90Processor& p);
@@ -33,6 +33,8 @@ public:
     void mouseDrag(const juce::MouseEvent&) override;
     void mouseUp(const juce::MouseEvent&) override;
     void mouseDoubleClick(const juce::MouseEvent&) override;
+    // None in MANUAL, where the screen only shows the bar.
+    juce::String getTooltip() override;
 
 private:
     // Every frame of the display: follows the bar, repaints what moved.

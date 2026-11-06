@@ -6,7 +6,7 @@ namespace sway
 {
 
 // Finds picking attacks in a guitar signal: a sudden burst of top end. Also rates how hard a strike
-// was against the player's own recent strikes. The glide's TRIGGER and HOLD's capture each own one.
+// was against the player's own recent strikes. The glide's TRIGGER owns one.
 class PickDetector
 {
 public:

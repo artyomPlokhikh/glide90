@@ -25,6 +25,11 @@ juce::Rectangle<int> ModulePanel::handleArea() const
     return draggable ? juce::Rectangle<int>(0, 0, onKeyBounds().getX() - 8, kTitleHeight) : juce::Rectangle<int>();
 }
 
+juce::String ModulePanel::getTooltip()
+{
+    return handleArea().contains(getMouseXYRelative()) ? dragTooltip : juce::String();
+}
+
 void ModulePanel::setDraggable(bool d)
 {
     draggable = d;
@@ -52,7 +57,7 @@ void ModulePanel::paint(juce::Graphics& g)
             for (int col = 0; col < 2; ++col)
                 g.fillEllipse(gx + (float) col * 5.0f, gy + (float) row * 5.0f, 2.2f, 2.2f);
     }
-    // Every title starts where HOLD's starts, after the chevron that folds it (or the grip).
+    // Every title starts after the grip.
     drawCardTitle(g, title, { 28.0f, 8.0f, 260.0f, 26.0f });
 }
 

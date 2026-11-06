@@ -8,79 +8,32 @@ namespace glide90::ui
 {
 
 GlidePanel::GlidePanel(Glide90Processor& p)
-    : ModulePanel(names::glide), proc(p), on(p.state(), ids::glideOn, "ON"),
-      mode(p.state(), ids::glideMode, "MODE", { "FREE", "SYNC", "TRIGGER", "MANUAL" }, { 0, 1, 2, 3 }),
+    : ModulePanel(names::glide), proc(p), on(p.state(), ids::glideOn, "ON"), sync(p.state(), ids::glideSync, "SYNC"),
+      mode(p.state(), ids::glideMode, "MODE", { "LOOP", "TRIGGER", "MANUAL" }, { 0, 1, 2 }),
       direction(p.state(), ids::glideDirection, "DIRECTION", { "UP", "BOTH", "DOWN" }, { 2, 1, 0 }), display(p),
       period(p.state(), ids::glidePeriod, "RATE", Knob::Size::Large),
       division(p.state(), ids::glideDivision, "RATE", Knob::Size::Large),
       bar(p.state(), ids::glideBar, "BAR", Knob::Size::Large),
       depth(p.state(), ids::glideDepth, "DEPTH", Knob::Size::Large), random(p.state(), ids::glideRandom, "RANDOM"),
-      smooth(p.state(), ids::glideSmooth, "SMOOTH"), dynamics(p.state(), ids::glideDynamics, "DYNAMICS")
+      smooth(p.state(), ids::glideSmooth, "SMOOTH"), dynamics(p.state(), ids::glideDynamics, "DYNAMICS"),
+      pickSense(p.state(), ids::pickSensitivity, [&p] { return p.pickAttacks(); })
 {
-    for (auto* c : std::initializer_list<juce::Component*> { &on, &mode, &source, &display, &period, &division, &bar,
-                                                             &depth, &random, &smooth, &dynamics, &direction })
+    for (auto* c : std::initializer_list<juce::Component*> { &on, &mode, &display, &period, &division, &bar, &depth,
+                                                             &random, &smooth, &dynamics, &direction, &sync, &pickSense })
         addAndMakeVisible(c);
-    if constexpr (kLite)
-    {
-        pickSense.emplace(p.state(), ids::pickSensitivity, [&p] { return p.picksHeard(); });
-        addAndMakeVisible(*pickSense);
-        pickSense->knob().setTooltip("How easily a pick attack is heard: in TRIGGER from PICK it restarts the shape. "
-                                     "Its pointer flashes on each pick heard. At 0 it is off: no pick is heard");
-    }
+    sync.getProperties().set(PanelLookAndFeel::kIcon, "note");
+    pickSense.knob().setTooltip("How easily a pick restarts the shape");
 
-    // Names that fit the window: these where the look has room, the shorter ones where it has not (the
-    // dot matrix takes eight characters). The menu has the full ones.
-    source.getText = [this] {
-        static const juce::StringArray trigger { "PICK", "MIDI NOTE" }, triggerShort { "PICK", "MIDI" };
-        static const juce::StringArray manual { "BAR KNOB", "PITCH BEND", "MOD WHEEL", "EXPR CC11" },
-            manualShort { "BAR KNOB", "BEND", "MOD WHL", "CC11" };
-        auto fitting = [this](const juce::String& name, const juce::String& shortName) {
-            return readoutWidth(name) <= (float) source.getWidth() - 12.0f ? name : shortName;
-        };
-        switch ((sway::GlideMode) choice(ids::glideMode))
-        {
-            case sway::GlideMode::Trigger:
-            {
-                const int i = choice(ids::glideTriggerSource);
-                return fitting(trigger[i], triggerShort[i]);
-            }
-            case sway::GlideMode::Manual:
-            {
-                const int i = choice(ids::glideManualSource);
-                return fitting(manual[i], manualShort[i]);
-            }
-            case sway::GlideMode::Free:
-            case sway::GlideMode::Sync:
-            default: return juce::String("INTERNAL");
-        }
-    };
-    source.fillMenu = [this](juce::PopupMenu& menu) {
-        const bool trigger = (sway::GlideMode) choice(ids::glideMode) == sway::GlideMode::Trigger;
-        auto* param = proc.state().getParameter(trigger ? ids::glideTriggerSource : ids::glideManualSource);
-        const auto names = dynamic_cast<juce::AudioParameterChoice&>(*param).choices;
-        const int current = choice(trigger ? ids::glideTriggerSource : ids::glideManualSource);
-        for (int i = 0; i < names.size(); ++i)
-            menu.addItem(names[i], true, i == current, [param, i] {
-                param->beginChangeGesture();
-                param->setValueNotifyingHost(param->convertTo0to1((float) i));
-                param->endChangeGesture();
-            });
-    };
-
-    on.setTooltip("Glide on/off. Its delay (about 26 ms, compensated by the host) stays either way, so switching "
-                  "does not move the timing");
-    mode.setTooltip("FREE: loops at RATE. SYNC: locked to the song tempo. TRIGGER: restarts on each pick attack or "
-                    "MIDI note. MANUAL: you move the bar (knob, pitch bend, mod wheel or expression pedal)");
-    source.setTooltip("TRIGGER: what restarts the shape. MANUAL: what moves the bar");
-    period.setTooltip("Length of one cycle in milliseconds");
-    division.setTooltip("Length of one cycle as a note value at the host tempo");
-    bar.setTooltip("Bar position for MANUAL with BAR KNOB as the source: automate it in the host");
-    depth.setTooltip("How far the bar bends the pitch, in cents (100 = a semitone)");
-    random.setTooltip("A human hand: each cycle a little different in depth and timing, plus drift");
-    smooth.setTooltip("How lazily the bar follows the shape or the controller");
-    dynamics.setTooltip("How much a strike's strength sets the depth: 0 = every strike bends the full DEPTH, "
-                        "100 = a soft strike bends a little, a hard one all the way (pick attack or MIDI velocity)");
-    direction.setTooltip("DOWN: like a Jazzmaster bar. BOTH: around the open pitch. UP: above it");
+    mode.setTooltip("LOOP: repeats the shape. TRIGGER: plays it once on each pick. MANUAL: no shape, the BAR knob is the bar");
+    sync.setTooltip("RATE as a note value at the host tempo; LOOP stays on the beat");
+    period.setTooltip("Length of one pass; larger = slower");
+    division.setTooltip("Length of one pass as a note value at the host tempo");
+    bar.setTooltip("Where the bar is. Automate it, or map a pedal or controller to it in your host");
+    depth.setTooltip("How far the bar bends. 100 ct = a semitone");
+    random.setTooltip("Each pass a little different in depth and timing, plus slow drift");
+    smooth.setTooltip("How lazily the bar follows, up to 150 ms");
+    dynamics.setTooltip("Pick strength sets the depth. 0: always full DEPTH. 100: soft = small bend, hard = full");
+    direction.setTooltip("DOWN: the bar only lowers the pitch. BOTH: it swings around the open pitch. UP: it only raises it");
 
     updateForMode();
     startTimerHz(10);
@@ -103,42 +56,34 @@ void GlidePanel::timerCallback()
 
 void GlidePanel::updateForMode()
 {
-    const int m = choice(ids::glideMode), t = choice(ids::glideTriggerSource), s = choice(ids::glideManualSource);
-    if (m == shownMode && t == shownTrigger && s == shownManual)
+    const int m = choice(ids::glideMode), s = choice(ids::glideSync);
+    if (m == shownMode && s == shownSync)
         return;
     shownMode = m;
-    shownTrigger = t;
-    shownManual = s;
+    shownSync = s;
 
-    // One RATE slot: milliseconds, a note value, or the bar itself.
+    // One RATE slot: milliseconds, a note value, or in MANUAL the bar itself.
     const auto glideMode = (sway::GlideMode) m;
     const bool manual = glideMode == sway::GlideMode::Manual;
-    period.setVisible(glideMode == sway::GlideMode::Free || glideMode == sway::GlideMode::Trigger);
-    division.setVisible(glideMode == sway::GlideMode::Sync);
+    period.setVisible(!manual && s == 0);
+    division.setVisible(!manual && s != 0);
     bar.setVisible(manual);
-    bar.setEnabled((ManualSource) s == ManualSource::BarKnob);
+    sync.setVisible(!manual);
     random.setEnabled(!manual);
-    // What the mode listens to: always in its place, dimmed where the mode does not listen.
+    // What listens to the pick: always in its place, dimmed where the mode does not listen.
     const bool trigger = glideMode == sway::GlideMode::Trigger;
-    source.setEnabled(trigger || manual);
     dynamics.setEnabled(trigger);
-    if (pickSense)
-        pickSense->setEnabled(trigger && (TriggerSource) t == TriggerSource::Pick);
-    controlGroupActive = trigger || manual;
+    pickSense.setEnabled(trigger);
+    pickGroupActive = trigger;
     repaint();
 }
 
 void GlidePanel::paint(juce::Graphics& g)
 {
     ModulePanel::paint(g);
-    // SOURCE has no knob to carry its name.
-    g.setFont(legendFont(13.5f));
-    g.setColour(source.isEnabled() ? theme().text : theme().textDim.withMultipliedAlpha(kDimmedAlpha));
-    const int control = kLite ? 1 : 0; // CONTROL's first column
-    g.drawFittedText(themed("SOURCE"), juce::Rectangle<int>(columnX(control), kRow2, Knob::kColumn, 15), juce::Justification::centred, 1);
-
-    drawGroupRule(g, "Control", (float) columnX(control) + (kLite ? 4.0f : 0.0f), (float) ((pickSense ? 3 : 2) * Knob::kColumn - 8),
-                  (float) kRuleY, !controlGroupActive);
+    // PICK: what TRIGGER listens to. HAND: how the bar moves.
+    drawGroupRule(g, "Pick", (float) columnX(0), (float) (2 * Knob::kColumn - 8), (float) kRuleY, !pickGroupActive);
+    drawGroupRule(g, "Hand", (float) columnX(2) + 8.0f, (float) (2 * Knob::kColumn - 8), (float) kRuleY, false);
 }
 
 void GlidePanel::resized()
@@ -147,34 +92,20 @@ void GlidePanel::resized()
     on.setBounds(onKeyBounds());
     display.setBounds(columnX(0), kScreenTop, kColumns * w, kScreenHeight);
 
-    if constexpr (kLite)
-    {
-        // MOTION's knobs in a row; DIRECTION under MODE, CONTROL beside it.
-        mode.setBounds(columnX(0), kRow1, w, h);
-        for (auto* k : { &period, &division, &bar })
-            k->setBounds(columnX(1), kRow1, w, h);
-        depth.setBounds(columnX(2), kRow1, w, h);
-        random.setBounds(columnX(3), kRow1, w, h);
-        smooth.setBounds(columnX(4), kRow1, w, h);
-        direction.setBounds(columnX(0), kRow2, w, h);
-        source.setBounds(juce::Rectangle<int>(Knob::kColumn, 26).withCentre({ columnX(1) + w / 2, kRow2 + 50 }));
-        dynamics.setBounds(columnX(2), kRow2, w, h);
-        pickSense->setBounds(columnX(3), kRow2, w, h);
-        return;
-    }
-
-    // MOTION.
+    // What the bar does: its mode, how long, how far, which way.
     mode.setBounds(columnX(0), kRow1, w, h);
     for (auto* k : { &period, &division, &bar })
         k->setBounds(columnX(1), kRow1, w, h);
     depth.setBounds(columnX(2), kRow1, w, h);
     direction.setBounds(columnX(3), kRow1, w, h);
-    random.setBounds(columnX(4), kRow1, w, h);
-    smooth.setBounds(columnX(5), kRow1, w, h);
+    // SYNC belongs to RATE: in the corner of its slot, beside its name.
+    sync.setBounds(columnX(1) + w - 26, kRow1 - 4, 26, 20);
 
-    // CONTROL: what TRIGGER and MANUAL listen to, under MODE.
-    source.setBounds(juce::Rectangle<int>(Knob::kColumn, 26).withCentre({ columnX(0) + w / 2, kRow2 + 50 }));
+    // What listens to the pick, then the hand on the bar.
+    pickSense.setBounds(columnX(0), kRow2, w, h);
     dynamics.setBounds(columnX(1), kRow2, w, h);
+    random.setBounds(columnX(2), kRow2, w, h);
+    smooth.setBounds(columnX(3), kRow2, w, h);
 }
 
 } // namespace glide90::ui

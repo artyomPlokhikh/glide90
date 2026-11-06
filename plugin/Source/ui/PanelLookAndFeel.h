@@ -98,11 +98,6 @@ enum class MotionLevel
 MotionLevel motionLevel();
 void setMotionLevel(MotionLevel);
 
-// HOLD's strip folded down to its title bar (the window shorter): a setting of the user, kept like
-// the look.
-bool holdFolded();
-void setHoldFolded(bool);
-
 // How faint a control is drawn while it does nothing in the current mode: clearly dimmer than the
 // live ones, still easy to read.
 inline constexpr float kDimmedAlpha = 0.72f;
@@ -213,8 +208,8 @@ public:
                                    int& height) override;
     int getPopupMenuBorderSize() override { return 5; }
 
-    // Button properties: "led" (the key shows its toggle state), "icon" ("undo" or "redo": an arrow
-    // instead of the text) and "segment" ("left" or "right": one half of a two-way switch, lit when
+    // Button properties: "led" (the key shows its toggle state), "icon" ("undo" or "redo": an arrow,
+    // "note": a note, instead of the text) and "segment" ("left" or "right": one half of a two-way switch, lit when
     // its toggle state is on).
     static constexpr const char* kLed = "led";
     static constexpr const char* kIcon = "icon";

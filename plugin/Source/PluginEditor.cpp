@@ -21,77 +21,46 @@ Glide90Editor::Glide90Editor(Glide90Processor& p)
     lookAndFeel.applyTheme();
     setLookAndFeel(&lookAndFeel);
     addAndMakeVisible(content);
-    if constexpr (kHasHold)
-    {
-        pickSense.emplace(p.state(), ids::pickSensitivity, [&p] { return p.picksHeard(); });
-        routing.emplace(p);
-        dry.emplace(p.state(), ids::dryLevel, names::dry);
-        holdPanel.emplace(p);
-    }
     for (auto* c : std::initializer_list<juce::Component*> { &header, &input, &glide, &gate, &output })
         content.addAndMakeVisible(c);
-    if constexpr (kHasHold)
-        for (auto* c : std::initializer_list<juce::Component*> { &*pickSense, &*routing, &*dry, &*holdPanel })
-            content.addAndMakeVisible(c);
-    content.setSize(kWidth, contentHeight());
+    content.setSize(kWidth, kHeight);
     input.markClip();
     // The rig's controls, which A/B and presets leave alone, carry a padlock.
     for (auto* key : { &input.modeKey(), &output.modeKey() })
         key->getProperties().set(ui::PanelLookAndFeel::kLocked, true);
     input.levelKnob().setLocked(true);
-    const juce::String rig = ". Set for the rig: A/B and presets leave it alone";
-    input.modeKey().setTooltip("Stereo: the direct sound keeps its sides, the reverse gate hears both. "
-                               "Mono: one input, like the SPX90's" + rig);
-    input.levelKnob().setTooltip(juce::String("The guitar's level into everything: the glide, ") + (kHasHold ? "HOLD, " : "")
-                                 + "the pick detector and the reverse gate. Set it so the meter's CLIP light stays dark" + rig);
-    output.modeKey().setTooltip("Stereo, the left output on both sides (one amp), or both outputs summed" + rig);
-    output.levelKnob().setTooltip(juce::String("The level of everything that leaves the plugin: the modules") + (kHasHold ? " and HOLD" : "")
-                                  + ", with the reverse gate on or off. Part of the sound: each of A and B has its own");
-    if constexpr (kHasHold)
-    {
-        pickSense->knob().setTooltip("How easily a pick attack is heard: it restarts GLIDE (TRIGGER from PICK ATTACK) and "
-                                     "captures a new chord in HOLD (STRIKE, MIDI). Its pointer flashes on each pick heard. "
-                                     "At 0 it is off: no pick is heard");
-        dry->setTooltip("The direct guitar, straight to OUT beside the reverse gate, bent whenever GLIDE is on. Off, only "
-                        "the effects are heard: the reverse gate's swell without the attack. Part of the sound: each of A "
-                        "and B has its own");
-    }
+    const juce::String padlock = " Locked: presets and A/B don't change it";
+    input.modeKey().setTooltip("STEREO: sides stay in the direct sound; the reverse gate hears their sum. MONO: one input."
+                               + padlock);
+    input.levelKnob().setTooltip("Level into the plugin, the pick detector included. Keep the meter's CLIP dark." + padlock);
+    output.levelKnob().setTooltip("Final output level, in dB");
+    output.modeKey().setTooltip("L ONLY: the left output on both sides, for one amp. MONO: both outputs summed." + padlock);
     content.themeChanged();
 
     // Each unit is kept as a picture: moving one, or repainting the moving background behind it,
     // copies the picture instead of drawing every knob again.
     for (auto* c : std::initializer_list<juce::Component*> { &header, &input, &glide, &gate, &output })
         c->setBufferedToImage(true);
-    if constexpr (kHasHold)
-        for (auto* c : std::initializer_list<juce::Component*> { &*routing, &*holdPanel })
-            c->setBufferedToImage(true);
 
     gate.setMotion(&motion);
     header.onZoom = [this](float s) { setZoom(s); };
     header.onTheme = [this](int i) { setLook(i); };
-    if constexpr (kHasHold)
-        holdPanel->onFold = [this](bool folded) {
-            ui::setHoldFolded(folded);
-            content.setSize(kWidth, contentHeight());
-            setZoom(proc.uiScale());
-        };
-    else
+    // The modules swap places by their title bars; the order is a parameter (one undo step).
+    for (auto* module : { static_cast<ui::ModulePanel*>(&glide), static_cast<ui::ModulePanel*>(&gate) })
     {
-        // LITE: the modules swap places by their title bars; the order is a parameter (one undo step).
-        for (auto* module : { static_cast<ui::ModulePanel*>(&glide), static_cast<ui::ModulePanel*>(&gate) })
-        {
-            module->setDraggable(true);
-            module->onDragStart = [this, module] { startDrag(*module); };
-            module->onDrag = [this, module](float dx) { dragTo(*module, dx); };
-            module->onDragEnd = [this, module](bool cancelled) { endDrag(*module, cancelled); };
-        }
-        position.emplace(*p.state().getParameter(ids::glidePosition), [this](float v) {
-            glideFirst = (GlidePosition) juce::roundToInt(v) == GlidePosition::Pre;
-            if (dragged == nullptr)
-                layoutModules(isShowing());
-        });
-        position->sendInitialUpdate();
+        module->setDraggable(true);
+        module->setDragTooltip("Drag to swap GLIDE and REVERSE GATE. GLIDE first: bends the gate's input. "
+                               "GATE first: bends its whole tail");
+        module->onDragStart = [this, module] { startDrag(*module); };
+        module->onDrag = [this, module](float dx) { dragTo(*module, dx); };
+        module->onDragEnd = [this, module](bool cancelled) { endDrag(*module, cancelled); };
     }
+    position.emplace(*p.state().getParameter(ids::glidePosition), [this](float v) {
+        glideFirst = (GlidePosition) juce::roundToInt(v) == GlidePosition::Pre;
+        if (dragged == nullptr)
+            layoutModules(isShowing());
+    });
+    position->sendInitialUpdate();
     setZoom(fittingZoom(proc.uiScale()));
 }
 
@@ -103,10 +72,10 @@ float Glide90Editor::fittingZoom(float wanted) const
     if (display == nullptr)
         return wanted;
     const double room = display->userBounds.getHeight() - 80.0; // the host's own window frame and title
-    if (contentHeight() * (double) wanted <= room)
+    if (kHeight * (double) wanted <= room)
         return wanted;
     for (float s : { 1.75f, 1.5f, 1.25f, 1.0f })
-        if (s < wanted && contentHeight() * (double) s <= room)
+        if (s < wanted && kHeight * (double) s <= room)
             return s;
     return 0.75f;
 }
@@ -120,7 +89,7 @@ void Glide90Editor::setZoom(float scale)
 {
     proc.setUiScale(scale);
     content.setTransform(juce::AffineTransform::scale(proc.uiScale()));
-    setSize(juce::roundToInt(kWidth * proc.uiScale()), juce::roundToInt(contentHeight() * proc.uiScale()));
+    setSize(juce::roundToInt(kWidth * proc.uiScale()), juce::roundToInt(kHeight * proc.uiScale()));
 }
 
 void Glide90Editor::setLook(int index)
@@ -187,42 +156,22 @@ void Glide90Editor::resized()
 {
     const int m = ui::PanelLookAndFeel::kMargin;
     header.setBounds(0, 0, kWidth, kHeaderHeight);
-    // IN and OUT run down the side of everything, HOLD included; their level knobs sit at their foot.
-    const int columnHeight = contentHeight() - m - kBodyTop;
+    // IN and OUT down the sides, their level knobs with the modules' lower row.
+    const int columnHeight = kHeight - m - kBodyTop;
     input.setBounds(m, kBodyTop, ui::IoColumn::kWidth, columnHeight);
     output.setBounds(kWidth - m - ui::IoColumn::kWidth, kBodyTop, ui::IoColumn::kWidth, columnHeight);
-    if constexpr (!kHasHold)
-    {
-        // LITE: the level knobs with the modules' lower row.
-        input.setKnobRow(ui::ModulePanel::kRow2);
-        output.setKnobRow(ui::ModulePanel::kRow2);
-        if (dragged == nullptr)
-            layoutModules(false);
-        return;
-    }
-    // PICK SENS above IN and DRY above OUT, bare; the ROUTING strip between them, over the modules.
-    pickSense->setBounds(m, kRouteTop, ui::IoColumn::kWidth, ui::RoutingPanel::kHeight);
-    routing->setBounds(modulesLeft(), kRouteTop, kModulesWidth, ui::RoutingPanel::kHeight);
-    dry->setBounds(kWidth - m - ui::IoColumn::kWidth, kRouteTop, ui::IoColumn::kWidth, ui::RoutingPanel::kHeight);
-    const int glideW = ui::GlidePanel::widthFor(ui::GlidePanel::kColumns);
-    glide.setBounds(modulesLeft(), kBodyTop, glideW, ui::ModulePanel::kHeight);
-    gate.setBounds(modulesLeft() + glideW + kGap, kBodyTop, ui::GatePanel::widthFor(ui::GatePanel::kColumns),
-                   ui::ModulePanel::kHeight);
-    // Open, level with HOLD's knobs; folded, at the columns' foot, as far from it as when open.
-    const int holdKnobs = kHoldTop + ui::HoldPanel::kRowTop - kBodyTop;
-    const int footGap = ui::HoldPanel::kOpenHeight - ui::HoldPanel::kRowTop - ui::Knob::kHeight;
-    const int lower = holdPanel->isFolded() ? columnHeight - ui::Knob::kHeight - footGap : holdKnobs;
-    input.setKnobRow(lower);
-    output.setKnobRow(lower);
-    holdPanel->setBounds(modulesLeft(), kHoldTop, kModulesWidth, contentHeight() - m - kHoldTop);
+    input.setKnobRow(ui::ModulePanel::kRow2);
+    output.setKnobRow(ui::ModulePanel::kRow2);
+    if (dragged == nullptr)
+        layoutModules(false);
 }
 
 void Glide90Editor::parentHierarchyChanged()
 {
    #if JUCE_WINDOWS
     // Direct2D, JUCE's renderer on Windows, throws the window's picture away whenever the window
-    // changes size and shows nothing (white in hosts) until a display frame has drawn it all again:
-    // folding HOLD flashed the whole plugin. The software renderer keeps the old picture meanwhile.
+    // changes size and shows nothing (white in hosts) until a display frame has drawn it all again.
+    // The software renderer keeps the old picture meanwhile.
     if (auto* peer = getPeer())
         if (const int software = peer->getAvailableRenderingEngines().indexOf("Software Renderer");
             software >= 0 && peer->getCurrentRenderingEngine() != software)
@@ -230,7 +179,7 @@ void Glide90Editor::parentHierarchyChanged()
    #endif
 }
 
-// --- LITE: dragging a module to the other place ---
+// --- Dragging a module to the other place ---
 
 juce::Rectangle<int> Glide90Editor::slotOf(const ui::ModulePanel& module, bool glideFirstOrder) const
 {
