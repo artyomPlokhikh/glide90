@@ -75,7 +75,7 @@ jobs:
           fi
           linux='{"name":"Linux","os":"ubuntu-24.04","pluginval":"pluginval_Linux.zip"}'
           windows='{"name":"Windows","os":"windows-2022","pluginval":"pluginval_Windows.zip"}'
-          macos='{"name":"macOS","os":"macos-14","pluginval":"pluginval_macOS.zip"}'
+          macos='{"name":"macOS","os":"macos-15","pluginval":"pluginval_macOS.zip"}'
           if [[ "$GITHUB_REF" == refs/tags/v* || "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
             systems="[$linux,$windows,$macos]"
           else
