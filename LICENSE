@@ -1,0 +1,23 @@
+GLIDE90
+Copyright (c) 2026 Artyom Plokhikh. All rights reserved.
+
+The source code is publicly visible, but it is not open source. Apart from viewing
+and forking it on GitHub as GitHub's Terms of Service allow, you may not copy,
+modify, distribute, sublicense, sell or otherwise use this source code or anything
+derived from it without the copyright holder's written permission.
+
+Official release builds: you may download, install and use the builds published by
+the copyright holder on your own devices, including to make and sell music and other
+audio with them. The copyright holder claims no rights in what you make. You may not
+redistribute, resell or modify these builds, or reverse engineer them except where
+the law permits it.
+
+Third-party components keep their own licences: see THIRD-PARTY-NOTICES.md and the
+licenses directory. JUCE is not included in this repository and has its own licence
+terms.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY ARISING FROM THE SOFTWARE OR ITS USE, TO THE EXTENT THE
+LAW PERMITS THIS LIMITATION.

@@ -1,13 +1,29 @@
 name: build
 
-# main, pull requests and release tags (vX.Y.Z) build on all three systems. A tag also publishes a
-# GitHub release with one zip per system. Run by hand (workflow_dispatch) on any branch to try the
-# workflow itself; with "draft release" on, it also makes a draft release to check, then delete.
+# main and pull requests build on Linux only, and only when something that gets built has changed.
+# Release tags (vX.Y.Z; path filters do not apply to tags) build on all three systems and publish a
+# GitHub release with one zip per system. Run by hand (workflow_dispatch) on any branch to build on
+# all three before tagging; with "draft release" on, it also makes a draft release to check, then
+# delete.
 on:
   push:
     branches: [main]
     tags: ['v*']
+    paths:
+      - 'src/**'
+      - 'plugin/**'
+      - 'tests/**'
+      - 'tools/render/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/build.yml'
   pull_request:
+    paths:
+      - 'src/**'
+      - 'plugin/**'
+      - 'tests/**'
+      - 'tools/render/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/build.yml'
   workflow_dispatch:
     inputs:
       draft_release:
@@ -37,6 +53,7 @@ jobs:
       build: ${{ steps.plan.outputs.build }}
       release: ${{ steps.plan.outputs.release }}
       version: ${{ steps.plan.outputs.version }}
+      systems: ${{ steps.plan.outputs.systems }}
     steps:
       - uses: actions/checkout@v4
       - id: plan
@@ -56,8 +73,16 @@ jobs:
             echo "This commit has a release tag: its own run builds it."
             build=false
           fi
-          echo "build=$build release=$release version=$version"
-          { echo "build=$build"; echo "release=$release"; echo "version=$version"; } >> "$GITHUB_OUTPUT"
+          linux='{"name":"Linux","os":"ubuntu-24.04","pluginval":"pluginval_Linux.zip"}'
+          windows='{"name":"Windows","os":"windows-2022","pluginval":"pluginval_Windows.zip"}'
+          macos='{"name":"macOS","os":"macos-14","pluginval":"pluginval_macOS.zip"}'
+          if [[ "$GITHUB_REF" == refs/tags/v* || "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            systems="[$linux,$windows,$macos]"
+          else
+            systems="[$linux]"
+          fi
+          echo "build=$build release=$release version=$version systems=$systems"
+          { echo "build=$build"; echo "release=$release"; echo "version=$version"; echo "systems=$systems"; } >> "$GITHUB_OUTPUT"
 
   build:
     name: ${{ matrix.name }}
@@ -67,16 +92,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: Linux
-            os: ubuntu-24.04
-            pluginval: pluginval_Linux.zip
-          - name: Windows
-            os: windows-2022
-            pluginval: pluginval_Windows.zip
-          - name: macOS
-            os: macos-14
-            pluginval: pluginval_macOS.zip
+        include: ${{ fromJSON(needs.plan.outputs.systems) }}
     env:
       # Compiled files are kept in GitHub's cache: a run compiles only what changed.
       SCCACHE_GHA_ENABLED: 'true'
@@ -182,6 +198,10 @@ jobs:
             local name="$3-$tag-${{ matrix.name }}"
             local dir="dist/$name"
             mkdir -p "$dir"
+            cp LICENSE "$dir/LICENSE.txt"
+            cp THIRD-PARTY-NOTICES.md "$dir/"
+            cp -R licenses "$dir/licenses"
+            cp plugin/Resources/fonts/OFL-*.txt "$dir/licenses/"
             cp -R "$out/VST3/$product.vst3" "$dir/"
             case "$RUNNER_OS" in
               Linux)
@@ -225,6 +245,7 @@ jobs:
           path: dist/*.zip
           compression-level: 0 # a zip already
           if-no-files-found: error
+          retention-days: 7 # anyone can fetch these in a public repository; releases keep their own zips
 
   release:
     needs: [plan, build]
